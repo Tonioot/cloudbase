@@ -435,27 +435,21 @@ function renderApps() {
 }
 
 function appCardHTML(app) {
-  const nodeOffline = app.node && app.node.status === 'offline';
   const busy      = app.status === 'deploying';
   const isRunning = app.status === 'running';
-  const actionsDisabled = nodeOffline || busy;
 
   const primaryBtn = `
     <button class="btn btn-success btn-sm btn-start" data-admin
-      ${isRunning || actionsDisabled ? 'disabled' : ''}
-      style="opacity:${isRunning || nodeOffline ? '.4' : '1'}">${icon.play} Start</button>
+      ${isRunning || busy ? 'disabled' : ''}
+      style="opacity:${isRunning ? '.4' : '1'}">${icon.play} Start</button>
     <button class="btn btn-danger btn-sm btn-stop" data-admin
-      ${!isRunning || actionsDisabled ? 'disabled' : ''}
-      style="opacity:${!isRunning || nodeOffline ? '.4' : '1'}">${icon.stop} Stop</button>`;
+      ${!isRunning || busy ? 'disabled' : ''}
+      style="opacity:${!isRunning ? '.4' : '1'}">${icon.stop} Stop</button>`;
 
-  const repoShort  = (app.repo_url || '').replace('https://github.com/', '');
-  const nodeLabel  = app.node?.is_local ? 'Primary Node' : (app.node?.name || 'Primary Node');
-  const nodeStatus = app.node?.status || 'online';
-  const nodeOfflineMeta = nodeOffline ? `
-    <div class="app-meta-row app-meta-row-warning">${icon.info}<span>Status may be stale (node offline)</span></div>` : '';
+  const repoShort = (app.repo_url || '').replace('https://github.com/', '');
 
   return `
-    <div class="card app-card ${nodeOffline ? 'app-card-offline' : ''}" id="card-${app.id}">
+    <div class="card app-card" id="card-${app.id}">
       <div class="app-card-top">
         <div class="app-card-identity">
           <div class="app-type-icon">${typeIcon[app.app_type] || typeIcon.unknown}</div>
@@ -464,11 +458,10 @@ function appCardHTML(app) {
             <div class="app-type-label">${app.app_type || 'unknown'}</div>
           </div>
         </div>
-        ${nodeOffline ? '<span class="app-offline-chip">NODE OFFLINE</span>' : badge(app.status)}
+        ${badge(app.status)}
       </div>
 
       <div class="app-card-meta">
-        ${nodeOfflineMeta}
         ${app.domain ? `<div class="app-meta-row">${icon.globe}<span>${app.domain}</span></div>` : ''}
         ${renderPortRows(app)}
         <div class="app-meta-row">${icon.link}<span>${repoShort}</span></div>
@@ -476,7 +469,7 @@ function appCardHTML(app) {
 
       <div class="app-card-actions">
         ${primaryBtn}
-        <button class="btn btn-secondary btn-sm btn-icon btn-restart" data-admin ${actionsDisabled ? 'disabled' : ''} title="Restart">${icon.restart}</button>
+        <button class="btn btn-secondary btn-sm btn-icon btn-restart" data-admin ${busy ? 'disabled' : ''} title="Restart">${icon.restart}</button>
       </div>
     </div>`;
 }
@@ -490,10 +483,9 @@ async function appAction(app, action, card) {
     const fns = { start: api.start, stop: api.stop, restart: api.restart };
     const res = await fns[action](app.id);
 
-    if (res?.command_id && app.node?.id) {
+    if (res?.command_id) {
       const b = card.querySelector('.app-card-top > span:last-child');
       if (b) b.textContent = 'pending…';
-      await _waitForCommand(res.command_id, app.node.id);
     }
 
     await loadApps();

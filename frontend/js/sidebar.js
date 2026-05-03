@@ -79,21 +79,23 @@ async function loadSidebarTree() {
       ? apps.map(app => {
           const appDot = STATUS_DOT[app.status] || 'var(--text-muted)';
           const active = app.id === currentAppId ? ' active' : '';
-          const nodeOffline = app.node?.status === 'offline';
-
-          // Show node badge only when multi-node
-          const nodeLabel = remoteNodes.length
+          const replicas = app.replicas || [];
+          const instanceLabel = remoteNodes.length && replicas.length
             ? (() => {
-                const n = nodeMap.get(app.node?.id);
-                const name = n ? (n.is_local ? 'local' : n.name) : 'local';
-                return `<span style="font-size:10px;color:var(--text-muted);margin-left:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:60px" title="${name}">${name}</span>`;
+                const nodeIds = [...new Set(replicas.map(r => r.node_id).filter(Boolean))];
+                const names = nodeIds.map(id => {
+                  const n = nodeMap.get(id);
+                  return n ? (n.is_local ? 'local' : n.name) : 'local';
+                });
+                const label = names.length ? names.join(', ') : 'local';
+                return `<span style="font-size:10px;color:var(--text-muted);margin-left:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:60px" title="${label}">${label}</span>`;
               })()
             : '';
 
           return `<a href="/app.html?id=${app.id}" class="sidebar-app-item${active}">
-            <span class="sidebar-app-dot ${nodeOffline ? 'sidebar-app-dot--node-offline' : ''}" style="background:${appDot}"></span>
-            <span class="sidebar-app-name" style="${nodeOffline ? 'color:var(--text-muted)' : ''}">${app.name}</span>
-            ${nodeLabel}
+            <span class="sidebar-app-dot" style="background:${appDot}"></span>
+            <span class="sidebar-app-name">${app.name}</span>
+            ${instanceLabel}
           </a>`;
         }).join('')
       : `<div class="sidebar-apps-empty">No apps yet</div>`;
@@ -743,7 +745,7 @@ async function loadExportAppsList(modal) {
         <div class="box"></div>
         <div class="label-text">
           ${app.name}
-          <div class="label-sub">${app.node ? app.node.name : 'Unknown node'}</div>
+          <div class="label-sub">${(app.replicas || []).length} instance${(app.replicas || []).length !== 1 ? 's' : ''}</div>
         </div>
       </label>
     `).join('');

@@ -457,6 +457,32 @@ async def lifespan(app: FastAPI):
         await db.commit()
         await asyncio.to_thread(_restore_stuck_restart_configs, apps)
 
+    # Regenerate nginx configs from live instance state so stale configs on disk
+    # (written before the instance-based model) are replaced with correct upstreams.
+    async with AsyncSessionLocal() as db:
+        from models import ApplicationReplica as _AR
+        from routers.applications import _get_nginx_backends, _get_nginx_mode, _derive_app_status_from_instances
+        from env_crypto import decrypt_env as _dec
+        result = await db.execute(select(Application))
+        for a in result.scalars().all():
+            if not a.nginx_enabled or not a.domain:
+                continue
+            try:
+                backends = await _get_nginx_backends(a, db)
+                ssl_cert = a.ssl_cert_path
+                ssl_key  = a.ssl_key_path
+                config   = nm.generate_config(
+                    a.name, a.domain, backends,
+                    ssl_cert, ssl_key,
+                    app_id=a.id, mode=_get_nginx_mode(a),
+                    extra_domains=json.loads(a.extra_domains or "[]"),
+                    redirect_domains=json.loads(a.redirect_domains or "[]"),
+                )
+                nm.write_nginx_config(a.name, config)
+                pm._debug(f"STARTUP nginx regenerated for app {a.id} ({a.name}): {len(backends)} backends")
+            except Exception as exc:
+                pm._debug(f"STARTUP nginx regen failed for app {a.id}: {exc}")
+
     monitor_task  = asyncio.create_task(_crash_monitor())
     stats_task    = asyncio.create_task(_stats_collector())
     node_task     = asyncio.create_task(_node_health_monitor())

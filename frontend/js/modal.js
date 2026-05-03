@@ -66,7 +66,7 @@ export function openDeployModal(onSuccess) {
   const form  = modal.querySelector('#deploy-form');
   let envCount = 0;
 
-  populateNodeOptions(modal).catch(() => {});
+
 
   // Close
   const close = () => backdrop.remove();
@@ -107,16 +107,9 @@ function modalHTML() {
           <div class="modal-section modal-section--compact">
             <div class="section-title">${icon.terminal} Basic Configuration</div>
             <div class="deploy-grid deploy-grid--basic">
-              <div class="field">
+              <div class="field deploy-field-span-2">
                 <label class="field-label">Application Name <span class="req">*</span></label>
                 <input class="input" id="f-name" placeholder="my-app" required autocomplete="off" />
-              </div>
-
-              <div class="field">
-                <label class="field-label">Target Node</label>
-                <select class="input" id="f-node">
-                  <option value="">Loading nodes...</option>
-                </select>
               </div>
 
               <div class="field deploy-field-span-2">
@@ -216,31 +209,6 @@ function modalHTML() {
     </div>`;
 }
 
-async function populateNodeOptions(modal) {
-  const select = modal.querySelector('#f-node');
-  if (!select) return;
-
-  try {
-    const nodes = await api.listNodes();
-    if (!nodes.length) {
-      select.innerHTML = '<option value="">No nodes available</option>';
-      return;
-    }
-
-    select.innerHTML = nodes
-      .map(node => {
-        const label = `${node.name} (${node.status}${node.is_local ? ', local' : ''})`;
-        return `<option value="${node.id}">${label}</option>`;
-      })
-      .join('');
-
-    const local = nodes.find(n => n.is_local);
-    if (local) select.value = String(local.id);
-  } catch {
-    select.innerHTML = '<option value="">Failed to load nodes</option>';
-  }
-}
-
 function addEnvRow(modal, idx) {
   const row = document.createElement('div');
   row.className = 'env-row';
@@ -285,7 +253,6 @@ async function handleDeploy(modal, form, onSuccess, close) {
     docker_tmpfs_enabled: modal.querySelector('#f-docker-tmpfs-enabled').checked,
     docker_tmpfs_size_mb: Number.isInteger(dockerTmpfsSize) ? dockerTmpfsSize : null,
     env_vars,
-    node_id:       parseInt(modal.querySelector('#f-node').value) || null,
   };
 
   if (!payload.name || !payload.repo_url) {

@@ -1951,6 +1951,21 @@ class RunReplicaRequest(BaseModel):
 
 
 @router.post("/{app_id}/replicas/run-remote")
+def _image_arch_ok(image_name: str) -> bool:
+    """Return True if the Docker image exists locally and matches the host CPU architecture."""
+    import platform
+    host = platform.machine().lower()
+    expected = "arm64" if ("aarch64" in host or "arm64" in host) else "amd64"
+    try:
+        r = subprocess.run(
+            ["docker", "inspect", "--format", "{{.Architecture}}", image_name],
+            capture_output=True, text=True, timeout=10,
+        )
+        return r.returncode == 0 and r.stdout.strip() == expected
+    except Exception:
+        return False
+
+
 async def run_replica_remote(app_id: int, req: RunReplicaRequest, db: AsyncSession = Depends(get_db)):
     """Internal endpoint called by the node agent to start a replica container locally.
     Does NOT create a DB row — the main server already has it."""
@@ -1967,46 +1982,36 @@ async def run_replica_remote(app_id: int, req: RunReplicaRequest, db: AsyncSessi
     def _push(_aid, line):
         pm._push_line(app_id, str(line))
 
+    # Use local_app_id for the image name when provided — the image was built
+    # on this node under its own local app id, not the main node's app id.
+    build_app_id = req.local_app_id if req.local_app_id is not None else app_id
+    img = dm.image_name(build_app_id, app_name)
+
+    # If the image is missing or has the wrong architecture (e.g. amd64 cached
+    # on an arm64 Pi from a previous transfer), rebuild it natively first.
+    if local_app and local_app.working_dir and not await asyncio.to_thread(_image_arch_ok, img):
+        try:
+            await asyncio.to_thread(
+                dm.build_image,
+                build_app_id, app_name, local_app.working_dir, _push,
+                local_app.app_type or "unknown",
+                local_app.start_command or "",
+                req.internal_port or local_app.port or 8000,
+            )
+        except Exception as build_err:
+            raise HTTPException(500, f"Image build failed: {build_err}") from build_err
+
     try:
         env_vars = req.env_vars or {}
-        # Use local_app_id for the image name when provided: the image was built
-        # on this node under the local app id, not the main node's app id.
         container_id = await asyncio.to_thread(
             pm.start_docker_replica,
             app_id, req.replica_id, app_name,
             req.internal_port, req.external_port,
             env_vars, req.docker_options,
-            req.local_app_id,
+            build_app_id,
         )
         return {"container_id": container_id, "replica_id": req.replica_id}
     except Exception as e:
-        if local_app and local_app.working_dir:
-            try:
-                build_app_id = req.local_app_id if req.local_app_id is not None else app_id
-                await asyncio.to_thread(
-                    dm.build_image,
-                    build_app_id,
-                    app_name,
-                    local_app.working_dir,
-                    _push,
-                    local_app.app_type or "unknown",
-                    local_app.start_command or "",
-                    req.internal_port or local_app.port or 8000,
-                )
-                container_id = await asyncio.to_thread(
-                    pm.start_docker_replica,
-                    app_id,
-                    req.replica_id,
-                    app_name,
-                    req.internal_port,
-                    req.external_port,
-                    env_vars,
-                    req.docker_options,
-                    build_app_id,
-                )
-                return {"container_id": container_id, "replica_id": req.replica_id, "rebuilt": True}
-            except Exception as rebuild_error:
-                raise HTTPException(500, str(rebuild_error)) from rebuild_error
         raise HTTPException(500, str(e)) from e
 
 

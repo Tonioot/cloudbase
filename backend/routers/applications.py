@@ -8,7 +8,7 @@ import subprocess
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, UploadFile, File, Query, Body, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, Response
 from pydantic import BaseModel
 from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -342,8 +342,17 @@ async def _restore_nginx_after_restart(
     elapsed = max(asyncio.get_running_loop().time() - started_at, 0)
 
     ssl_cert_path, ssl_key_path = _resolve_ssl_paths(ssl_cert_path, ssl_key_path)
+    # Fetch live backends from DB so we don't clobber multi-instance nginx config
+    from database import AsyncSessionLocal
+    async with AsyncSessionLocal() as _db:
+        _app_result = await _db.execute(select(Application).where(Application.id == app_id))
+        _app = _app_result.scalar_one_or_none()
+        if _app:
+            backends = await _get_nginx_backends(_app, _db)
+        else:
+            backends = [f"127.0.0.1:{port}"] if port else []
     normal_cfg = nm.generate_config(
-        app_name, domain, port,
+        app_name, domain, backends,
         ssl_cert_path, ssl_key_path,
         app_id=app_id, mode="normal",
         extra_domains=extra_domains,
@@ -466,6 +475,44 @@ def _recent_git_commits(app_dir: str, limit: int = 20) -> list[dict]:
             "author": author,
         })
     return commits
+
+
+@router.post("/{app_id}/set-working-dir")
+async def set_working_dir(app_id: int, payload: dict = Body(...), db: AsyncSession = Depends(get_db)):
+    """Internal endpoint called by a node agent after extracting a source archive locally."""
+    app = await _get_or_404(app_id, db)
+    working_dir = payload.get("working_dir")
+    if not working_dir:
+        raise HTTPException(400, "working_dir required")
+    app.working_dir = working_dir
+    await db.commit()
+    return {"ok": True, "working_dir": working_dir}
+
+
+@router.get("/{app_id}/source-archive")
+async def get_source_archive(app_id: int, db: AsyncSession = Depends(get_db)):
+    """Return a .tar.gz of the app's working directory for remote nodes to build from.
+    Only the local primary serves this — remote nodes call this endpoint directly."""
+    app = await _get_or_404(app_id, db)
+    if not app.working_dir or not os.path.exists(app.working_dir):
+        raise HTTPException(404, "App source directory not found — deploy the app first")
+
+    import tarfile
+    import io
+
+    def _make_archive() -> bytes:
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            tar.add(app.working_dir, arcname=".", recursive=True,
+                    filter=lambda m: None if os.path.basename(m.name) in {".git", "__pycache__", "node_modules", ".venv", "venv"} else m)
+        return buf.getvalue()
+
+    data = await asyncio.to_thread(_make_archive)
+    return Response(
+        content=data,
+        media_type="application/gzip",
+        headers={"Content-Disposition": f"attachment; filename={app.name}-source.tar.gz"},
+    )
 
 
 @router.get("/{app_id}/commits")
@@ -2583,15 +2630,27 @@ async def delete_instance(
         )
 
     await db.delete(replica)
+    await db.flush()
 
     remaining_result = await db.execute(
         select(ApplicationReplica).where(ApplicationReplica.app_id == app_id)
     )
     remaining = remaining_result.scalars().all()
-    if remaining:
-        app.status = _derive_app_status_from_instances(remaining)
-    else:
-        app.status = "stopped"
+    app.status = _derive_app_status_from_instances(remaining) if remaining else "stopped"
+
+    # Regenerate nginx config without the removed backend
+    if app.nginx_enabled and app.domain:
+        _ensure_maintenance_files(app, app_id)
+        ssl_cert, ssl_key = _resolve_ssl_paths(app.ssl_cert_path, app.ssl_key_path)
+        backends = await _get_nginx_backends(app, db)
+        config = nm.generate_config(
+            app.name, app.domain, backends,
+            ssl_cert, ssl_key,
+            app_id=app_id, mode=_get_nginx_mode(app),
+            extra_domains=json.loads(app.extra_domains or "[]"),
+            redirect_domains=json.loads(app.redirect_domains or "[]"),
+        )
+        nm.write_nginx_config(app.name, config)
 
     await log_audit(db, "instance.delete", actor=actor, app_id=app_id,
                     detail={"name": app.name, "instance_id": instance_id})
@@ -2696,50 +2755,8 @@ async def scale_app(app_id: int, req: ScaleRequest, db: AsyncSession = Depends(g
 
 @router.delete("/{app_id}/replicas/{replica_id}")
 async def remove_replica(app_id: int, replica_id: int, db: AsyncSession = Depends(get_db), actor: str = Depends(_auth.get_current_actor)):
-    app = await _get_or_404(app_id, db)
-    local_node = await ensure_local_node(db)
-
-    replica_result = await db.execute(
-        select(ApplicationReplica).where(ApplicationReplica.id == replica_id, ApplicationReplica.app_id == app_id)
-    )
-    replica = replica_result.scalar_one_or_none()
-    if not replica:
-        raise HTTPException(404, "Replica not found")
-
-    replica_node = None
-    if replica.node_id:
-        node_result = await db.execute(select(Node).where(Node.id == replica.node_id))
-        replica_node = node_result.scalar_one_or_none()
-
-    if replica_node and replica_node.is_local:
-        await asyncio.to_thread(pm.stop_docker_replica, app_id, replica_id)
-    elif replica_node and replica_node.status == "online":
-        await queue_node_command(
-            db, node_id=replica_node.id, app_id=app_id,
-            command_type="stop_replica",
-            payload={"app_id": app_id, "replica_id": replica_id, "app_name": app.name},
-        )
-
-    await db.delete(replica)
-
-    # Regenerate nginx without the removed backend
-    if app.nginx_enabled and app.domain:
-        await db.flush()
-        backends = await _get_nginx_backends(app, db, local_node)
-        _ensure_maintenance_files(app, app_id)
-        _ssl_cert, _ssl_key = _resolve_ssl_paths(app.ssl_cert_path, app.ssl_key_path)
-        config = nm.generate_config(
-            app.name, app.domain, backends,
-            _ssl_cert, _ssl_key,
-            app_id=app_id, mode=_get_nginx_mode(app),
-            extra_domains=json.loads(app.extra_domains or "[]"),
-            redirect_domains=json.loads(app.redirect_domains or "[]"),
-        )
-        nm.write_nginx_config(app.name, config)
-
-    await log_audit(db, "app.scale_down", actor=actor, app_id=app_id, detail={"replica_id": replica_id})
-    await db.commit()
-    return {"ok": True}
+    """Alias for DELETE /instances/{id} — kept for backwards compatibility."""
+    return await delete_instance(app_id, replica_id, db=db, actor=actor)
 
 
 @router.post("/{app_id}/pull")
@@ -2816,6 +2833,24 @@ async def git_pull(app_id: int, payload: PullRequest | None = Body(default=None)
 
         app.docker_image = dm.image_name(app_id, app.name)
         await log_audit(db, "app.pull", actor=actor, app_id=app_id, detail={"name": app.name, "commit": commit_info})
+
+        # Push updated source to all remote nodes that have instances for this app
+        remote_replica_result = await db.execute(
+            select(ApplicationReplica, Node)
+            .join(Node, ApplicationReplica.node_id == Node.id)
+            .where(ApplicationReplica.app_id == app_id, Node.is_local == False, Node.status == "online")
+        )
+        remote_nodes_notified: set[int] = set()
+        for _, r_node in remote_replica_result.all():
+            if r_node.id not in remote_nodes_notified:
+                await queue_node_command(
+                    db, node_id=r_node.id, app_id=app_id,
+                    command_type="refresh_source",
+                    payload={"app_id": app_id, "app_name": app.name, "commit": commit_info},
+                )
+                action_logs.append(f"[Remote] Queued source refresh on node '{r_node.name}'.")
+                remote_nodes_notified.add(r_node.id)
+
         await db.commit()
         if was_running:
             action_logs.append("[Docker] Image rebuilt. Running container left untouched (no stop/restart). Restart manually to use the new image.")

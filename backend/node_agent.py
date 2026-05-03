@@ -697,36 +697,108 @@ async def _find_local_app_by_name(client: httpx.AsyncClient, headers, app_name: 
     return None
 
 
-async def _ensure_replica_app_deployed(client: httpx.AsyncClient, state, main_id, payload, headers) -> int:
-    app_name = payload.get("app_name") or payload.get("name")
-    if not app_name:
-        raise RuntimeError("Missing app_name for remote replica bootstrap")
+async def _fetch_source_archive(client: httpx.AsyncClient, state, main_id: int, app_name: str, headers) -> str:
+    """Download source archive from primary and extract to local app dir. Returns app_dir path."""
+    import tarfile, io
+    app_dir = os.path.join(os.path.expanduser("~/.cloudbase/apps"), app_name.lower().replace(" ", "-"))
+    os.makedirs(app_dir, exist_ok=True)
 
+    main_base = state.main_url.rstrip("/")
+    url = f"{main_base}/api/apps/{main_id}/source-archive"
+    _agent_log(f"[source-archive] Downloading source for app {app_name} from {url}")
+    resp = await client.get(url, headers=headers, timeout=300)
+    resp.raise_for_status()
+
+    def _extract(data: bytes) -> None:
+        with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
+            tar.extractall(path=app_dir)
+
+    await asyncio.to_thread(_extract, resp.content)
+    _agent_log(f"[source-archive] Extracted {len(resp.content)//1024}KB to {app_dir}")
+    return app_dir
+
+
+async def _ensure_source_and_image(client: httpx.AsyncClient, state, main_id: int, payload: dict, headers) -> tuple[str, int]:
+    """Ensure source is present locally and Docker image is built for this architecture.
+    Returns (app_dir, local_app_id)."""
+    import docker as _docker
+    import re as _re
+
+    app_name = payload.get("app_name") or payload.get("name") or ""
+    if not app_name:
+        raise RuntimeError("Missing app_name")
+
+    # Download source from primary (always, to stay in sync)
+    app_dir = await _fetch_source_archive(client, state, main_id, app_name, headers)
+
+    # Register/update the app in the local Cloudbase DB so images get the right name
     local_app = await _find_local_app_by_name(client, headers, app_name)
-    if local_app:
-        local_id = int(local_app["id"])
+    if not local_app:
+        reg_payload = {
+            "name": app_name,
+            "repo_url": "local://primary",  # placeholder — source comes from primary, not git
+            "start_command": payload.get("start_command"),
+            "port": payload.get("internal_port") or payload.get("port") or 8000,
+            "docker_cpu_limit": payload.get("docker_cpu_limit"),
+            "docker_memory_limit_mb": payload.get("docker_memory_limit_mb"),
+            "docker_read_only_root": payload.get("docker_read_only_root"),
+            "docker_tmpfs_enabled": payload.get("docker_tmpfs_enabled"),
+            "docker_tmpfs_size_mb": payload.get("docker_tmpfs_size_mb"),
+            "env_vars": payload.get("env_vars") or {},
+            "auto_start": False,
+            "restart_policy": payload.get("restart_policy") or "no",
+            "use_docker": True,
+        }
+        resp = await client.post(f"{_LOCAL_API_BASE}/api/apps", json=reg_payload, headers=headers, timeout=60)
+        if resp.status_code == 400 and "already exists" in resp.text:
+            local_app = await _find_local_app_by_name(client, headers, app_name)
+        else:
+            resp.raise_for_status()
+            local_app = resp.json()
+
+    local_id = int(local_app["id"])
+    if main_id:
         state.app_id_map[str(main_id)] = local_id
         _save_state(state)
-        return local_id
 
-    deploy_payload = {
-        "name": app_name,
-        "repo_url": payload.get("repo_url"),
-        "github_token": payload.get("github_token"),
-        "start_command": payload.get("start_command"),
-        "port": payload.get("internal_port", 8000),
-        "docker_cpu_limit": payload.get("docker_cpu_limit"),
-        "docker_memory_limit_mb": payload.get("docker_memory_limit_mb"),
-        "docker_read_only_root": payload.get("docker_read_only_root"),
-        "docker_tmpfs_enabled": payload.get("docker_tmpfs_enabled"),
-        "docker_tmpfs_size_mb": payload.get("docker_tmpfs_size_mb"),
-        "env_vars": payload.get("env_vars") or {},
-        "auto_start": False,
-        "restart_policy": payload.get("restart_policy"),
-        "use_docker": True,
-    }
-    result = await cmd_deploy_app(client, state, main_id, deploy_payload, headers)
-    return int(result["local_app_id"])
+    # Patch working_dir on the local app record so rebuild works correctly
+    await client.put(
+        f"{_LOCAL_API_BASE}/api/apps/{local_id}",
+        json={"start_command": payload.get("start_command") or local_app.get("start_command")},
+        headers=headers, timeout=30,
+    )
+    # Set working_dir directly via the internal API (it's set by _deploy_app normally)
+    # We write it to the local DB via a small internal call
+    await client.post(
+        f"{_LOCAL_API_BASE}/api/apps/{local_id}/set-working-dir",
+        json={"working_dir": app_dir},
+        headers=headers, timeout=10,
+    )
+
+    # Build Docker image natively for this node's architecture
+    safe = _re.sub(r"[^a-z0-9_-]", "-", app_name.lower())
+    img = f"cloudbase/{safe}-{local_id}:latest"
+    app_type = payload.get("app_type") or "unknown"
+    start_cmd = payload.get("start_command") or ""
+    port = payload.get("internal_port") or payload.get("port") or 8000
+
+    _agent_log(f"[source-archive] Building image {img} for {platform.machine()}")
+    build_proc = await asyncio.to_thread(
+        subprocess.run,
+        ["docker", "build", "-t", img, app_dir],
+        capture_output=True, text=True, timeout=900,
+    )
+    if build_proc.returncode != 0:
+        raise RuntimeError(f"Docker build failed:\n{build_proc.stderr[-2000:]}")
+    _agent_log(f"[source-archive] Image {img} built successfully")
+
+    return app_dir, local_id
+
+
+async def _ensure_replica_app_deployed(client: httpx.AsyncClient, state, main_id, payload, headers) -> int:
+    """Ensure source is fetched from primary and image is built locally. Returns local_app_id."""
+    _, local_id = await _ensure_source_and_image(client, state, main_id, payload, headers)
+    return local_id
 
 
 async def cmd_start_replica(client, state, main_id, payload, headers):
@@ -776,6 +848,18 @@ async def cmd_stop_replica(client, state, main_id, payload, headers):
     return resp.json()
 
 
+async def cmd_refresh_source(client, state, main_id, payload, headers):
+    """Download fresh source from primary and rebuild the Docker image for this architecture.
+    Called automatically after a git pull on the primary node."""
+    app_name = payload.get("app_name") or ""
+    if not app_name:
+        raise RuntimeError("Missing app_name in refresh_source payload")
+
+    app_dir, local_id = await _ensure_source_and_image(client, state, main_id, payload, headers)
+    _agent_log(f"[refresh_source] app={app_name} rebuilt from primary source at {app_dir}")
+    return {"ok": True, "local_app_id": local_id, "app_dir": app_dir}
+
+
 # ─── Command Dispatcher ───────────────────────────────────────────────────────
 
 COMMAND_HANDLERS: Dict[str, Callable] = {
@@ -803,6 +887,7 @@ COMMAND_HANDLERS: Dict[str, Callable] = {
     "delete_app": cmd_delete_app,
     "start_replica": cmd_start_replica,
     "stop_replica": cmd_stop_replica,
+    "refresh_source": cmd_refresh_source,
 }
 
 async def _execute_command(

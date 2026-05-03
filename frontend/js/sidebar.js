@@ -1,5 +1,5 @@
 import { api } from './api.js';
-import { toast } from './utils.js';
+import { toast, confirm } from './utils.js';
 
 const STATUS_DOT = {
   running:  'var(--green)',
@@ -995,7 +995,7 @@ async function renderUsersList(modal) {
       });
 
       row.querySelector('.user-delete-btn')?.addEventListener('click', async () => {
-        if (!confirm(`Delete user "${username}"?`)) return;
+        if (!await confirm(`Delete user "${username}"?`, 'This cannot be undone.')) return;
         try {
           await api.deleteUser(id);
           await renderUsersList(modal);

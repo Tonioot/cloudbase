@@ -322,13 +322,21 @@ function _updateNodeChart(chart, data) {
 }
 
 
+function _emptyState(svgPath, label) {
+    const svg = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">${svgPath}</svg>`;
+    return `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;height:100%;color:var(--text-muted)">${svg}<span style="font-size:11px;font-weight:500;opacity:0.5">${label}</span></div>`;
+}
+
 function renderApps() {
     const grid = document.getElementById('node-apps-grid');
     if (!apps.length) {
-        const appSvg = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>`;
-        grid.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;height:100%;color:var(--text-muted)">${appSvg}<span style="font-size:11px;font-weight:500;opacity:0.5">No applications</span></div>`;
+        grid.style.display = 'flex';
+        grid.style.alignItems = 'center';
+        grid.style.justifyContent = 'center';
+        grid.innerHTML = _emptyState('<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>', 'No applications');
         return;
     }
+    grid.style.display = '';
     const dotColor = { running:'var(--green)', stopped:'var(--text-muted)', error:'var(--red)', deploying:'var(--yellow)', starting:'var(--yellow)', stopping:'var(--yellow)' };
     const bgColor  = { running:'var(--green-bg)', stopped:'var(--bg-muted)', error:'var(--red-bg)', deploying:'var(--yellow-bg)', starting:'var(--yellow-bg)', stopping:'var(--yellow-bg)' };
     const txtColor = { running:'var(--green)', stopped:'var(--text-muted)', error:'var(--red)', deploying:'var(--yellow)', starting:'var(--yellow)', stopping:'var(--yellow)' };
@@ -418,13 +426,19 @@ function _isNearBottom(el, threshold = 28) {
 async function loadHistory() {
     const list = document.getElementById('node-history-list');
     if (!list) return;
+    list.style.alignItems = '';
+    list.style.justifyContent = '';
     list.innerHTML = `<div style="padding:12px 0;font-size:12px;color:var(--text-muted)">${spinner} Loading…</div>`;
     try {
         const history = await api.listNodeCommands(NODE_ID);
         if (!history.length) {
-            list.innerHTML = `<div style="font-size:12px;color:var(--text-muted)">No command history.</div>`;
+            list.style.alignItems = 'center';
+            list.style.justifyContent = 'center';
+            list.innerHTML = _emptyState('<path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>', 'No command history');
             return;
         }
+        list.style.alignItems = '';
+        list.style.justifyContent = '';
         list.innerHTML = history.slice(0, 50).map(c => `
             <div class="card" style="padding:12px 16px">
                 <div style="display:flex;justify-content:space-between">

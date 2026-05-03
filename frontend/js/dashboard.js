@@ -7,10 +7,11 @@ let nodesData = [];
 const _pingIntervals = new Map();
 
 function renderPortRows(app) {
-  if (app.external_port) {
-    return `
-        <div class="app-meta-row">${icon.terminal}<span>Internal Port ${app.port || 'N/A'}</span></div>
-        <div class="app-meta-row">${icon.link}<span>External Port ${app.external_port}</span></div>`;
+  const replicas = app.replicas || [];
+  if (replicas.length) {
+    const ports = replicas.map(r => r.external_port).filter(Boolean);
+    const portStr = ports.length ? ports.map(p => `:${p}`).join(', ') : 'no port';
+    return `<div class="app-meta-row">${icon.terminal}<span>Internal :${app.port || '?'} · ${ports.length} instance${ports.length !== 1 ? 's' : ''} (${portStr})</span></div>`;
   }
   if (app.port) {
     return `<div class="app-meta-row">${icon.terminal}<span>Port ${app.port}</span></div>`;
@@ -470,9 +471,7 @@ function appCardHTML(app) {
         ${nodeOfflineMeta}
         ${app.domain ? `<div class="app-meta-row">${icon.globe}<span>${app.domain}</span></div>` : ''}
         ${renderPortRows(app)}
-        <div class="app-meta-row">${icon.server}<span style="color:${nodeOffline ? 'var(--red)' : 'inherit'}">Node: ${nodeLabel} (${nodeStatus})</span></div>
         <div class="app-meta-row">${icon.link}<span>${repoShort}</span></div>
-        ${(app.replica_count || 0) > 0 ? `<div class="app-meta-row"><span style="color:#58a6ff;font-size:11px;font-weight:600;letter-spacing:.04em">${app.replica_count + 1} REPLICAS</span></div>` : ''}
       </div>
 
       <div class="app-card-actions">

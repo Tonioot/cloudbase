@@ -71,22 +71,23 @@ function _syncStatsViewFromAppStatus() {
 
 /* ─── Header ────────────────────────────────────────────────────────────── */
 function formatPortSummary(app) {
-  if (!app?.port && !app?.external_port) return 'Ports N/A';
-  if (app?.external_port) {
-    return `Internal ${app.port || 'N/A'} · External ${app.external_port}`;
+  const replicas = app.replicas || [];
+  const running = replicas.filter(r => r.status === 'running');
+  const total = replicas.length;
+  if (total === 0) {
+    return app.port ? `Port ${app.port}` : 'No instances';
   }
-  return `Port ${app.port || 'N/A'}`;
+  const ports = running.map(r => r.external_port).filter(Boolean);
+  const portStr = ports.length ? ports.map(p => `:${p}`).join(' ') : '';
+  return `${running.length}/${total} instances running${portStr ? ` (${portStr})` : ''}`;
 }
 
 function renderHeader() {
   document.getElementById('app-name').textContent = app.name;
   document.getElementById('app-name-crumb').textContent = app.name;
   document.title = `${app.name} — Cloudbase`;
-  const nodeLabel = app.node?.is_local ? 'Primary Node' : (app.node?.name || 'Primary Node');
-  const replicaCount = app.replica_count || 0;
-  const instanceLabel = replicaCount > 0 ? ` · ${replicaCount} instance${replicaCount !== 1 ? 's' : ''}` : '';
   document.getElementById('app-meta').textContent =
-    `${app.app_type || 'unknown'} · ${formatPortSummary(app)}${instanceLabel} · ${nodeLabel} (${(app.node && app.node.status) || 'online'})`;
+    `${app.app_type || 'unknown'} · ${formatPortSummary(app)}`;
 
   const typeIconEl = document.getElementById('app-type-icon');
   if (typeIconEl) typeIconEl.innerHTML = typeIcon[app.app_type] || typeIcon.unknown;

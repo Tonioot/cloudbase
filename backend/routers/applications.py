@@ -2393,46 +2393,14 @@ async def list_replicas(app_id: int, db: AsyncSession = Depends(get_db)):
 
 @router.get("/{app_id}/instances")
 async def list_instances(app_id: int, db: AsyncSession = Depends(get_db)):
-    """Return all instances for an app.
-
-    For apps using the new instance model (have ApplicationReplica rows), returns
-    only the real replica rows. For legacy apps (no replicas), returns a synthetic
-    primary entry for backwards compatibility.
-    """
-    app = await _get_or_404(app_id, db)
-    local_node = await ensure_local_node(db)
+    """Return all instances (ApplicationReplica rows) for an app."""
+    await _get_or_404(app_id, db)
     node_map = await _load_node_map(db)
-
     rep_result = await db.execute(
         select(ApplicationReplica).where(ApplicationReplica.app_id == app_id)
         .order_by(ApplicationReplica.id)
     )
-    replicas = rep_result.scalars().all()
-
-    if replicas:
-        # Instance-based model: return only real instances
-        return [
-            {**_replica_to_dict(r, node_map.get(r.node_id)), "is_primary": False}
-            for r in replicas
-        ]
-
-    # Legacy fallback: synthetic primary entry
-    app_node = node_map.get(app.node_id) or local_node
-    return [{
-        "id": 0,
-        "app_id": app.id,
-        "node_id": app.node_id or app_node.id,
-        "node_name": app_node.name if app_node else None,
-        "node_is_local": bool(app_node.is_local) if app_node else True,
-        "external_port": app.external_port,
-        "tunnel_port": None,
-        "tunnel_connected": False,
-        "container_id": None,
-        "status": app.status,
-        "last_error": app.last_error,
-        "is_primary": True,
-        "created_at": app.created_at.isoformat() if app.created_at else None,
-    }]
+    return [_replica_to_dict(r, node_map.get(r.node_id)) for r in rep_result.scalars().all()]
 
 
 @router.get("/{app_id}/replicas/{replica_id}/logs")

@@ -1087,10 +1087,9 @@ function initSettings() {
 
   // Action tiles
   document.getElementById('tile-pull').onclick = () => tileAction('pull', 'Pull');
-  document.getElementById('tile-rebuild').onclick = () => tileAction('rebuild', 'Rebuild');
   document.getElementById('tile-nginx').onclick = openNginxModal;
 
-  const zdBtn = document.getElementById('tile-zero-downtime');
+  const zdBtn = document.getElementById('btn-zero-downtime');
   if (zdBtn) {
     if (app.use_docker && app.nginx_enabled) {
       zdBtn.style.display = '';
@@ -1102,28 +1101,24 @@ function initSettings() {
       );
       if (!ok) return;
       zdBtn.disabled = true;
-      const origTitle = zdBtn.querySelector('.action-tile-title').textContent;
-      zdBtn.querySelector('.action-tile-title').textContent = 'Deploying…';
+      const orig = zdBtn.innerHTML;
+      zdBtn.textContent = 'Deploying…';
       try {
         const res = await api.deployZeroDowntime(APP_ID);
-        toast(`Zero-downtime deploy complete — active slot: ${res.active_slot}`, 'success');
+        toast(`Zero-downtime deploy complete — instance ${res.instance_id}`, 'success');
       } catch (e) {
         toast(e.message || 'Zero-downtime deploy failed', 'error');
       } finally {
         zdBtn.disabled = false;
-        zdBtn.querySelector('.action-tile-title').textContent = origTitle;
+        zdBtn.innerHTML = orig;
       }
     };
   }
 
   const pullTitle = document.getElementById('tile-pull-title');
   const pullSub = document.getElementById('tile-pull-sub');
-  const rebuildTitle = document.getElementById('tile-rebuild-title');
-  const rebuildSub = document.getElementById('tile-rebuild-sub');
   if (pullTitle) pullTitle.textContent = 'Pull + Rebuild';
   if (pullSub) pullSub.textContent = 'Pick a commit, sync code, and rebuild without stop/restart';
-  if (rebuildTitle) rebuildTitle.textContent = 'Rebuild Image';
-  if (rebuildSub) rebuildSub.textContent = 'Rebuild current code without git pull (no auto-restart)';
 
   // Cert scan buttons (search within app folder only)
   document.getElementById('cfg-scan-cert').onclick = async () => {

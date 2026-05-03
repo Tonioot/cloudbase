@@ -124,6 +124,10 @@
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/></svg>
             Update Mode
           </button>
+          <button class="btn btn-primary" id="btn-zero-downtime" data-admin style="display:none" title="Build new image, verify health, then atomically swap nginx — no downtime">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+            ZD Deploy
+          </button>
         </div>
       </div>
 
@@ -512,15 +516,6 @@
                       <div class="action-tile-sub" id="tile-pull-sub">Fetch updates from repository</div>
                     </div>
                   </button>
-                  <button class="action-tile" id="tile-rebuild" data-admin>
-                    <div class="action-tile-icon">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/><path d="M7 12h10"/></svg>
-                    </div>
-                    <div>
-                      <div class="action-tile-title" id="tile-rebuild-title">Rebuild Image</div>
-                      <div class="action-tile-sub" id="tile-rebuild-sub">Rebuild Docker image and restart if running</div>
-                    </div>
-                  </button>
                   <button class="action-tile" id="tile-nginx" data-admin>
                     <div class="action-tile-icon">
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
@@ -528,15 +523,6 @@
                     <div>
                       <div class="action-tile-title">Nginx Config</div>
                       <div class="action-tile-sub">View &amp; edit reverse proxy config</div>
-                    </div>
-                  </button>
-                  <button class="action-tile" id="tile-zero-downtime" data-admin style="display:none">
-                    <div class="action-tile-icon" style="color:var(--green)">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
-                    </div>
-                    <div>
-                      <div class="action-tile-title">Zero-downtime Deploy</div>
-                      <div class="action-tile-sub">Blue-green swap — no maintenance page shown</div>
                     </div>
                   </button>
                 </div>

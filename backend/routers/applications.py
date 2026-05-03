@@ -2613,6 +2613,8 @@ async def deploy_zero_downtime(app_id: int, db: AsyncSession = Depends(get_db), 
 
     # ── Determine target nodes from currently running replicas ─────────────────
     # Use replica node_id instead of app.node_id (which is null for replica-model apps).
+    # Keep one entry per *running replica* so that if node A has 3 replicas, we start
+    # 3 new replacements on that same node (not just 1).
     running_res = await db.execute(
         select(ApplicationReplica).where(
             ApplicationReplica.app_id == app_id,
@@ -2622,12 +2624,21 @@ async def deploy_zero_downtime(app_id: int, db: AsyncSession = Depends(get_db), 
     running_replicas = running_res.scalars().all()
 
     if running_replicas:
+        # Build list of (node, old_replica) pairs — one entry per replica to replace
         unique_nids = list({r.node_id for r in running_replicas if r.node_id})
         nodes_res = await db.execute(select(Node).where(Node.id.in_(unique_nids)))
-        target_nodes: list[Node] = nodes_res.scalars().all()
+        node_map: dict[int, Node] = {n.id: n for n in nodes_res.scalars().all()}
+        # target_slots: one entry per running replica we intend to replace
+        target_slots: list[Node] = [
+            node_map[r.node_id] for r in running_replicas if r.node_id and r.node_id in node_map
+        ]
+        # Deduplicate unique nodes for the build/refresh step
+        target_nodes: list[Node] = list({n.id: n for n in target_slots}.values())
     else:
-        # No running replicas yet — fall back to the app's assigned node
-        target_nodes = [await _get_app_node(app, db, local_node)]
+        # No running replicas yet — fall back to app's assigned node, create one replica
+        fallback = await _get_app_node(app, db, local_node)
+        target_nodes = [fallback]
+        target_slots = [fallback]
 
     env_vars = decrypt_env(app.env_vars or "")
 
@@ -2670,11 +2681,11 @@ async def deploy_zero_downtime(app_id: int, db: AsyncSession = Depends(get_db), 
                 raise HTTPException(500, f"Source refresh failed on node '{tnode.name}': {refresh_done.error_message}")
             pm._push_line(app_id, f"[ZD] Source refreshed on node '{tnode.name}'.")
 
-    # ── Step 2: Create new replica rows and start containers on each node ────
+    # ── Step 2: Create new replica rows and start containers on each slot ────
     # new_entries: list of (node, replica_id) — kept for rollback and nginx assembly
     new_entries: list[tuple[Node, int]] = []
 
-    for tnode in target_nodes:
+    for tnode in target_slots:
         new_ext_port = await _assign_external_port(None, tnode.id, None, db)
         new_replica = ApplicationReplica(
             app_id=app_id,

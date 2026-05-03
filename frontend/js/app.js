@@ -1725,7 +1725,7 @@ async function initInstances() {
             <div class="dialog-body" style="color:var(--text-secondary);font-size:13px;line-height:1.5">
               <div style="margin-bottom:12px;font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em">Node</div>
               <select id="inst-node-select" style="width:100%;padding:7px 10px;background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px;font-size:13px;margin-bottom:16px">
-                <option value="">Local (this machine)</option>
+                <option value="">Primary node</option>
                 ${available.filter(n => !n.is_local).map(n => `<option value="${n.id}">${n.name} (${n.public_host || n.status})</option>`).join('')}
               </select>
               <div style="margin-bottom:8px;font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em">Docker Runtime <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional overrides)</span></div>

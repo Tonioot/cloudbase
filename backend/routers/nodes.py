@@ -790,6 +790,7 @@ async def agent_ws(websocket: WebSocket):
 
         async with AsyncSessionLocal() as db:
             node = await get_node_by_token_or_401(token, db)
+            was_offline = node.status == "offline"
             node.status = "online"
             node.last_seen = _utcnow()
             node.offline_since = None
@@ -804,6 +805,9 @@ async def agent_ws(websocket: WebSocket):
                 pass
         _node_ws_connections[node_id] = websocket
         _get_node_event(node_id).set()
+
+        if was_offline:
+            asyncio.create_task(recover_node_replicas(node_id))
 
         log.info("WS agent authenticated: node '%s' (id=%d) from %s", node.name, node_id, client_addr)
 
@@ -829,6 +833,7 @@ async def agent_ws(websocket: WebSocket):
                 # Only mark offline when this websocket is still the active one.
                 if _node_ws_connections.get(node_id) is None:
                     async with AsyncSessionLocal() as db:
+                        from models import ApplicationReplica
                         result = await db.execute(select(Node).where(Node.id == node_id))
                         offline_node = result.scalar_one_or_none()
                         if offline_node and offline_node.status != "offline":
@@ -836,6 +841,15 @@ async def agent_ws(websocket: WebSocket):
                             if offline_node.offline_since is None:
                                 offline_node.offline_since = _utcnow()
                             offline_node.connection_type = None
+                            # Mark running replicas so they get recovered on reconnect
+                            rep_res = await db.execute(
+                                select(ApplicationReplica).where(
+                                    and_(ApplicationReplica.node_id == node_id, ApplicationReplica.status == "running")
+                                )
+                            )
+                            for _r in rep_res.scalars().all():
+                                _r.status = "node_offline"
+                                _r.tunnel_port = None
                             await db.commit()
                             log.info("Node id=%d marked offline after WS disconnect", node_id)
                     _push_node_event(node_id, {"type": "node_offline", "node_id": node_id})
@@ -1078,7 +1092,60 @@ async def get_node_command_status(node_id: int, command_id: int, db: AsyncSessio
     }
 
 
+async def recover_node_replicas(node_id: int) -> None:
+    """Queue start_replica for every replica marked node_offline on this node."""
+    from models import Application, ApplicationReplica
+    from env_crypto import decrypt_env
+    from routers.applications import _remote_replica_command_payload
+    import process_manager as pm
+
+    async with AsyncSessionLocal() as db:
+        rep_result = await db.execute(
+            select(ApplicationReplica).where(
+                and_(ApplicationReplica.node_id == node_id, ApplicationReplica.status == "node_offline")
+            )
+        )
+        replicas = rep_result.scalars().all()
+        if not replicas:
+            return
+
+        log.info("Node id=%d reconnected — recovering %d replica(s)", node_id, len(replicas))
+
+        for replica in replicas:
+            app_result = await db.execute(select(Application).where(Application.id == replica.app_id))
+            app = app_result.scalar_one_or_none()
+            if not app:
+                replica.status = "error"
+                replica.last_error = "App not found during node recovery"
+                await db.commit()
+                continue
+
+            try:
+                env_vars = decrypt_env(app.env_vars or "")
+            except Exception:
+                env_vars = {}
+
+            ext_port = replica.external_port or app.port or 8000
+            remote_payload = _remote_replica_command_payload(app, env_vars, ext_port)
+
+            replica.status = "starting"
+            replica.tunnel_port = None
+            replica.last_error = None
+            await db.commit()
+
+            await queue_node_command(
+                db,
+                node_id=node_id,
+                app_id=app.id,
+                command_type="start_replica",
+                payload={**remote_payload, "replica_id": replica.id},
+            )
+            pm._push_line(app.id, f"⟳ Node came back online — recovering instance {replica.id}…")
+            await db.commit()
+
+
 async def mark_stale_nodes_offline(db: AsyncSession) -> None:
+    from models import ApplicationReplica
     result = await db.execute(select(Node).where(and_(Node.enabled == True, Node.is_local == False)))
     nodes = result.scalars().all()
     now = _utcnow()
@@ -1096,6 +1163,15 @@ async def mark_stale_nodes_offline(db: AsyncSession) -> None:
             node.connection_type = None
             changed = True
             _push_node_event(node.id, {"type": "node_offline", "node_id": node.id})
+            # Mark running replicas as node_offline so they get recovered when the node reconnects
+            rep_result = await db.execute(
+                select(ApplicationReplica).where(
+                    and_(ApplicationReplica.node_id == node.id, ApplicationReplica.status == "running")
+                )
+            )
+            for replica in rep_result.scalars().all():
+                replica.status = "node_offline"
+                replica.tunnel_port = None
     if changed:
         await db.commit()
 

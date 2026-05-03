@@ -21,6 +21,11 @@ const BADGE_COLOR = {
   'user.create':            'var(--green)',
   'user.update':            'var(--blue)',
   'user.delete':            'var(--red)',
+  'node.connect':           'var(--green)',
+  'node.enable':            'var(--green)',
+  'node.disable':           'var(--yellow)',
+  'node.rename':            'var(--blue)',
+  'node.delete':            'var(--red)',
 };
 
 export async function initAuditLogs() {

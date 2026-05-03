@@ -62,41 +62,48 @@ usage() {
     cat <<'EOF'
 Usage: cloudbase <command> [options]
 
-Core commands:
-  start            Start Cloudbase
-  stop             Stop Cloudbase
-  restart          Restart Cloudbase
-  status           Show Cloudbase status
-  logs             Show Cloudbase service logs
-  enable           Install or refresh systemd autostart and enable it now
-  disable          Disable systemd autostart and stop the service
-  update           Pull latest changes, reinstall deps and restart
-  uninstall        Completely remove Cloudbase from this system
+The CLI is for server setup and service management.
+Use the web UI at http://localhost:7823 to deploy and manage applications.
 
-Account commands:
-  password         Change the administrator password
+Core:
+  start              Start Cloudbase
+  stop               Stop Cloudbase
+  restart            Restart Cloudbase
+  status             Show service status
+  logs               Show service logs
+  enable             Install systemd autostart and start now
+  disable            Disable systemd autostart and stop service
+  update             Pull latest changes, reinstall deps, restart
+  uninstall          Completely remove Cloudbase from this system
 
-Node commands:
-  connect          Connect this installation as a node to a main Cloudbase
-                                     Options: --main-url <url> --invite-code <code> [--node-name <name>] [--mode <panel+node|node-only>]
-  disconnect       Remove saved node connection state and return to local-only mode
-  node-status      Show node agent connection state
+Info:
+  apps               List all deployed applications
+  nodes              List all connected nodes
 
-Data commands:
-  export [file]    Export database + credentials to a .tar.gz archive
-  import <file>    Restore database + credentials from a .tar.gz archive
+Account:
+  password           Change the administrator password
 
-Nginx commands:
-  nginx <domain>   Set up nginx reverse proxy for the given domain
-  nginx show       Show current nginx config
-  nginx disable    Remove nginx config
-  nginx permissions [user]
-                   Allow Cloudbase to manage app nginx configs without password prompts
+Node:
+  connect            Connect as a node to a main Cloudbase instance
+                       --main-url <url>  --invite-code <code>
+                       [--node-name <name>]  [--mode panel+node|node-only]
+  disconnect         Remove node connection state (return to local-only)
+  node-status        Show current node agent connection state
 
-Certificate commands:
-  cert add <source_path> [target_name]
-  cert list
-  cert path
+Data:
+  export [file]      Export database + credentials to .tar.gz
+  import <file>      Restore database + credentials from .tar.gz
+
+Nginx:
+  nginx <domain>     Set up nginx reverse proxy for a domain
+  nginx show         Show current nginx config
+  nginx disable      Remove nginx config
+  nginx permissions  Allow Cloudbase to manage nginx without sudo prompts
+
+Certificates:
+  cert add <path> [name]   Add certificate to local store
+  cert list                List stored certificates
+  cert path                Show certificate store directory
 EOF
 }
 
@@ -485,6 +492,129 @@ handle_cert_command() {
             exit 1
             ;;
     esac
+}
+
+cmd_apps() {
+    cd "$BACKEND_DIR"
+    if [[ ! -d "$VENV_PATH" ]]; then
+        err "Cloudbase not installed."
+        exit 1
+    fi
+    "$VENV_PATH/bin/python3" - <<'PYEOF'
+import sys
+sys.path.insert(0, '.')
+from database import SessionLocal
+from models import App
+
+db = SessionLocal()
+apps = db.query(App).all()
+db.close()
+
+if not apps:
+    print("No applications deployed.")
+    sys.exit(0)
+
+rows = []
+for a in apps:
+    name   = a.name or "—"
+    status = a.status or "unknown"
+    node   = a.node.name if a.node else "primary"
+    port   = str(a.external_port or a.port or "—")
+    atype  = a.app_type or "—"
+    rows.append((name, status, node, port, atype))
+
+cols   = ["NAME", "STATUS", "NODE", "PORT", "TYPE"]
+widths = [max(len(cols[i]), max(len(r[i]) for r in rows)) for i in range(5)]
+
+GREEN = "\033[32m"; RED = "\033[31m"; YELLOW = "\033[33m"; RESET = "\033[0m"
+def color(s):
+    if s == "running":  return GREEN + s + RESET
+    if s == "error":    return RED + s + RESET
+    if s in ("stopped", "deploying", "starting", "stopping"): return YELLOW + s + RESET
+    return s
+
+header = "  ".join(f"{cols[i]:<{widths[i]}}" for i in range(5))
+sep    = "  ".join("─" * w for w in widths)
+print(header)
+print(sep)
+for r in rows:
+    pad  = widths[1] - len(r[1])
+    line = "  ".join([
+        f"{r[0]:<{widths[0]}}",
+        color(r[1]) + " " * pad,
+        f"{r[2]:<{widths[2]}}",
+        f"{r[3]:<{widths[3]}}",
+        f"{r[4]:<{widths[4]}}",
+    ])
+    print(line)
+PYEOF
+}
+
+cmd_nodes() {
+    cd "$BACKEND_DIR"
+    if [[ ! -d "$VENV_PATH" ]]; then
+        err "Cloudbase not installed."
+        exit 1
+    fi
+    "$VENV_PATH/bin/python3" - <<'PYEOF'
+import sys, datetime
+sys.path.insert(0, '.')
+from database import SessionLocal
+from models import Node, App
+
+db = SessionLocal()
+nodes = db.query(Node).all()
+app_counts = {}
+for a in db.query(App).all():
+    app_counts[a.node_id] = app_counts.get(a.node_id, 0) + 1
+db.close()
+
+if not nodes:
+    print("No nodes registered.")
+    sys.exit(0)
+
+def time_ago(dt):
+    if not dt: return "—"
+    secs = int((datetime.datetime.utcnow() - dt).total_seconds())
+    if secs < 10:    return "just now"
+    if secs < 60:    return f"{secs}s ago"
+    if secs < 3600:  return f"{secs//60}m ago"
+    if secs < 86400: return f"{secs//3600}h ago"
+    return f"{secs//86400}d ago"
+
+rows = []
+for n in nodes:
+    name   = n.name or "—"
+    status = n.status or "unknown"
+    ntype  = "local" if n.is_local else ("WS" if n.websocket_connected else "offline")
+    apps   = str(app_counts.get(n.id, 0))
+    seen   = "—" if n.is_local else time_ago(n.last_seen)
+    rows.append((name, status, ntype, apps, seen))
+
+cols   = ["NAME", "STATUS", "TYPE", "APPS", "LAST SEEN"]
+widths = [max(len(cols[i]), max(len(r[i]) for r in rows)) for i in range(5)]
+
+GREEN = "\033[32m"; RED = "\033[31m"; YELLOW = "\033[33m"; RESET = "\033[0m"
+def color(s):
+    if s == "online":  return GREEN + s + RESET
+    if s == "offline": return RED + s + RESET
+    return YELLOW + s + RESET
+
+header = "  ".join(f"{cols[i]:<{widths[i]}}" for i in range(5))
+sep    = "  ".join("─" * w for w in widths)
+print(header)
+print(sep)
+for r in rows:
+    pad  = widths[1] - len(r[1])
+    line = "  ".join([
+        f"{r[0]:<{widths[0]}}",
+        color(r[1]) + " " * pad,
+        f"{r[2]:<{widths[2]}}",
+        f"{r[3]:<{widths[3]}}",
+        f"{r[4]:<{widths[4]}}",
+    ])
+    print(line)
+PYEOF
 }
 
 cmd_password() {
@@ -936,6 +1066,12 @@ case "$COMMAND" in
         sudo rm -rf "$HOME/.cloudbase"
 
         printf '[%s] [OK] Cloudbase has been completely removed from this system\n' "$(timestamp)"
+        ;;
+    apps)
+        cmd_apps
+        ;;
+    nodes)
+        cmd_nodes
         ;;
     *)
         err "Unknown command: $COMMAND"

@@ -13,6 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db, AsyncSessionLocal
 from models import Node, NodeCommand, NodeInvite
+from audit import log_audit
+import auth as _auth
 
 log = logging.getLogger("cloudbase.nodes")
 
@@ -645,6 +647,7 @@ async def register_node(req: RegisterNodeRequest, db: AsyncSession = Depends(get
     invite.used_at = now
     invite.node_id = node.id
 
+    await log_audit(db, "node.connect", actor="agent", detail={"name": node.name, "node_id": node.id})
     await db.commit()
     await db.refresh(node)
 
@@ -918,15 +921,16 @@ async def agent_ws(websocket: WebSocket):
 
 
 @router.post("/{node_id}/enable")
-async def enable_node(node_id: int, db: AsyncSession = Depends(get_db)):
+async def enable_node(node_id: int, db: AsyncSession = Depends(get_db), actor: str = Depends(_auth.get_current_actor)):
     node = await get_node_or_404(node_id, db)
     node.enabled = True
+    await log_audit(db, "node.enable", actor=actor, detail={"name": node.name, "node_id": node_id})
     await db.commit()
     return _as_node_dict(node)
 
 
 @router.post("/{node_id}/disable")
-async def disable_node(node_id: int, db: AsyncSession = Depends(get_db)):
+async def disable_node(node_id: int, db: AsyncSession = Depends(get_db), actor: str = Depends(_auth.get_current_actor)):
     node = await get_node_or_404(node_id, db)
     if node.is_local:
         raise HTTPException(400, "Local node cannot be disabled")
@@ -934,6 +938,7 @@ async def disable_node(node_id: int, db: AsyncSession = Depends(get_db)):
     node.status = "offline"
     if node.offline_since is None:
         node.offline_since = _utcnow()
+    await log_audit(db, "node.disable", actor=actor, detail={"name": node.name, "node_id": node_id})
     await db.commit()
     return _as_node_dict(node)
 
@@ -943,8 +948,9 @@ class NodeUpdateRequest(BaseModel):
 
 
 @router.patch("/{node_id}")
-async def update_node(node_id: int, req: NodeUpdateRequest, db: AsyncSession = Depends(get_db)):
+async def update_node(node_id: int, req: NodeUpdateRequest, db: AsyncSession = Depends(get_db), actor: str = Depends(_auth.get_current_actor)):
     node = await get_node_or_404(node_id, db)
+    old_name = node.name
     if req.name is not None:
         name = req.name.strip()
         if not name:
@@ -953,13 +959,14 @@ async def update_node(node_id: int, req: NodeUpdateRequest, db: AsyncSession = D
         if existing.scalar_one_or_none():
             raise HTTPException(409, "A node with that name already exists")
         node.name = name
+    await log_audit(db, "node.rename", actor=actor, detail={"old_name": old_name, "new_name": node.name, "node_id": node_id})
     await db.commit()
     await db.refresh(node)
     return _as_node_dict(node)
 
 
 @router.delete("/{node_id}")
-async def delete_node(node_id: int, db: AsyncSession = Depends(get_db)):
+async def delete_node(node_id: int, db: AsyncSession = Depends(get_db), actor: str = Depends(_auth.get_current_actor)):
     node = await get_node_or_404(node_id, db)
     if node.is_local:
         raise HTTPException(400, "Local node cannot be deleted")
@@ -974,9 +981,11 @@ async def delete_node(node_id: int, db: AsyncSession = Depends(get_db)):
             f"Cannot remove node: {app_count} app{'s' if app_count != 1 else ''} still assigned to it. "
             "Move or delete all apps first."
         )
+    node_name = node.name
     await db.execute(delete(NodeCommand).where(NodeCommand.node_id == node_id))
     await db.execute(delete(NodeInvite).where(NodeInvite.node_id == node_id))
     await db.delete(node)
+    await log_audit(db, "node.delete", actor=actor, detail={"name": node_name, "node_id": node_id})
     await db.commit()
     return {"ok": True}
 

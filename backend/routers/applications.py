@@ -1427,6 +1427,7 @@ async def move_app(app_id: int, req: MoveRequest, db: AsyncSession = Depends(get
     # Reassign to target node and reset state
     app.node_id = target_node.id
     app.port = chosen_port
+    app.external_port = await _assign_external_port(app.external_port, target_node.id, app.id, db)
     app.status = "stopped"
     app.pid = None
     app.working_dir = None
@@ -1562,6 +1563,12 @@ async def move_app(app_id: int, req: MoveRequest, db: AsyncSession = Depends(get
                 "ssl_key_path": new_key_path,
                 "start_command": app.start_command,
                 "port": app.port,
+                "external_port": app.external_port,
+                "docker_cpu_limit": app.docker_cpu_limit,
+                "docker_memory_limit_mb": app.docker_memory_limit_mb,
+                "docker_read_only_root": bool(app.docker_read_only_root),
+                "docker_tmpfs_enabled": bool(app.docker_tmpfs_enabled),
+                "docker_tmpfs_size_mb": app.docker_tmpfs_size_mb,
                 "env_vars": decrypt_env(app.env_vars or ""),
                 "auto_start": False,
                 "restart_policy": app.restart_policy,
@@ -1668,7 +1675,33 @@ async def start_app(app_id: int, db: AsyncSession = Depends(get_db), actor: str 
                         "status": "starting",
                         "message": "A Docker build/start is already in progress for this app.",
                     }
-                raise HTTPException(500, f"Failed to start Docker app: {retry_e}") from retry_e
+                bind_conflict = (
+                    "bind for 0.0.0.0" in msg.lower()
+                    or "port is already allocated" in msg.lower()
+                    or "failed to set up container networking" in msg.lower()
+                )
+                if bind_conflict:
+                    old_port = app.external_port or app.port or 8000
+                    new_port = await _assign_external_port(None, app.node_id or node.id, app.id, db)
+                    app.external_port = new_port
+                    await db.commit()
+                    pm._push_line(
+                        app_id,
+                        f"[Docker] Host port conflict on :{old_port}; retrying start on free port :{new_port}...",
+                    )
+                    try:
+                        container_id = await asyncio.to_thread(
+                            pm.start_docker_app,
+                            app_id, app.name, app.working_dir,
+                            app.port or 8000, new_port,
+                            env_vars, app.app_type or "unknown", app.start_command or "",
+                            _docker_runtime_options(app),
+                            False,
+                        )
+                    except Exception as final_e:
+                        raise HTTPException(500, f"Failed to start Docker app after port reassignment: {final_e}") from final_e
+                else:
+                    raise HTTPException(500, f"Failed to start Docker app: {retry_e}") from retry_e
         app.pid = None
         app.docker_image = dm.image_name(app_id, app.name)
         app.status = "running"

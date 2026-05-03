@@ -384,7 +384,7 @@ function initLogs() {
     _logsInitDone = true;
     api.listInstances(APP_ID).then(instances => {
       if (!select) return;
-      select.innerHTML = '<option value="primary">Primary (live)</option>';
+      select.innerHTML = '<option value="primary">Instance 0 (live)</option>';
       instances.filter(i => !i.is_primary).forEach(r => {
         const label = `Instance #${r.id} — ${r.node_name || 'local'} :${r.external_port || '?'}`;
         const opt = document.createElement('option');
@@ -1613,7 +1613,7 @@ async function initInstances() {
             : '<span style="color:#f85149;font-size:11px">&#x25cb; disconnected</span>';
 
       const nodeName = inst.is_primary
-        ? `${inst.node_name || 'Local'} <span style="background:#1f6feb;color:#e6edf3;font-size:10px;padding:1px 5px;border-radius:3px;margin-left:4px">primary</span>`
+        ? `${inst.node_name || 'Local'} <span style="background:#1f6feb;color:#e6edf3;font-size:10px;padding:1px 5px;border-radius:3px;margin-left:4px">instance 0</span>`
         : (inst.node_name || 'Local');
 
       const actionBtn = inst.is_primary
@@ -1673,9 +1673,9 @@ async function initInstances() {
           backdrop.className = 'dialog-backdrop';
           backdrop.innerHTML = `
             <div class="dialog">
-              <div class="dialog-title">Move Primary Instance</div>
+              <div class="dialog-title">Move Instance 0</div>
               <div class="dialog-body" style="color:var(--text-secondary);font-size:13px;line-height:1.5">
-                <div style="margin-bottom:12px">Move the primary instance to a different node.<br>The app will be stopped and redeployed on the target.</div>
+                <div style="margin-bottom:12px">Move instance 0 to a different node.<br>The app will be stopped and redeployed on the target.</div>
                 <select id="move-inst-node-select" style="width:100%;padding:8px;background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px;font-size:14px">
                   ${others.map(n => `<option value="${n.id}">${n.name} (${n.is_local ? 'local' : n.status})</option>`).join('')}
                 </select>
@@ -1884,10 +1884,10 @@ async function _showInstanceLogs(instanceId, isPrimary) {
     return;
   }
 
-  const label = isPrimary ? 'Primary Instance' : `Instance #${instanceId}`;
+  const label = isPrimary ? 'Instance 0' : `Instance #${instanceId}`;
   const content = logLinesLocal.length
     ? logLinesLocal.map((line, i) => `<div class="log-line ${logClass(line)}"><span class="log-num">${String(i + 1).padStart(4)}</span><span class="log-text">${escHtml(line)}</span></div>`).join('')
-    : `<div class="log-empty">No log output available for ${isPrimary ? 'primary instance' : 'this instance'}.</div>`;
+    : `<div class="log-empty">No log output available for ${isPrimary ? 'instance 0' : 'this instance'}.</div>`;
 
   const backdrop = document.createElement('div');
   backdrop.className = 'dialog-backdrop';

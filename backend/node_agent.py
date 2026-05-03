@@ -601,7 +601,41 @@ async def cmd_deploy_app(client, state, main_id, payload, headers):
     if resp.status_code == 400 and "already exists" in resp.text:
         list_resp = await client.get(f"{_LOCAL_API_BASE}/api/apps", headers=headers, timeout=20)
         local_app = next((a for a in list_resp.json() if a.get("name") == payload.get("name")), None)
-        if not local_app: resp.raise_for_status()
+        if not local_app:
+            resp.raise_for_status()
+        else:
+            # Keep existing app config in sync with main payload. This prevents
+            # stale local settings (like old external ports) from breaking start.
+            update_payload = {
+                "domain": payload.get("domain"),
+                "extra_domains": payload.get("extra_domains"),
+                "redirect_domains": payload.get("redirect_domains"),
+                "ssl_cert_path": payload.get("ssl_cert_path"),
+                "ssl_key_path": payload.get("ssl_key_path"),
+                "start_command": payload.get("start_command"),
+                "port": payload.get("port"),
+                "external_port": payload.get("external_port"),
+                "docker_cpu_limit": payload.get("docker_cpu_limit"),
+                "docker_memory_limit_mb": payload.get("docker_memory_limit_mb"),
+                "docker_read_only_root": payload.get("docker_read_only_root"),
+                "docker_tmpfs_enabled": payload.get("docker_tmpfs_enabled"),
+                "docker_tmpfs_size_mb": payload.get("docker_tmpfs_size_mb"),
+                "env_vars": payload.get("env_vars"),
+                "github_token": payload.get("github_token"),
+                "auto_start": payload.get("auto_start"),
+                "restart_policy": payload.get("restart_policy"),
+            }
+            # Drop keys that are intentionally absent; keep explicit False/0 values.
+            update_payload = {k: v for k, v in update_payload.items() if v is not None}
+            if update_payload:
+                upd = await client.put(
+                    f"{_LOCAL_API_BASE}/api/apps/{int(local_app['id'])}",
+                    json=update_payload,
+                    headers=headers,
+                    timeout=120,
+                )
+                upd.raise_for_status()
+                local_app = upd.json()
     else:
         resp.raise_for_status()
         local_app = resp.json()

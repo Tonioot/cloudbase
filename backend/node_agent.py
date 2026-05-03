@@ -654,59 +654,56 @@ async def cmd_get_replica_logs(client, state, main_id, payload, headers):
         return {"lines": [], "error": str(e)}
 
 
-async def _ensure_replica_image(client: httpx.AsyncClient, state, app_id: int, app_name: str) -> None:
-    """Pull the app's Docker image from the main node if not available locally."""
-    import re
-    safe = re.sub(r"[^a-z0-9_-]", "-", app_name.lower())
-    img  = f"cloudbase/{safe}-{app_id}:latest"
+async def _find_local_app_by_name(client: httpx.AsyncClient, headers, app_name: str) -> Optional[dict[str, Any]]:
+    resp = await client.get(f"{_LOCAL_API_BASE}/api/apps", headers=headers, timeout=20)
+    resp.raise_for_status()
+    for app in resp.json():
+        if app.get("name") == app_name:
+            return app
+    return None
 
-    # Check if the image already exists on this node
-    check = await asyncio.create_subprocess_exec(
-        "docker", "image", "inspect", img,
-        stdout=asyncio.subprocess.DEVNULL,
-        stderr=asyncio.subprocess.DEVNULL,
-    )
-    await check.wait()
-    if check.returncode == 0:
-        return  # already present
 
-    _agent_log(f"[replica] Image {img} not found locally — pulling from main node…")
-    export_url = f"{state.main_url}/api/apps/{app_id}/image/export"
+async def _ensure_replica_app_deployed(client: httpx.AsyncClient, state, main_id, payload, headers) -> int:
+    app_name = payload.get("app_name") or payload.get("name")
+    if not app_name:
+        raise RuntimeError("Missing app_name for remote replica bootstrap")
 
-    load_proc = await asyncio.create_subprocess_exec(
-        "docker", "load",
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
+    local_app = await _find_local_app_by_name(client, headers, app_name)
+    if local_app:
+        local_id = int(local_app["id"])
+        state.app_id_map[str(main_id)] = local_id
+        _save_state(state)
+        return local_id
 
-    async with client.stream(
-        "GET", export_url,
-        headers={"X-Node-Token": state.auth_token},
-        timeout=600,  # large images can take a while
-    ) as resp:
-        resp.raise_for_status()
-        async for chunk in resp.aiter_bytes(chunk_size=65536):
-            load_proc.stdin.write(chunk)
-        load_proc.stdin.close()
-
-    stdout, stderr = await load_proc.communicate()
-    if load_proc.returncode != 0:
-        raise RuntimeError(f"docker load failed: {stderr.decode().strip()}")
-    _agent_log(f"[replica] Image {img} loaded successfully")
+    deploy_payload = {
+        "name": app_name,
+        "repo_url": payload.get("repo_url"),
+        "github_token": payload.get("github_token"),
+        "start_command": payload.get("start_command"),
+        "port": payload.get("internal_port", 8000),
+        "docker_cpu_limit": payload.get("docker_cpu_limit"),
+        "docker_memory_limit_mb": payload.get("docker_memory_limit_mb"),
+        "docker_read_only_root": payload.get("docker_read_only_root"),
+        "docker_tmpfs_enabled": payload.get("docker_tmpfs_enabled"),
+        "docker_tmpfs_size_mb": payload.get("docker_tmpfs_size_mb"),
+        "env_vars": payload.get("env_vars") or {},
+        "auto_start": False,
+        "restart_policy": payload.get("restart_policy"),
+        "use_docker": True,
+    }
+    result = await cmd_deploy_app(client, state, main_id, deploy_payload, headers)
+    return int(result["local_app_id"])
 
 
 async def cmd_start_replica(client, state, main_id, payload, headers):
-    # Use main_id directly — the app only exists in the main node's DB, not
-    # here.  Pass app_name so run-remote can skip its own DB lookup.
+    # Ensure the app source exists locally on this node. The replica container
+    # itself still uses the main app id for naming, logs, and tunnel identity.
     app_name = payload.get("app_name") or ""
-
-    # Make sure the Docker image is available locally before launching
-    if app_name:
-        await _ensure_replica_image(client, state, main_id, app_name)
+    local_id = await _ensure_replica_app_deployed(client, state, main_id, payload, headers)
 
     body = {
         "replica_id": payload["replica_id"],
+        "local_app_id": local_id,
         "app_name":   app_name,
         "internal_port": payload.get("internal_port", 8000),
         "external_port": payload["external_port"],

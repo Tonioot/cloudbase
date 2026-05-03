@@ -170,6 +170,26 @@ def _docker_runtime_options(app: Application) -> dict:
     }
 
 
+def _remote_replica_command_payload(app: Application, env_vars: dict, external_port: int) -> dict:
+    return {
+        "app_id": app.id,
+        "app_name": app.name,
+        "repo_url": app.repo_url,
+        "github_token": _decrypt_github_token(app.github_token),
+        "start_command": app.start_command,
+        "internal_port": app.port or 8000,
+        "external_port": external_port,
+        "env_vars": env_vars,
+        "restart_policy": app.restart_policy,
+        "docker_cpu_limit": app.docker_cpu_limit,
+        "docker_memory_limit_mb": app.docker_memory_limit_mb,
+        "docker_read_only_root": bool(app.docker_read_only_root),
+        "docker_tmpfs_enabled": bool(app.docker_tmpfs_enabled),
+        "docker_tmpfs_size_mb": app.docker_tmpfs_size_mb,
+        "docker_options": _docker_runtime_options(app),
+    }
+
+
 def _resolve_ssl_paths(cert: str | None, key: str | None) -> tuple[str | None, str | None]:
     """Return cert/key paths only if both files actually exist on disk; otherwise None."""
     if cert and key and os.path.isfile(cert) and os.path.isfile(key):
@@ -1693,33 +1713,25 @@ async def start_app(app_id: int, db: AsyncSession = Depends(get_db), actor: str 
                     except Exception:
                         replica.status = "error"
                 elif replica_node and replica_node.status == "online":
+                    remote_payload = _remote_replica_command_payload(
+                        app,
+                        env_vars,
+                        replica.external_port or app.port or 8000,
+                    )
                     await queue_node_command(
                         db, node_id=replica_node.id, app_id=app_id,
                         command_type="start_replica",
-                        payload={
-                            "app_id": app_id, "replica_id": replica.id,
-                            "app_name": app.name,
-                            "internal_port": app.port or 8000,
-                            "external_port": replica.external_port or app.port or 8000,
-                            "env_vars": env_vars,
-                            "docker_options": _docker_runtime_options(app),
-                        },
+                        payload={**remote_payload, "replica_id": replica.id},
                     )
                     replica.status = "starting"
 
         await log_audit(db, "app.start", actor=actor, app_id=app_id, detail={"name": app.name})
         await db.commit()
+        remote_payload = _remote_replica_command_payload(app, env_vars, external_port)
         return {"status": "running", "container_id": container_id[:12]}
 
     if app.status == "running" and app.pid and pm.is_process_running(app.pid, app.id):
-        raise HTTPException(400, "App is already running")
-
-    if not app.start_command:
-        raise HTTPException(400, "No start command configured")
-
-    start_started_at = asyncio.get_running_loop().time()
-
-    show_starting_page = (
+            payload={**remote_payload, "replica_id": replica.id},
         app.nginx_enabled and app.domain and (app.external_port or app.port)
         and not app.maintenance_mode and not app.update_mode
     )
@@ -1920,42 +1932,13 @@ class ScaleRequest(BaseModel):
     node_id: Optional[int] = None
 
 
-@router.get("/{app_id}/image/export")
-async def export_app_image(app_id: int, db: AsyncSession = Depends(get_db)):
-    """Stream the app's Docker image tarball so remote node agents can import it.
-    Auth is handled by _AuthMiddleware (node token or session cookie)."""
-    app = await _get_or_404(app_id, db)
-    img = dm.image_name(app_id, app.name)
-
-    async def _generate():
-        proc = await asyncio.create_subprocess_exec(
-            "docker", "save", img,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        try:
-            while True:
-                chunk = await proc.stdout.read(65536)
-                if not chunk:
-                    break
-                yield chunk
-        finally:
-            await proc.wait()
-
-    fname = f"{app.name}-{app_id}.tar"
-    return StreamingResponse(
-        _generate(),
-        media_type="application/octet-stream",
-        headers={"Content-Disposition": f"attachment; filename={fname}"},
-    )
-
-
 class RunReplicaRequest(BaseModel):
     replica_id: int
     internal_port: int
     external_port: int
     env_vars: Optional[dict] = None
     docker_options: Optional[dict] = None
+    local_app_id: Optional[int] = None
     # app_name is supplied by the remote agent so this endpoint never needs a
     # local DB lookup (the app only lives in the main node's database).
     app_name: Optional[str] = None
@@ -1965,13 +1948,19 @@ class RunReplicaRequest(BaseModel):
 async def run_replica_remote(app_id: int, req: RunReplicaRequest, db: AsyncSession = Depends(get_db)):
     """Internal endpoint called by the node agent to start a replica container locally.
     Does NOT create a DB row — the main server already has it."""
-    # If app_name was provided directly (remote-node scenario) skip the DB
-    # lookup — the app only exists in the main node's database.
-    if req.app_name:
+    local_app = None
+    if req.local_app_id is not None:
+        local_app = await _get_or_404(req.local_app_id, db)
+        app_name = local_app.name
+    elif req.app_name:
         app_name = req.app_name
     else:
         app = await _get_or_404(app_id, db)
         app_name = app.name
+
+    def _push(_aid, line):
+        pm._push_line(app_id, str(line))
+
     try:
         env_vars = req.env_vars or {}
         container_id = await asyncio.to_thread(
@@ -1982,6 +1971,31 @@ async def run_replica_remote(app_id: int, req: RunReplicaRequest, db: AsyncSessi
         )
         return {"container_id": container_id, "replica_id": req.replica_id}
     except Exception as e:
+        if local_app and local_app.working_dir:
+            try:
+                await asyncio.to_thread(
+                    dm.build_image,
+                    app_id,
+                    app_name,
+                    local_app.working_dir,
+                    _push,
+                    local_app.app_type or "unknown",
+                    local_app.start_command or "",
+                    req.internal_port or local_app.port or 8000,
+                )
+                container_id = await asyncio.to_thread(
+                    pm.start_docker_replica,
+                    app_id,
+                    req.replica_id,
+                    app_name,
+                    req.internal_port,
+                    req.external_port,
+                    env_vars,
+                    req.docker_options,
+                )
+                return {"container_id": container_id, "replica_id": req.replica_id, "rebuilt": True}
+            except Exception as rebuild_error:
+                raise HTTPException(500, str(rebuild_error)) from rebuild_error
         raise HTTPException(500, str(e)) from e
 
 
@@ -2166,6 +2180,7 @@ async def scale_app(app_id: int, req: ScaleRequest, db: AsyncSession = Depends(g
     else:
         if target_node.status != "online":
             raise HTTPException(400, f"Node '{target_node.name}' is not online")
+        _ensure_replica_arch_compatible(local_node, target_node)
         await queue_node_command(
             db, node_id=target_node.id, app_id=app_id,
             command_type="start_replica",

@@ -1694,18 +1694,37 @@ async function initInstances() {
       try { nodes = await api.listNodes(); } catch { toast('Failed to load nodes', 'error'); return; }
       const available = nodes.filter(n => n.enabled && n.status === 'online');
 
-      const modalHtml = `
-        <div style="margin-bottom:12px;font-size:14px;color:#8b949e">Choose a node for the new instance:</div>
-        <select id="inst-node-select" style="width:100%;padding:8px;background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px;font-size:14px">
-          <option value="">— Same node as app —</option>
-          ${available.map(n => `<option value="${n.id}">${n.name} (${n.is_local ? 'local' : n.public_host || n.status})</option>`).join('')}
-        </select>`;
+      // Custom dialog — read value BEFORE backdrop is removed
+      const nodeId = await new Promise(resolve => {
+        const backdrop = document.createElement('div');
+        backdrop.className = 'dialog-backdrop';
+        backdrop.innerHTML = `
+          <div class="dialog">
+            <div class="dialog-title">Add Instance</div>
+            <div class="dialog-body" style="color:var(--text-secondary);font-size:13px;line-height:1.5">
+              <div style="margin-bottom:12px">Choose a node for the new instance:</div>
+              <select id="inst-node-select" style="width:100%;padding:8px;background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px;font-size:14px">
+                <option value="">— Same node as app —</option>
+                ${available.map(n => `<option value="${n.id}">${n.name} (${n.is_local ? 'local' : n.public_host || n.status})</option>`).join('')}
+              </select>
+            </div>
+            <div class="dialog-actions">
+              <button class="btn btn-secondary" id="inst-dlg-cancel">Cancel</button>
+              <button class="btn btn-primary" id="inst-dlg-ok">Start Instance</button>
+            </div>
+          </div>`;
+        document.body.appendChild(backdrop);
+        const ok = () => {
+          const val = backdrop.querySelector('#inst-node-select').value;
+          backdrop.remove();
+          resolve(val ? parseInt(val, 10) : null);
+        };
+        backdrop.querySelector('#inst-dlg-ok').onclick = ok;
+        backdrop.querySelector('#inst-dlg-cancel').onclick = () => { backdrop.remove(); resolve(undefined); };
+        backdrop.addEventListener('click', e => { if (e.target === backdrop) { backdrop.remove(); resolve(undefined); } });
+      });
 
-      const confirmed = await confirm('Add Instance', modalHtml);
-      if (!confirmed) return;
-
-      const sel = document.getElementById('inst-node-select');
-      const nodeId = sel && sel.value ? parseInt(sel.value, 10) : null;
+      if (nodeId === undefined) return; // cancelled
 
       addBtn.disabled = true; addBtn.textContent = 'Starting…';
       try {

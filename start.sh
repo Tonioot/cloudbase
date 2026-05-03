@@ -595,7 +595,7 @@ rows = []
 for n in nodes_raw:
     name   = n["name"] or "—"
     status = n["status"] or "unknown"
-    ntype  = "local" if n["is_local"] else ("WS" if n["websocket_connected"] else "—")
+    ntype  = "local" if n["is_local"] else "remote"
     apps   = str(app_counts.get(n["id"], 0))
     seen   = "—" if n["is_local"] else time_ago(n["last_seen"])
     rows.append((name, status, ntype, apps, seen))
@@ -837,10 +837,12 @@ run_node_only_runtime() {
     exec "$VENV_PATH/bin/uvicorn" main:app --host 127.0.0.1 --port "$PORT" --timeout-graceful-shutdown 8
 }
 
-printf '\n%b' "$BOLD"
-banner
-printf '%b\n' "$RESET"
-info "Cloudbase CLI log: $CLI_LOG_FILE"
+case "$COMMAND" in start|run|help|-h|--help)
+    printf '\n%b' "$BOLD"
+    banner
+    printf '%b\n' "$RESET"
+    ;;
+esac
 
 case "$COMMAND" in
     help|-h|--help)

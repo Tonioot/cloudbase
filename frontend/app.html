@@ -163,6 +163,17 @@
       <!-- LOGS -->
       <div class="tab-panel" id="panel-logs">
         <div class="logs-panel">
+          <div class="logs-toolbar" id="logs-toolbar" style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border);background:var(--bg-secondary);flex-shrink:0">
+            <span style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;white-space:nowrap">Instance</span>
+            <select id="log-instance-select" class="input" style="font-size:12px;padding:4px 8px;max-width:220px;cursor:pointer">
+              <option value="primary">Primary (live)</option>
+            </select>
+            <button id="btn-log-refresh" class="btn btn-secondary btn-sm" style="display:none;padding:4px 10px;font-size:12px">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+              Refresh
+            </button>
+            <span id="log-instance-hint" style="font-size:11px;color:var(--text-muted);margin-left:auto"></span>
+          </div>
           <div class="log-terminal" id="log-terminal">
             <div class="log-empty">Waiting for log output…</div>
           </div>

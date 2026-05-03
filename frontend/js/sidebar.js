@@ -48,56 +48,57 @@ async function loadSidebarTree() {
       api.listApps(),
     ]);
 
-    const appsByNode = new Map();
-    apps.forEach((app) => {
-      const nodeId = app.node?.id ?? -1;
-      if (!appsByNode.has(nodeId)) appsByNode.set(nodeId, []);
-      appsByNode.get(nodeId).push(app);
-    });
+    const nodeMap = new Map(nodes.map(n => [n.id, n]));
+    const localNode = nodes.find(n => n.is_local);
 
+    const onAppPage     = location.pathname.includes('app.html');
     const onNodePage    = location.pathname.includes('node.html');
-    const onAppPage  = location.pathname.includes('app.html');
+    const currentAppId  = onAppPage  ? parseInt(new URLSearchParams(location.search).get('id')) : NaN;
     const currentNodeId = onNodePage ? parseInt(new URLSearchParams(location.search).get('id')) : NaN;
-    const currentAppId  = onAppPage ? parseInt(new URLSearchParams(location.search).get('id')) : NaN;
 
-    if (!nodes.length) {
-      container.innerHTML = `<div class="sidebar-apps-empty">No nodes</div>`;
-      return;
-    }
-
-    container.innerHTML = nodes.map((n) => {
-      const dot = n.status === 'online' ? 'var(--green)' : n.status === 'offline' ? 'var(--red)' : 'var(--yellow)';
-      const nodeActive = n.id === currentNodeId ? ' active' : '';
-      const label = n.is_local ? 'Primary Node' : n.name;
-      const nodeApps = appsByNode.get(n.id) || [];
-      const nodeAppsHtml = nodeApps.length
-        ? nodeApps.map((app) => {
-            const nodeStatus = app.node?.status || 'unknown';
-            const nodeOffline = nodeStatus === 'offline';
-            const nodeUnknown = nodeStatus === 'unknown';
-            const appDot = STATUS_DOT[app.status] || 'var(--text-muted)';
-            const appActive = app.id === currentAppId ? ' active' : '';
-            return `
-              <a href="/app.html?id=${app.id}" class="sidebar-app-item sidebar-app-item--nested${appActive}">
-                <span class="sidebar-app-dot ${nodeOffline ? 'sidebar-app-dot--node-offline' : ''} ${nodeUnknown ? 'sidebar-app-dot--node-unknown' : ''}" style="background:${appDot}"></span>
-                <span class="sidebar-app-name" style="${nodeOffline ? 'color:var(--text-muted)' : ''}">${app.name}</span>
-              </a>
-            `;
-          }).join('')
-        : `<div class="sidebar-apps-empty sidebar-apps-empty--nested">No apps</div>`;
-
-      return `
-        <div class="sidebar-node-group">
-          <a href="/node.html?id=${n.id}" class="sidebar-app-item sidebar-node-item${nodeActive}">
+    // ── Nodes section (only when multi-node) ──────────────────────────────
+    let nodesHtml = '';
+    const remoteNodes = nodes.filter(n => !n.is_local);
+    if (remoteNodes.length) {
+      nodesHtml = `
+        <div class="sidebar-section-label" style="margin-top:10px">Nodes</div>
+        ${nodes.map(n => {
+          const dot = n.status === 'online' ? 'var(--green)' : n.status === 'offline' ? 'var(--red)' : 'var(--yellow)';
+          const active = n.id === currentNodeId ? ' active' : '';
+          const label = n.is_local ? 'Primary Node' : n.name;
+          return `<a href="/node.html?id=${n.id}" class="sidebar-app-item${active}">
             <span class="sidebar-app-dot" style="background:${dot}"></span>
             <span class="sidebar-app-name">${label}</span>
-          </a>
-          <div class="sidebar-node-apps">
-            ${nodeAppsHtml}
-          </div>
-        </div>
-      `;
-    }).join('');
+          </a>`;
+        }).join('')}
+        <div class="sidebar-section-label" style="margin-top:10px">Apps</div>`;
+    }
+
+    // ── Flat apps list ────────────────────────────────────────────────────
+    const appsHtml = apps.length
+      ? apps.map(app => {
+          const appDot = STATUS_DOT[app.status] || 'var(--text-muted)';
+          const active = app.id === currentAppId ? ' active' : '';
+          const nodeOffline = app.node?.status === 'offline';
+
+          // Show node badge only when multi-node
+          const nodeLabel = remoteNodes.length
+            ? (() => {
+                const n = nodeMap.get(app.node?.id);
+                const name = n ? (n.is_local ? 'local' : n.name) : 'local';
+                return `<span style="font-size:10px;color:var(--text-muted);margin-left:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:60px" title="${name}">${name}</span>`;
+              })()
+            : '';
+
+          return `<a href="/app.html?id=${app.id}" class="sidebar-app-item${active}">
+            <span class="sidebar-app-dot ${nodeOffline ? 'sidebar-app-dot--node-offline' : ''}" style="background:${appDot}"></span>
+            <span class="sidebar-app-name" style="${nodeOffline ? 'color:var(--text-muted)' : ''}">${app.name}</span>
+            ${nodeLabel}
+          </a>`;
+        }).join('')
+      : `<div class="sidebar-apps-empty">No apps yet</div>`;
+
+    container.innerHTML = nodesHtml + appsHtml;
 
     const appsContainer = document.getElementById('sidebar-apps');
     if (appsContainer) {

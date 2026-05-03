@@ -356,7 +356,7 @@ function switchTab(t) {
 }
 
 function teardownTab(t) {
-  if (t === 'logs'  && logWs) { logWs.close(); logWs = null; }
+  if (t === 'logs')  { if (logWs) { logWs.close(); logWs = null; } _logsInitDone = false; }
   if (t === 'stats') { statsTabActive = false; } // Keep statWs alive — data keeps accumulating
   if (t === 'instances' && _instancesRefreshTimer) { clearInterval(_instancesRefreshTimer); _instancesRefreshTimer = null; }
 }
@@ -371,8 +371,59 @@ function setupTab(t) {
 }
 
 /* ─── LOGS ──────────────────────────────────────────────────────────────── */
+let _logsInitDone = false;
+
 function initLogs() {
+  const terminal   = document.getElementById('log-terminal');
+  const select     = document.getElementById('log-instance-select');
+  const refreshBtn = document.getElementById('btn-log-refresh');
+  const hint       = document.getElementById('log-instance-hint');
+
+  // Populate instance picker once (idempotent)
+  if (!_logsInitDone) {
+    _logsInitDone = true;
+    api.listInstances(APP_ID).then(instances => {
+      if (!select) return;
+      select.innerHTML = '<option value="primary">Primary (live)</option>';
+      instances.filter(i => !i.is_primary).forEach(r => {
+        const label = `Instance #${r.id} — ${r.node_name || 'local'} :${r.external_port || '?'}`;
+        const opt = document.createElement('option');
+        opt.value = String(r.id);
+        opt.textContent = label;
+        select.appendChild(opt);
+      });
+    }).catch(() => {});
+
+    select?.addEventListener('change', () => _switchLogInstance());
+    refreshBtn?.addEventListener('click', () => _loadReplicaLogs(parseInt(select?.value, 10)));
+  }
+
+  _switchLogInstance();
+}
+
+function _switchLogInstance() {
+  const select     = document.getElementById('log-instance-select');
+  const refreshBtn = document.getElementById('btn-log-refresh');
+  const hint       = document.getElementById('log-instance-hint');
+  const val        = select?.value || 'primary';
+
+  if (val === 'primary') {
+    if (refreshBtn) refreshBtn.style.display = 'none';
+    if (hint) hint.textContent = 'Live stream';
+    _startPrimaryLogs();
+  } else {
+    // Stop live stream if active
+    if (logWs) { logWs.close(); logWs = null; }
+    if (refreshBtn) refreshBtn.style.display = '';
+    if (hint) hint.textContent = 'Snapshot — last 200 lines';
+    _loadReplicaLogs(parseInt(val, 10));
+  }
+}
+
+function _startPrimaryLogs() {
   const terminal = document.getElementById('log-terminal');
+  if (logWs) { logWs.close(); logWs = null; }
+
   if (app.node && app.node.status === 'offline') {
     terminal.innerHTML = `
       <div style="padding:40px;text-align:center;color:var(--text-muted)">
@@ -395,15 +446,35 @@ function initLogs() {
     div.innerHTML = `<span class="log-num">${String(n).padStart(4)}</span><span class="log-text">${escHtml(line)}</span>`;
     terminal.appendChild(div);
 
-    // Auto-scroll if near bottom
     const atBottom = terminal.scrollHeight - terminal.clientHeight - terminal.scrollTop < 60;
     if (atBottom) terminal.scrollTop = terminal.scrollHeight;
-
-    // Cap lines
-    if (logLines.length > 2000) {
-      terminal.removeChild(terminal.firstChild);
-    }
+    if (logLines.length > 2000) terminal.removeChild(terminal.firstChild);
   });
+}
+
+async function _loadReplicaLogs(replicaId) {
+  const terminal = document.getElementById('log-terminal');
+  terminal.innerHTML = `<div class="log-empty">Loading logs…</div>`;
+  logLines = [];
+  try {
+    const data = await api.getInstanceLogs(APP_ID, replicaId, 200);
+    const lines = data.lines || [];
+    if (!lines.length) {
+      terminal.innerHTML = `<div class="log-empty">No log output available for this instance.</div>`;
+      return;
+    }
+    terminal.innerHTML = '';
+    lines.forEach((line, i) => {
+      const div = document.createElement('div');
+      div.className = `log-line ${logClass(line)}`;
+      div.innerHTML = `<span class="log-num">${String(i + 1).padStart(4)}</span><span class="log-text">${escHtml(line)}</span>`;
+      terminal.appendChild(div);
+    });
+    terminal.scrollTop = terminal.scrollHeight;
+    logLines = lines;
+  } catch (e) {
+    terminal.innerHTML = `<div class="log-empty" style="color:var(--red)">Failed to load logs: ${escHtml(e.message)}</div>`;
+  }
 }
 
 function _logAction(action, phase) {
@@ -1532,10 +1603,12 @@ async function initInstances() {
         : '#8b949e';
 
       const tunnelCell = inst.is_primary
-        ? '<span style="color:#8b949e;font-size:11px">—</span>'
-        : inst.tunnel_connected
-          ? '<span style="color:#3fb950;font-size:11px">&#x25cf; connected</span>'
-          : '<span style="color:#8b949e;font-size:11px">&#x25cb; none</span>';
+        ? '<span style="color:#8b949e;font-size:11px">local</span>'
+        : inst.node_is_local
+          ? '<span style="color:#8b949e;font-size:11px">local</span>'
+          : inst.tunnel_connected
+            ? '<span style="color:#3fb950;font-size:11px">&#x25cf; connected</span>'
+            : '<span style="color:#f85149;font-size:11px">&#x25cb; disconnected</span>';
 
       const nodeName = inst.is_primary
         ? `${inst.node_name || 'Local'} <span style="background:#1f6feb;color:#e6edf3;font-size:10px;padding:1px 5px;border-radius:3px;margin-left:4px">primary</span>`

@@ -1641,20 +1641,20 @@ async def _start_instance_local(app: "Application", replica: "ApplicationReplica
     if replica.docker_tmpfs_size_mb is not None:
         docker_opts["tmpfs_size_mb"] = replica.docker_tmpfs_size_mb
 
-    try:
+    async def _run_replica(ext_port: int) -> str:
         return await asyncio.to_thread(
             pm.start_docker_replica,
             app_id, replica.id, app.name,
             app.port or 8000,
-            replica.external_port or app.port or 8000,
+            ext_port,
             env_vars, docker_opts,
             app_id,  # image_app_id
         )
-    except Exception:
-        # Image may not exist yet (first start after deploy) — build it first
+
+    async def _build_image() -> None:
         if not app.working_dir:
             raise HTTPException(400, "No working directory — deploy the app first")
-        def _push(aid, line):
+        def _push(_aid, line):
             pm._push_line(app_id, str(line))
         await asyncio.to_thread(
             dm.build_image,
@@ -1662,14 +1662,55 @@ async def _start_instance_local(app: "Application", replica: "ApplicationReplica
             app.app_type or "unknown", app.start_command or "", app.port or 8000,
         )
         app.docker_image = dm.image_name(app_id, app.name)
-        return await asyncio.to_thread(
-            pm.start_docker_replica,
-            app_id, replica.id, app.name,
-            app.port or 8000,
-            replica.external_port or app.port or 8000,
-            env_vars, docker_opts,
-            app_id,
+
+    ext_port = replica.external_port or app.port or 8000
+    try:
+        return await _run_replica(ext_port)
+    except Exception as first_exc:
+        msg = str(first_exc)
+        bind_conflict = (
+            "bind for 0.0.0.0" in msg.lower()
+            or "port is already allocated" in msg.lower()
+            or "failed to set up container networking" in msg.lower()
         )
+        if bind_conflict:
+            # Port taken — grab a free one via socket scan and retry (no build needed)
+            import socket as _sock
+            new_port = ext_port + 1
+            while True:
+                with _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM) as _s:
+                    if _s.connect_ex(('127.0.0.1', new_port)) != 0:
+                        break
+                new_port += 1
+            replica.external_port = new_port
+            pm._push_line(app_id, f"[Docker] Port conflict on :{ext_port}; retrying replica on :{new_port}")
+            try:
+                return await _run_replica(new_port)
+            except Exception as retry_exc:
+                raise HTTPException(500, f"Failed to start instance: {retry_exc}") from retry_exc
+        # Not a port conflict — image may not exist yet (first start after deploy)
+        await _build_image()
+        try:
+            return await _run_replica(ext_port)
+        except Exception as build_retry_exc:
+            msg2 = str(build_retry_exc)
+            bind2 = (
+                "bind for 0.0.0.0" in msg2.lower()
+                or "port is already allocated" in msg2.lower()
+                or "failed to set up container networking" in msg2.lower()
+            )
+            if not bind2:
+                raise HTTPException(500, f"Failed to start instance: {build_retry_exc}") from build_retry_exc
+            import socket as _sock2
+            new_port2 = ext_port + 1
+            while True:
+                with _sock2.socket(_sock2.AF_INET, _sock2.SOCK_STREAM) as s:
+                    if s.connect_ex(('127.0.0.1', new_port2)) != 0:
+                        break
+                new_port2 += 1
+            replica.external_port = new_port2
+            pm._push_line(app_id, f"[Docker] Port conflict after build on :{ext_port}; retrying on :{new_port2}")
+            return await _run_replica(new_port2)
 
 
 def _derive_app_status_from_instances(replicas: list) -> str:

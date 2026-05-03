@@ -341,6 +341,7 @@ async def _restore_nginx_after_restart(
     ready, reason = await _wait_for_restart_ready(app_id, pid, port, use_docker=use_docker)
     elapsed = max(asyncio.get_running_loop().time() - started_at, 0)
 
+    ssl_cert_path, ssl_key_path = _resolve_ssl_paths(ssl_cert_path, ssl_key_path)
     normal_cfg = nm.generate_config(
         app_name, domain, port,
         ssl_cert_path, ssl_key_path,
@@ -632,7 +633,7 @@ async def discover_app_certs(app_id: int, db: AsyncSession = Depends(get_db)):
 
     if not node.is_local:
         if node.status != "online":
-            raise HTTPException(503, "Node is offline")
+            return {"certs": [], "keys": []}
         cmd = await queue_node_command(
             db,
             node_id=node.id,
@@ -1365,7 +1366,7 @@ async def move_app(app_id: int, req: MoveRequest, db: AsyncSession = Depends(get
                 Application.id != app.id,
             )
         )
-        conflict = conflict_result.scalar_one_or_none()
+        conflict = conflict_result.scalars().first()
         if conflict:
             raise HTTPException(
                 409,
@@ -1635,9 +1636,10 @@ async def start_app(app_id: int, db: AsyncSession = Depends(get_db), actor: str 
         )
         if show_starting_page:
             _ensure_maintenance_files(app, app_id)
+            _ssl_cert, _ssl_key = _resolve_ssl_paths(app.ssl_cert_path, app.ssl_key_path)
             starting_cfg = nm.generate_config(
                 app.name, app.domain, app.external_port or app.port,
-                app.ssl_cert_path, app.ssl_key_path,
+                _ssl_cert, _ssl_key,
                 app_id=app_id, mode="starting",
                 extra_domains=json.loads(app.extra_domains or "[]"),
                 redirect_domains=json.loads(app.redirect_domains or "[]"),
@@ -1776,9 +1778,10 @@ async def start_app(app_id: int, db: AsyncSession = Depends(get_db), actor: str 
     )
     if show_starting_page:
         _ensure_maintenance_files(app, app_id)
+        _ssl_cert, _ssl_key = _resolve_ssl_paths(app.ssl_cert_path, app.ssl_key_path)
         starting_cfg = nm.generate_config(
             app.name, app.domain, _nginx_proxy_port(app),
-            app.ssl_cert_path, app.ssl_key_path,
+            _ssl_cert, _ssl_key,
             app_id=app_id, mode="starting",
             extra_domains=json.loads(app.extra_domains or "[]"),
             redirect_domains=json.loads(app.redirect_domains or "[]"),
@@ -1887,9 +1890,10 @@ async def restart_app(app_id: int, db: AsyncSession = Depends(get_db), actor: st
     )
     if show_restart_page:
         _ensure_maintenance_files(app, app_id)
+        _ssl_cert, _ssl_key = _resolve_ssl_paths(app.ssl_cert_path, app.ssl_key_path)
         restart_cfg = nm.generate_config(
             app.name, app.domain, _nginx_proxy_port(app),
-            app.ssl_cert_path, app.ssl_key_path,
+            _ssl_cert, _ssl_key,
             app_id=app_id, mode="restart",
             extra_domains=json.loads(app.extra_domains or "[]"),
             redirect_domains=json.loads(app.redirect_domains or "[]"),
@@ -2238,9 +2242,10 @@ async def scale_app(app_id: int, req: ScaleRequest, db: AsyncSession = Depends(g
         if app.nginx_enabled and app.domain:
             backends = await _get_nginx_backends(app, db, local_node)
             _ensure_maintenance_files(app, app_id)
+            _ssl_cert, _ssl_key = _resolve_ssl_paths(app.ssl_cert_path, app.ssl_key_path)
             config = nm.generate_config(
                 app.name, app.domain, backends,
-                app.ssl_cert_path, app.ssl_key_path,
+                _ssl_cert, _ssl_key,
                 app_id=app_id, mode=_get_nginx_mode(app),
                 extra_domains=json.loads(app.extra_domains or "[]"),
                 redirect_domains=json.loads(app.redirect_domains or "[]"),
@@ -2303,9 +2308,10 @@ async def remove_replica(app_id: int, replica_id: int, db: AsyncSession = Depend
         await db.flush()
         backends = await _get_nginx_backends(app, db, local_node)
         _ensure_maintenance_files(app, app_id)
+        _ssl_cert, _ssl_key = _resolve_ssl_paths(app.ssl_cert_path, app.ssl_key_path)
         config = nm.generate_config(
             app.name, app.domain, backends,
-            app.ssl_cert_path, app.ssl_key_path,
+            _ssl_cert, _ssl_key,
             app_id=app_id, mode=_get_nginx_mode(app),
             extra_domains=json.loads(app.extra_domains or "[]"),
             redirect_domains=json.loads(app.redirect_domains or "[]"),

@@ -121,6 +121,7 @@ class ApplicationReplica(Base):
     app_id        = Column(Integer, ForeignKey("applications.id", ondelete="CASCADE"), nullable=False, index=True)
     node_id       = Column(Integer, ForeignKey("nodes.id"), nullable=True, index=True)
     external_port = Column(Integer, nullable=True)
+    tunnel_port   = Column(Integer, nullable=True)   # localhost port on main node (reverse tunnel)
     container_id  = Column(String(200), nullable=True)
     status        = Column(String(20), default="stopped")  # pending|starting|running|stopping|stopped|error
     last_error    = Column(Text, nullable=True)

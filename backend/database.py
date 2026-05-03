@@ -138,6 +138,18 @@ async def init_db():
                 f"ALTER TABLE stats_history ADD COLUMN {col} {definition}"
             )
 
+        # application_replicas — add tunnel_port (reverse WebSocket tunnel)
+        result = await conn.exec_driver_sql("PRAGMA table_info(application_replicas)")
+        existing_replica_cols = {row[1] for row in result.fetchall()}
+        for col, definition in [
+            ("tunnel_port", "INTEGER"),
+        ]:
+            if col in existing_replica_cols:
+                continue
+            await conn.exec_driver_sql(
+                f"ALTER TABLE application_replicas ADD COLUMN {col} {definition}"
+            )
+
     # Seed admin user from legacy credentials file if no users exist yet
     import os as _os
     from sqlalchemy import select as _select

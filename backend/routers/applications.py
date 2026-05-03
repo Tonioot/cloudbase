@@ -2861,6 +2861,8 @@ def _replica_to_dict(replica: ApplicationReplica, node: Optional[Node] = None) -
         "node_name": node.name if node else None,
         "node_is_local": bool(node.is_local) if node else False,
         "external_port": replica.external_port,
+        "tunnel_port": replica.tunnel_port,
+        "tunnel_connected": replica.tunnel_port is not None,
         "container_id": replica.container_id,
         "status": replica.status,
         "last_error": replica.last_error,
@@ -2869,7 +2871,17 @@ def _replica_to_dict(replica: ApplicationReplica, node: Optional[Node] = None) -
 
 
 async def _get_nginx_backends(app: Application, db: AsyncSession, local_node: "Node") -> "int | list[str]":
-    """Return nginx backend(s) for an app. Single int for legacy path, list[str] when replicas exist."""
+    """Return nginx backend(s) for an app.
+
+    Returns a single int (legacy direct proxy) when there are no running replicas.
+    Returns a list[str] of "host:port" strings for upstream load balancing when
+    one or more replicas are running.
+
+    Remote replicas are reached via the reverse WebSocket tunnel: their backend
+    address is 127.0.0.1:{replica.tunnel_port} on the main node, not the remote
+    node's public IP.  Replicas that are running but have no tunnel_port yet
+    (tunnel still connecting) are omitted from the upstream list.
+    """
     result = await db.execute(
         select(ApplicationReplica, Node).join(Node, ApplicationReplica.node_id == Node.id, isouter=True).where(
             ApplicationReplica.app_id == app.id,
@@ -2881,21 +2893,36 @@ async def _get_nginx_backends(app: Application, db: AsyncSession, local_node: "N
     if not running_replicas:
         return app.external_port or app.port
 
-    # Build list: main container + each running replica
-    def _addr(node: Optional[Node], port: int) -> str:
-        if node is None or node.is_local:
-            return f"127.0.0.1:{port}"
-        return f"{node.public_host}:{port}"
-
     app_node_result = await db.execute(select(Node).where(Node.id == app.node_id))
     app_node = app_node_result.scalar_one_or_none() or local_node
 
-    backends = [_addr(app_node, app.external_port or app.port)]
-    for replica, r_node in running_replicas:
-        if replica.external_port:
-            backends.append(_addr(r_node, replica.external_port))
+    def _main_addr() -> Optional[str]:
+        port = app.external_port or app.port
+        if not port:
+            return None
+        if app_node.is_local:
+            return f"127.0.0.1:{port}"
+        # App itself is on a remote node — use its public host directly
+        # (only the replicas use the reverse tunnel)
+        return f"{app_node.public_host}:{port}" if app_node.public_host else None
 
-    if len(backends) == 1:
+    def _replica_addr(replica: ApplicationReplica, r_node: Optional[Node]) -> Optional[str]:
+        if r_node is None or r_node.is_local:
+            # Local replica — connect directly
+            return f"127.0.0.1:{replica.external_port}" if replica.external_port else None
+        # Remote replica — use the reverse tunnel port on the main node
+        return f"127.0.0.1:{replica.tunnel_port}" if replica.tunnel_port else None
+
+    backends: list[str] = []
+    main_addr = _main_addr()
+    if main_addr:
+        backends.append(main_addr)
+    for replica, r_node in running_replicas:
+        addr = _replica_addr(replica, r_node)
+        if addr:
+            backends.append(addr)
+
+    if len(backends) <= 1:
         return app.external_port or app.port
     return backends
 

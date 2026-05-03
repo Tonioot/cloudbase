@@ -289,7 +289,9 @@ async def _apply_command_result(
                     if replica:
                         if cmd.command_type == "start_replica":
                             if status == "done":
-                                replica.status = "running"
+                                # Container is up on the remote node; stay in "starting"
+                                # until the reverse tunnel connects (which sets "running").
+                                replica.status = "starting"
                                 replica.container_id = (result_payload or {}).get("container_id")
                                 replica.last_error = None
                             else:
@@ -1163,6 +1165,183 @@ async def get_node_connection_status(node_id: int, db: AsyncSession = Depends(ge
         } if node.node_cpu_percent is not None else None,
         "pending_commands": pending_count,
     }
+
+
+# ── Reverse tunnel WebSocket ──────────────────────────────────────────────────
+# The remote node agent connects here to expose a replica container without
+# opening any inbound firewall ports on the remote node.
+
+async def _regen_nginx_for_app(app_id: int) -> None:
+    """Rebuild nginx config for an app after a tunnel state change.
+
+    Intentionally self-contained (no import from routers.applications) to avoid
+    circular imports.  Replicates the backend-list logic of _get_nginx_backends.
+    """
+    import json as _json
+    import nginx_manager as _nm
+    from models import Application, ApplicationReplica
+
+    async with AsyncSessionLocal() as db:
+        app_result = await db.execute(select(Application).where(Application.id == app_id))
+        app = app_result.scalar_one_or_none()
+        if not app or not app.nginx_enabled or not app.domain:
+            return
+
+        local_node_result = await db.execute(select(Node).where(Node.is_local == True))
+        local_node = local_node_result.scalar_one_or_none()
+        if not local_node:
+            return
+
+        rep_result = await db.execute(
+            select(ApplicationReplica, Node)
+            .join(Node, ApplicationReplica.node_id == Node.id, isouter=True)
+            .where(
+                ApplicationReplica.app_id == app_id,
+                ApplicationReplica.status == "running",
+            )
+        )
+        running_replicas = rep_result.all()
+
+        app_node_result = await db.execute(select(Node).where(Node.id == app.node_id))
+        app_node = app_node_result.scalar_one_or_none() or local_node
+        main_port = app.external_port or app.port
+
+        if not running_replicas:
+            backends: "int | list" = main_port
+        else:
+            def _addr(node: Optional[Node], external_port: Optional[int], tunnel_port: Optional[int]) -> Optional[str]:
+                if node is None or node.is_local:
+                    return f"127.0.0.1:{external_port}" if external_port else None
+                # Remote node: use the reverse tunnel port on the main node
+                return f"127.0.0.1:{tunnel_port}" if tunnel_port else None
+
+            blist: list[str] = []
+            if main_port:
+                if app_node.is_local:
+                    blist.append(f"127.0.0.1:{main_port}")
+                elif app_node.public_host:
+                    blist.append(f"{app_node.public_host}:{main_port}")
+            for replica, r_node in running_replicas:
+                addr = _addr(r_node, replica.external_port, replica.tunnel_port)
+                if addr:
+                    blist.append(addr)
+            backends = blist if len(blist) > 1 else main_port
+
+        if not backends:
+            return
+
+        nginx_mode = (
+            "update" if app.update_mode
+            else "maintenance" if app.maintenance_mode
+            else "normal"
+        )
+        extra_domains   = _json.loads(app.extra_domains   or "[]")
+        redirect_domains = _json.loads(app.redirect_domains or "[]")
+
+        config = _nm.generate_config(
+            app.name, app.domain, backends,
+            app.ssl_cert_path, app.ssl_key_path,
+            app_id=app.id, mode=nginx_mode,
+            extra_domains=extra_domains,
+            redirect_domains=redirect_domains,
+        )
+        try:
+            _nm.write_nginx_config(app.name, config)
+        except Exception as e:
+            log.warning("[tunnel] nginx reload failed for app=%d: %s", app_id, e)
+
+
+@router.websocket("/ws/tunnel/{replica_id}")
+async def replica_tunnel_ws(replica_id: int, websocket: WebSocket):
+    """Reverse-tunnel endpoint — the node agent connects here to expose its
+    replica container on a localhost port on the main node.  Nginx then
+    load-balances to 127.0.0.1:{tunnel_port} instead of the remote node's
+    public IP, eliminating the need for open inbound firewall ports.
+    """
+    import tunnel_server
+    from models import ApplicationReplica
+
+    # Authenticate: accept token from header OR query param (websocket libraries
+    # cannot always set custom headers — query param is the fallback).
+    token = (
+        websocket.headers.get("x-node-token")
+        or websocket.query_params.get("token")
+    )
+    if not token:
+        await websocket.close(code=1008, reason="Missing node token")
+        return
+
+    async with AsyncSessionLocal() as db:
+        try:
+            node = await get_node_by_token_or_401(token, db)
+        except HTTPException:
+            await websocket.close(code=1008, reason="Invalid node token")
+            return
+
+        # Verify the replica belongs to this node
+        rep_result = await db.execute(
+            select(ApplicationReplica).where(ApplicationReplica.id == replica_id)
+        )
+        replica = rep_result.scalar_one_or_none()
+        if not replica or replica.node_id != node.id:
+            await websocket.close(code=1008, reason="Replica not found or not owned by this node")
+            return
+        app_id = replica.app_id
+
+    await websocket.accept()
+    log.info("[tunnel-ws] replica=%d node=%s connected", replica_id, node.name)
+
+    # Allocate a free localhost port and start the TCP listener
+    local_port = await tunnel_server.open_tunnel(replica_id, websocket)
+    if local_port is None:
+        await websocket.close(code=1011, reason="No tunnel ports available")
+        return
+
+    # Persist tunnel_port and promote status → running
+    async with AsyncSessionLocal() as db:
+        rep_result = await db.execute(
+            select(ApplicationReplica).where(ApplicationReplica.id == replica_id)
+        )
+        replica = rep_result.scalar_one_or_none()
+        if replica:
+            replica.tunnel_port = local_port
+            replica.status = "running"
+            replica.last_error = None
+            replica.updated_at = _utcnow()
+            await db.commit()
+
+    log.info("[tunnel-ws] replica=%d allocated 127.0.0.1:%d", replica_id, local_port)
+
+    # Regenerate nginx to include the new backend
+    await _regen_nginx_for_app(app_id)
+
+    # Relay messages until the agent disconnects
+    try:
+        async for message in websocket.iter_text():
+            await tunnel_server.dispatch_message(replica_id, message)
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        log.warning("[tunnel-ws] replica=%d error: %s", replica_id, e)
+    finally:
+        log.info("[tunnel-ws] replica=%d disconnected, tearing down tunnel", replica_id)
+        await tunnel_server.close_tunnel(replica_id)
+
+        # Clear tunnel_port and set status → stopped
+        async with AsyncSessionLocal() as db:
+            rep_result = await db.execute(
+                select(ApplicationReplica).where(ApplicationReplica.id == replica_id)
+            )
+            replica = rep_result.scalar_one_or_none()
+            if replica:
+                was_running = replica.status == "running"
+                replica.tunnel_port = None
+                replica.status = "stopped"
+                replica.updated_at = _utcnow()
+                await db.commit()
+                if was_running:
+                    # Regenerate nginx to remove the dropped backend
+                    await _regen_nginx_for_app(app_id)
 
 
 @router.get("/{node_id}/agent-logs")

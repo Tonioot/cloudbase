@@ -59,11 +59,15 @@ EOF
 }
 
 usage() {
-    cat <<'EOF'
+    local _ip
+    _ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+    cat <<EOF
 Usage: cloudbase <command> [options]
 
 The CLI is for server setup and service management.
-Use the web UI at http://localhost:7823 to deploy and manage applications.
+Web UI available at:
+  http://localhost:${PORT}${_ip:+
+  http://${_ip}:${PORT}}
 
 Core:
   start              Start Cloudbase
@@ -495,32 +499,36 @@ handle_cert_command() {
 }
 
 cmd_apps() {
-    cd "$BACKEND_DIR"
-    if [[ ! -d "$VENV_PATH" ]]; then
-        err "Cloudbase not installed."
+    if [[ ! -f "$HOME/.cloudbase/cloudbase.db" ]]; then
+        err "No Cloudbase database found."
         exit 1
     fi
-    "$VENV_PATH/bin/python3" - <<'PYEOF'
-import sys
-sys.path.insert(0, '.')
-from database import SessionLocal
-from models import App
+    python3 - <<PYEOF
+import sqlite3, os, sys
 
-db = SessionLocal()
-apps = db.query(App).all()
-db.close()
+db_path = os.path.expanduser("~/.cloudbase/cloudbase.db")
+con = sqlite3.connect(db_path)
+con.row_factory = sqlite3.Row
 
-if not apps:
+rows_raw = con.execute("""
+    SELECT a.name, a.status, a.app_type, a.port, a.external_port, n.name AS node_name
+    FROM applications a
+    LEFT JOIN nodes n ON a.node_id = n.id
+    ORDER BY a.name
+""").fetchall()
+con.close()
+
+if not rows_raw:
     print("No applications deployed.")
     sys.exit(0)
 
 rows = []
-for a in apps:
-    name   = a.name or "—"
-    status = a.status or "unknown"
-    node   = a.node.name if a.node else "primary"
-    port   = str(a.external_port or a.port or "—")
-    atype  = a.app_type or "—"
+for r in rows_raw:
+    name   = r["name"] or "—"
+    status = r["status"] or "unknown"
+    node   = r["node_name"] or "primary"
+    port   = str(r["external_port"] or r["port"] or "—")
+    atype  = r["app_type"] or "—"
     rows.append((name, status, node, port, atype))
 
 cols   = ["NAME", "STATUS", "NODE", "PORT", "TYPE"]
@@ -551,31 +559,32 @@ PYEOF
 }
 
 cmd_nodes() {
-    cd "$BACKEND_DIR"
-    if [[ ! -d "$VENV_PATH" ]]; then
-        err "Cloudbase not installed."
+    if [[ ! -f "$HOME/.cloudbase/cloudbase.db" ]]; then
+        err "No Cloudbase database found."
         exit 1
     fi
-    "$VENV_PATH/bin/python3" - <<'PYEOF'
-import sys, datetime
-sys.path.insert(0, '.')
-from database import SessionLocal
-from models import Node, App
+    python3 - <<PYEOF
+import sqlite3, os, sys, datetime
 
-db = SessionLocal()
-nodes = db.query(Node).all()
-app_counts = {}
-for a in db.query(App).all():
-    app_counts[a.node_id] = app_counts.get(a.node_id, 0) + 1
-db.close()
+db_path = os.path.expanduser("~/.cloudbase/cloudbase.db")
+con = sqlite3.connect(db_path)
+con.row_factory = sqlite3.Row
 
-if not nodes:
+nodes_raw = con.execute("SELECT * FROM nodes ORDER BY is_local DESC, name ASC").fetchall()
+app_counts = {r[0]: r[1] for r in con.execute("SELECT node_id, COUNT(*) FROM applications GROUP BY node_id").fetchall()}
+con.close()
+
+if not nodes_raw:
     print("No nodes registered.")
     sys.exit(0)
 
-def time_ago(dt):
-    if not dt: return "—"
-    secs = int((datetime.datetime.utcnow() - dt).total_seconds())
+def time_ago(ts):
+    if not ts: return "—"
+    try:
+        dt = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00")).replace(tzinfo=None)
+        secs = int((datetime.datetime.utcnow() - dt).total_seconds())
+    except Exception:
+        return "—"
     if secs < 10:    return "just now"
     if secs < 60:    return f"{secs}s ago"
     if secs < 3600:  return f"{secs//60}m ago"
@@ -583,12 +592,12 @@ def time_ago(dt):
     return f"{secs//86400}d ago"
 
 rows = []
-for n in nodes:
-    name   = n.name or "—"
-    status = n.status or "unknown"
-    ntype  = "local" if n.is_local else ("WS" if n.websocket_connected else "offline")
-    apps   = str(app_counts.get(n.id, 0))
-    seen   = "—" if n.is_local else time_ago(n.last_seen)
+for n in nodes_raw:
+    name   = n["name"] or "—"
+    status = n["status"] or "unknown"
+    ntype  = "local" if n["is_local"] else ("WS" if n["websocket_connected"] else "—")
+    apps   = str(app_counts.get(n["id"], 0))
+    seen   = "—" if n["is_local"] else time_ago(n["last_seen"])
     rows.append((name, status, ntype, apps, seen))
 
 cols   = ["NAME", "STATUS", "TYPE", "APPS", "LAST SEEN"]

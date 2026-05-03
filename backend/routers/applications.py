@@ -2186,18 +2186,11 @@ async def scale_app(app_id: int, req: ScaleRequest, db: AsyncSession = Depends(g
     else:
         if target_node.status != "online":
             raise HTTPException(400, f"Node '{target_node.name}' is not online")
-        _ensure_replica_arch_compatible(local_node, target_node)
+        remote_payload = _remote_replica_command_payload(app, env_vars, external_port)
         await queue_node_command(
             db, node_id=target_node.id, app_id=app_id,
             command_type="start_replica",
-            payload={
-                "app_id": app_id, "replica_id": replica.id,
-                "app_name": app.name,
-                "internal_port": app.port or 8000,
-                "external_port": external_port,
-                "env_vars": env_vars,
-                "docker_options": _docker_runtime_options(app),
-            },
+            payload={**remote_payload, "replica_id": replica.id},
         )
         replica.status = "starting"
 

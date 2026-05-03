@@ -654,12 +654,60 @@ async def cmd_get_replica_logs(client, state, main_id, payload, headers):
         return {"lines": [], "error": str(e)}
 
 
+async def _ensure_replica_image(client: httpx.AsyncClient, state, app_id: int, app_name: str) -> None:
+    """Pull the app's Docker image from the main node if not available locally."""
+    import re
+    safe = re.sub(r"[^a-z0-9_-]", "-", app_name.lower())
+    img  = f"cloudbase/{safe}-{app_id}:latest"
+
+    # Check if the image already exists on this node
+    check = await asyncio.create_subprocess_exec(
+        "docker", "image", "inspect", img,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    await check.wait()
+    if check.returncode == 0:
+        return  # already present
+
+    _agent_log(f"[replica] Image {img} not found locally — pulling from main node…")
+    export_url = f"{state.main_url}/api/apps/{app_id}/image/export"
+
+    load_proc = await asyncio.create_subprocess_exec(
+        "docker", "load",
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+
+    async with client.stream(
+        "GET", export_url,
+        headers={"X-Node-Token": state.auth_token},
+        timeout=600,  # large images can take a while
+    ) as resp:
+        resp.raise_for_status()
+        async for chunk in resp.aiter_bytes(chunk_size=65536):
+            load_proc.stdin.write(chunk)
+        load_proc.stdin.close()
+
+    stdout, stderr = await load_proc.communicate()
+    if load_proc.returncode != 0:
+        raise RuntimeError(f"docker load failed: {stderr.decode().strip()}")
+    _agent_log(f"[replica] Image {img} loaded successfully")
+
+
 async def cmd_start_replica(client, state, main_id, payload, headers):
     # Use main_id directly — the app only exists in the main node's DB, not
     # here.  Pass app_name so run-remote can skip its own DB lookup.
+    app_name = payload.get("app_name") or ""
+
+    # Make sure the Docker image is available locally before launching
+    if app_name:
+        await _ensure_replica_image(client, state, main_id, app_name)
+
     body = {
         "replica_id": payload["replica_id"],
-        "app_name":   payload.get("app_name"),
+        "app_name":   app_name,
         "internal_port": payload.get("internal_port", 8000),
         "external_port": payload["external_port"],
         "env_vars": payload.get("env_vars") or {},

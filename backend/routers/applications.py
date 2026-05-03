@@ -1920,6 +1920,35 @@ class ScaleRequest(BaseModel):
     node_id: Optional[int] = None
 
 
+@router.get("/{app_id}/image/export")
+async def export_app_image(app_id: int, db: AsyncSession = Depends(get_db)):
+    """Stream the app's Docker image tarball so remote node agents can import it."""
+    app = await _get_or_404(app_id, db)
+    img = dm.image_name(app_id, app.name)
+
+    async def _generate():
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "save", img,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            while True:
+                chunk = await proc.stdout.read(65536)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            await proc.wait()
+
+    fname = f"{app.name}-{app_id}.tar"
+    return StreamingResponse(
+        _generate(),
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f"attachment; filename={fname}"},
+    )
+
+
 class RunReplicaRequest(BaseModel):
     replica_id: int
     internal_port: int

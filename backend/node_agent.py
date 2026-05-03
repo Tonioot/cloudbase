@@ -636,6 +636,24 @@ async def cmd_get_agent_logs(client, state, main_id, payload, headers):
         all_lines = f.readlines()
     return {"lines": [l.rstrip() for l in all_lines[-lines:]]}
 
+async def cmd_get_replica_logs(client, state, main_id, payload, headers):
+    container_name = payload.get("container_name")
+    lines = payload.get("lines") or 200
+    if not container_name:
+        return {"lines": [], "error": "missing container_name"}
+    try:
+        import subprocess as _sp
+        raw = await asyncio.to_thread(
+            lambda: _sp.check_output(
+                ["docker", "logs", "--tail", str(lines), container_name],
+                stderr=_sp.STDOUT, text=True,
+            )
+        )
+        return {"lines": raw.splitlines()}
+    except Exception as e:
+        return {"lines": [], "error": str(e)}
+
+
 async def cmd_start_replica(client, state, main_id, payload, headers):
     local_id = await _resolve_local_id(client, state, main_id, payload, headers)
     body = {
@@ -696,6 +714,7 @@ COMMAND_HANDLERS: Dict[str, Callable] = {
     "stop_app": lambda c, s, m, p, h: cmd_app_lifecycle(c, s, m, p, h, "stop"),
     "restart_app": lambda c, s, m, p, h: cmd_app_lifecycle(c, s, m, p, h, "restart"),
     "get_logs_tail": cmd_get_logs_tail,
+    "get_replica_logs": cmd_get_replica_logs,
     "get_stats": cmd_get_stats,
     "deploy_app": cmd_deploy_app,
     "upload_cert": cmd_upload_cert,

@@ -84,9 +84,9 @@ function renderHeader() {
   document.title = `${app.name} — Cloudbase`;
   const nodeLabel = app.node?.is_local ? 'Primary Node' : (app.node?.name || 'Primary Node');
   const replicaCount = app.replica_count || 0;
-  const replicaLabel = replicaCount > 0 ? ` · ${replicaCount + 1} replicas` : '';
+  const instanceLabel = replicaCount > 0 ? ` · ${replicaCount + 1} instances` : '';
   document.getElementById('app-meta').textContent =
-    `${app.app_type || 'unknown'} · ${formatPortSummary(app)}${replicaLabel} · ${nodeLabel} (${(app.node && app.node.status) || 'online'})`;
+    `${app.app_type || 'unknown'} · ${formatPortSummary(app)}${instanceLabel} · ${nodeLabel} (${(app.node && app.node.status) || 'online'})`;
 
   const typeIconEl = document.getElementById('app-type-icon');
   if (typeIconEl) typeIconEl.innerHTML = typeIcon[app.app_type] || typeIcon.unknown;
@@ -328,7 +328,7 @@ function _waitForRemoteCommand(commandId, nodeId) {
 
 /* ─── Tabs ──────────────────────────────────────────────────────────────── */
 function initTabs() {
-  const tabs = ['logs', 'stats', 'files', 'settings', 'activity'];
+  const tabs = ['logs', 'stats', 'files', 'instances', 'settings', 'activity'];
   tabs.forEach(t => {
     document.getElementById(`tab-${t}`).addEventListener('click', () => switchTab(t));
   });
@@ -358,14 +358,16 @@ function switchTab(t) {
 function teardownTab(t) {
   if (t === 'logs'  && logWs) { logWs.close(); logWs = null; }
   if (t === 'stats') { statsTabActive = false; } // Keep statWs alive — data keeps accumulating
+  if (t === 'instances' && _instancesRefreshTimer) { clearInterval(_instancesRefreshTimer); _instancesRefreshTimer = null; }
 }
 
 function setupTab(t) {
-  if (t === 'logs')     initLogs();
-  if (t === 'stats')    initStats();
-  if (t === 'files')    initFiles();
-  if (t === 'settings') initSettings();
-  if (t === 'activity') initActivity();
+  if (t === 'logs')      initLogs();
+  if (t === 'stats')     initStats();
+  if (t === 'files')     initFiles();
+  if (t === 'instances') initInstances();
+  if (t === 'settings')  initSettings();
+  if (t === 'activity')  initActivity();
 }
 
 /* ─── LOGS ──────────────────────────────────────────────────────────────── */
@@ -1108,9 +1110,6 @@ function initSettings() {
   // Move to node
   _initMoveToNode();
 
-  // Replicas
-  _initReplicas();
-
   // Maintenance pages section
   initMaintenanceSettings();
   _initMaintModal();
@@ -1507,7 +1506,189 @@ async function _initMoveToNode() {
   });
 }
 
-async function _initReplicas() {
+/* ─── INSTANCES TAB ─────────────────────────────────────────────────────── */
+let _instancesRefreshTimer = null;
+
+async function initInstances() {
+  const wrap = document.getElementById('instances-table-wrap');
+  if (!wrap) return;
+
+  async function renderInstances() {
+    let instances = [];
+    try { instances = await api.listInstances(APP_ID); } catch (e) {
+      wrap.innerHTML = `<div style="color:var(--red);padding:12px;font-size:13px">Failed to load instances: ${e.message}</div>`;
+      return;
+    }
+
+    if (!instances.length) {
+      wrap.innerHTML = '<div style="color:var(--text-muted);padding:12px;font-size:13px">No instances found.</div>';
+      return;
+    }
+
+    const rows = instances.map((inst, idx) => {
+      const statusColor = inst.status === 'running' ? '#3fb950'
+        : inst.status === 'error' ? '#f85149'
+        : inst.status === 'starting' ? '#d29922'
+        : '#8b949e';
+
+      const tunnelCell = inst.is_primary
+        ? '<span style="color:#8b949e;font-size:11px">—</span>'
+        : inst.tunnel_connected
+          ? '<span style="color:#3fb950;font-size:11px">&#x25cf; connected</span>'
+          : '<span style="color:#8b949e;font-size:11px">&#x25cb; none</span>';
+
+      const nodeName = inst.is_primary
+        ? `${inst.node_name || 'Local'} <span style="background:#1f6feb;color:#e6edf3;font-size:10px;padding:1px 5px;border-radius:3px;margin-left:4px">primary</span>`
+        : (inst.node_name || 'Local');
+
+      const removeBtn = inst.is_primary
+        ? ''
+        : `<button class="btn-danger btn-sm inst-remove-btn" data-id="${inst.id}" style="padding:4px 10px;font-size:12px">Remove</button>`;
+
+      const logsBtn = `<button class="btn btn-secondary btn-sm inst-logs-btn" data-id="${inst.is_primary ? 'primary' : inst.id}" data-primary="${inst.is_primary}" style="padding:4px 10px;font-size:12px">Logs</button>`;
+
+      return `<tr style="border-bottom:1px solid #21262d">
+        <td style="padding:8px 12px;color:#e6edf3;font-size:13px">${idx + 1}</td>
+        <td style="padding:8px 12px;color:#e6edf3;font-size:13px">${nodeName}</td>
+        <td style="padding:8px 12px;color:#e6edf3;font-size:13px;font-family:monospace">${inst.external_port || '—'}</td>
+        <td style="padding:8px 12px;font-size:13px">${tunnelCell}</td>
+        <td style="padding:8px 12px;font-size:13px">
+          <span style="color:${statusColor};font-weight:500">${inst.status || '—'}</span>
+          ${inst.last_error ? `<br><span style="color:#f85149;font-size:11px">${inst.last_error}</span>` : ''}
+        </td>
+        <td style="padding:8px 12px;text-align:right;white-space:nowrap">
+          ${logsBtn}
+          ${removeBtn}
+        </td>
+      </tr>`;
+    }).join('');
+
+    wrap.innerHTML = `
+      <table style="width:100%;border-collapse:collapse">
+        <thead>
+          <tr style="border-bottom:1px solid #30363d">
+            <th style="padding:6px 12px;text-align:left;font-size:12px;color:#8b949e;font-weight:500">#</th>
+            <th style="padding:6px 12px;text-align:left;font-size:12px;color:#8b949e;font-weight:500">Node</th>
+            <th style="padding:6px 12px;text-align:left;font-size:12px;color:#8b949e;font-weight:500">Port</th>
+            <th style="padding:6px 12px;text-align:left;font-size:12px;color:#8b949e;font-weight:500">Tunnel</th>
+            <th style="padding:6px 12px;text-align:left;font-size:12px;color:#8b949e;font-weight:500">Status</th>
+            <th style="padding:6px 12px;text-align:right;font-size:12px;color:#8b949e;font-weight:500"></th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+
+    // Wire up remove buttons
+    wrap.querySelectorAll('.inst-remove-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const replicaId = parseInt(btn.dataset.id, 10);
+        const ok = await confirm('Remove instance?', 'The instance container will be stopped and removed.');
+        if (!ok) return;
+        btn.disabled = true; btn.textContent = 'Removing…';
+        try {
+          await api.removeReplica(APP_ID, replicaId);
+          toast('Instance removed');
+          app = await api.getApp(APP_ID);
+          updateHeaderStatus(); renderHeader();
+          await renderInstances();
+        } catch (e) {
+          toast(e.message, 'error');
+          btn.disabled = false; btn.textContent = 'Remove';
+        }
+      });
+    });
+
+    // Wire up log buttons
+    wrap.querySelectorAll('.inst-logs-btn').forEach(btn => {
+      btn.addEventListener('click', () => _showInstanceLogs(btn.dataset.id, btn.dataset.primary === 'true'));
+    });
+  }
+
+  await renderInstances();
+
+  // Auto-refresh every 5s while tab is active
+  _instancesRefreshTimer = setInterval(renderInstances, 5000);
+
+  // Refresh button
+  const refreshBtn = document.getElementById('btn-instances-refresh');
+  if (refreshBtn) refreshBtn.onclick = renderInstances;
+
+  // Add Instance button
+  const addBtn = document.getElementById('btn-add-instance');
+  if (addBtn) {
+    addBtn.onclick = async () => {
+      let nodes = [];
+      try { nodes = await api.listNodes(); } catch { toast('Failed to load nodes', 'error'); return; }
+      const available = nodes.filter(n => n.enabled && n.status === 'online');
+
+      const modalHtml = `
+        <div style="margin-bottom:12px;font-size:14px;color:#8b949e">Choose a node for the new instance:</div>
+        <select id="inst-node-select" style="width:100%;padding:8px;background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px;font-size:14px">
+          <option value="">— Same node as app —</option>
+          ${available.map(n => `<option value="${n.id}">${n.name} (${n.is_local ? 'local' : n.public_host || n.status})</option>`).join('')}
+        </select>`;
+
+      const confirmed = await confirm('Add Instance', modalHtml);
+      if (!confirmed) return;
+
+      const sel = document.getElementById('inst-node-select');
+      const nodeId = sel && sel.value ? parseInt(sel.value, 10) : null;
+
+      addBtn.disabled = true; addBtn.textContent = 'Starting…';
+      try {
+        await api.scaleApp(APP_ID, { node_id: nodeId });
+        toast('Instance started');
+        app = await api.getApp(APP_ID);
+        updateHeaderStatus(); renderHeader();
+        await renderInstances();
+      } catch (e) {
+        toast(e.message, 'error');
+      } finally {
+        addBtn.disabled = false; addBtn.textContent = 'Add Instance';
+      }
+    };
+  }
+}
+
+async function _showInstanceLogs(instanceId, isPrimary) {
+  let logLines = [];
+  try {
+    if (isPrimary) {
+      const data = await api.getAppLogsTail(APP_ID, 200);
+      logLines = data.lines || [];
+    } else {
+      const data = await api.getInstanceLogs(APP_ID, instanceId, 200);
+      logLines = data.lines || [];
+    }
+  } catch (e) {
+    toast('Failed to load logs: ' + e.message, 'error');
+    return;
+  }
+
+  const label = isPrimary ? 'Primary Instance' : `Instance #${instanceId}`;
+  const content = logLines.length
+    ? logLines.map(l => `<div style="font-size:12px;font-family:monospace;line-height:1.5;white-space:pre-wrap;word-break:break-all;color:#e6edf3">${escHtml(l)}</div>`).join('')
+    : '<div style="color:#8b949e;font-size:12px;font-family:monospace">No log output available.</div>';
+
+  // Custom close-only dialog
+  const backdrop = document.createElement('div');
+  backdrop.className = 'dialog-backdrop';
+  backdrop.innerHTML = `
+    <div class="dialog" style="max-width:820px;width:min(820px,95vw)">
+      <div class="dialog-title">Logs — ${escHtml(label)}</div>
+      <div class="dialog-body" style="padding:0">
+        <div style="max-height:460px;overflow:auto;background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:12px">${content}</div>
+      </div>
+      <div class="dialog-actions">
+        <button class="btn btn-primary" id="inst-log-close">Close</button>
+      </div>
+    </div>`;
+  document.body.appendChild(backdrop);
+  backdrop.querySelector('#inst-log-close').onclick = () => backdrop.remove();
+  backdrop.addEventListener('click', e => { if (e.target === backdrop) backdrop.remove(); });
+}
+
+
   const section = document.getElementById('replicas-section');
   if (!section) return;
   section.style.display = '';

@@ -1965,6 +1965,111 @@ async def list_replicas(app_id: int, db: AsyncSession = Depends(get_db)):
     return [_replica_to_dict(r, node_map.get(r.node_id)) for r in replicas]
 
 
+@router.get("/{app_id}/instances")
+async def list_instances(app_id: int, db: AsyncSession = Depends(get_db)):
+    """Return ALL instances: the primary container (instance 0) plus all replicas.
+
+    This is the unified view used by the Instances tab — no "main vs extras" distinction.
+    """
+    app = await _get_or_404(app_id, db)
+    local_node = await ensure_local_node(db)
+    node_map = await _load_node_map(db)
+
+    app_node = node_map.get(app.node_id) or local_node
+    primary = {
+        "id": 0,          # sentinel: primary container
+        "app_id": app.id,
+        "node_id": app.node_id or app_node.id,
+        "node_name": app_node.name if app_node else None,
+        "node_is_local": bool(app_node.is_local) if app_node else True,
+        "external_port": app.external_port,
+        "tunnel_port": None,
+        "tunnel_connected": False,
+        "container_id": None,   # primary doesn't store container_id on app row
+        "status": app.status,
+        "last_error": app.last_error,
+        "is_primary": True,
+        "created_at": app.created_at.isoformat() if app.created_at else None,
+    }
+
+    rep_result = await db.execute(
+        select(ApplicationReplica).where(ApplicationReplica.app_id == app_id)
+        .order_by(ApplicationReplica.id)
+    )
+    replicas = rep_result.scalars().all()
+    replica_dicts = [
+        {**_replica_to_dict(r, node_map.get(r.node_id)), "is_primary": False}
+        for r in replicas
+    ]
+
+    return [primary] + replica_dicts
+
+
+@router.get("/{app_id}/replicas/{replica_id}/logs")
+async def get_replica_logs(
+    app_id: int,
+    replica_id: int,
+    lines: int = Query(200, ge=1, le=2000),
+    db: AsyncSession = Depends(get_db),
+):
+    """Fetch recent log lines for a specific replica container.
+
+    For local replicas: reads directly from docker logs.
+    For remote replicas: queues a get_logs_tail agent command with the container name.
+    """
+    app = await _get_or_404(app_id, db)
+    rep_result = await db.execute(
+        select(ApplicationReplica).where(
+            ApplicationReplica.id == replica_id,
+            ApplicationReplica.app_id == app_id,
+        )
+    )
+    replica = rep_result.scalar_one_or_none()
+    if not replica:
+        raise HTTPException(404, "Replica not found")
+
+    node_result = await db.execute(select(Node).where(Node.id == replica.node_id)) if replica.node_id else None
+    rep_node = (node_result.scalar_one_or_none() if node_result else None)
+
+    container_name = dm.replica_container_name(app_id, replica_id)
+
+    if rep_node is None or rep_node.is_local:
+        # Local — read directly
+        try:
+            raw = await asyncio.to_thread(
+                lambda: subprocess.check_output(
+                    ["docker", "logs", "--tail", str(lines), container_name],
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                )
+            )
+            return {"lines": raw.splitlines(), "remote": False}
+        except Exception as e:
+            return {"lines": [], "remote": False, "error": str(e)}
+
+    if rep_node.status != "online":
+        return {"lines": [], "remote": True, "error": "Node is offline"}
+
+    cmd = await queue_node_command(
+        db,
+        node_id=rep_node.id,
+        app_id=app_id,
+        command_type="get_replica_logs",
+        payload={
+            "app_id": app_id,
+            "app_name": app.name,
+            "replica_id": replica_id,
+            "container_name": container_name,
+            "lines": lines,
+        },
+    )
+    done = await wait_for_node_command(db, cmd.id, timeout_seconds=20)
+    if done.status != "done":
+        return {"lines": [], "remote": True, "error": done.error_message}
+    result_payload = json.loads(done.result or "{}") if done.result else {}
+    return {"lines": result_payload.get("lines", []) or [], "remote": True}
+
+
 @router.post("/{app_id}/scale")
 async def scale_app(app_id: int, req: ScaleRequest, db: AsyncSession = Depends(get_db), actor: str = Depends(_auth.get_current_actor)):
     app = await _get_or_404(app_id, db)

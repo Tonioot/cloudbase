@@ -51,7 +51,6 @@ class Application(Base):
     update_page      = Column(Text, nullable=True)  # JSON: {title, message, color, custom_html}
     restart_page     = Column(Text, nullable=True)  # JSON: {title, message, color, custom_html}
     starting_page    = Column(Text, nullable=True)  # JSON: {title, message, color, custom_html}
-    active_slot = Column(String(10), default="blue", nullable=True)  # blue | green for zero-downtime deploys
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

@@ -1616,8 +1616,6 @@ async function initInstances() {
       const actionBtn = `<button class="btn-danger btn-sm inst-remove-btn" data-id="${inst.id}" style="padding:4px 10px;font-size:12px">Remove</button>`;
       const restartBtn = `<button class="btn btn-secondary btn-sm inst-restart-btn" data-id="${inst.id}" style="padding:4px 10px;font-size:12px">Restart</button>`;
 
-      const logsBtn = `<button class="btn btn-secondary btn-sm inst-logs-btn" data-id="${inst.id}" data-primary="false" style="padding:4px 10px;font-size:12px">Logs</button>`;
-
       return `<tr style="border-bottom:1px solid #21262d">
         <td style="padding:8px 12px;color:#e6edf3;font-size:13px">${idx + 1}</td>
         <td style="padding:8px 12px;color:#e6edf3;font-size:13px">${nodeName}</td>
@@ -1628,7 +1626,6 @@ async function initInstances() {
           ${inst.last_error ? `<br><span style="color:#f85149;font-size:11px">${inst.last_error}</span>` : ''}
         </td>
         <td style="padding:8px 12px;text-align:right;white-space:nowrap">
-          ${logsBtn}
           ${restartBtn}
           ${actionBtn}
         </td>
@@ -1691,11 +1688,6 @@ async function initInstances() {
       });
     });
 
-    wrap.querySelectorAll('.inst-logs-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        _showInstanceLogs(btn.dataset.id);
-      });
-    });
   }
 
   await renderInstances();
@@ -1707,15 +1699,6 @@ async function initInstances() {
   const addBtn = document.getElementById('btn-add-instance');
   if (addBtn) {
     addBtn.onclick = async () => {
-      let nodes = [];
-      try {
-        nodes = await api.listNodes();
-      } catch {
-        toast('Failed to load nodes', 'error');
-        return;
-      }
-      const available = nodes.filter(n => n.enabled && n.status === 'online');
-
       const _field = (id, label, type, placeholder, hint) =>
         `<div style="margin-bottom:10px">
           <div style="font-size:12px;font-weight:500;color:var(--text-secondary);margin-bottom:4px">${label}</div>
@@ -1731,11 +1714,6 @@ async function initInstances() {
           <div class="dialog" style="max-width:440px">
             <div class="dialog-title">Add Instance</div>
             <div class="dialog-body" style="color:var(--text-secondary);font-size:13px;line-height:1.5">
-              <div style="margin-bottom:12px;font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em">Node</div>
-              <select id="inst-node-select" style="width:100%;padding:7px 10px;background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px;font-size:13px;margin-bottom:16px">
-                <option value="">— Same node as app —</option>
-                ${available.map(n => `<option value="${n.id}">${n.name} (${n.is_local ? 'local' : n.public_host || n.status})</option>`).join('')}
-              </select>
               <div style="margin-bottom:8px;font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em">Docker Runtime <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional overrides)</span></div>
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
                 ${_field('inst-cpu', 'CPU Limit', 'number', app.docker_cpu_limit || '1.0', 'Max CPUs')}
@@ -1762,7 +1740,6 @@ async function initInstances() {
           </div>`;
         document.body.appendChild(backdrop);
         const ok = () => {
-          const nodeVal = backdrop.querySelector('#inst-node-select').value;
           const cpu = parseFloat(backdrop.querySelector('#inst-cpu').value);
           const mem = parseInt(backdrop.querySelector('#inst-mem').value, 10);
           const readonly = backdrop.querySelector('#inst-readonly').checked;
@@ -1770,7 +1747,6 @@ async function initInstances() {
           const tmpfsSz = parseInt(backdrop.querySelector('#inst-tmpfs-size').value, 10);
           backdrop.remove();
           resolve({
-            nodeId: nodeVal ? parseInt(nodeVal, 10) : null,
             cpu: Number.isFinite(cpu) ? cpu : null,
             mem: Number.isInteger(mem) ? mem : null,
             readonly,
@@ -1797,7 +1773,6 @@ async function initInstances() {
       addBtn.textContent = 'Starting...';
       try {
         await api.scaleApp(APP_ID, {
-          node_id: result.nodeId,
           docker_cpu_limit: result.cpu,
           docker_memory_limit_mb: result.mem,
           docker_read_only_root: result.readonly,
@@ -1819,39 +1794,6 @@ async function initInstances() {
   }
 }
 
-async function _showInstanceLogs(instanceId) {
-  let logLinesLocal = [];
-  try {
-    const data = await api.getInstanceLogs(APP_ID, instanceId, 200);
-    logLinesLocal = data.lines || [];
-  } catch (e) {
-    toast('Failed to load logs: ' + e.message, 'error');
-    return;
-  }
-
-  const label = `Instance #${instanceId}`;
-  const content = logLinesLocal.length
-    ? logLinesLocal.map((line, i) => `<div class="log-line ${logClass(line)}"><span class="log-num">${String(i + 1).padStart(4)}</span><span class="log-text">${escHtml(line)}</span></div>`).join('')
-    : `<div class="log-empty">No log output available for this instance.</div>`;
-
-  const backdrop = document.createElement('div');
-  backdrop.className = 'dialog-backdrop';
-  backdrop.innerHTML = `
-    <div class="dialog dialog-modern" style="max-width:860px;width:min(860px,95vw)">
-      <div class="dialog-title">Logs - ${label}</div>
-      <div class="dialog-body" style="padding:0">
-        <div id="inst-log-terminal" class="terminal" style="height:58vh;max-height:620px;min-height:280px">${content}</div>
-      </div>
-      <div class="dialog-actions">
-        <button class="btn btn-primary" id="inst-log-close">Close</button>
-      </div>
-    </div>`;
-  document.body.appendChild(backdrop);
-  backdrop.querySelector('#inst-log-close').onclick = () => backdrop.remove();
-  backdrop.addEventListener('click', e => {
-    if (e.target === backdrop) backdrop.remove();
-  });
-}
 
 
 async function saveSettings() {

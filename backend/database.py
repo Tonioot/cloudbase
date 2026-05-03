@@ -56,7 +56,6 @@ async def init_db():
             ("redirect_domains",  "TEXT"),
             ("node_id",           "INTEGER"),
             ("last_error",        "TEXT"),
-            ("active_slot",       "TEXT DEFAULT 'blue'"),
         ]:
             if col in existing_columns:
                 continue

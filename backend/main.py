@@ -138,6 +138,21 @@ async def _stats_collector():
                 local_node_obj = local_node_result.scalar_one_or_none()
                 local_node_id = local_node_obj.id if local_node_obj else None
 
+                    # Fetch running local replicas alongside apps so _one() can aggregate them
+            async with AsyncSessionLocal() as _rep_db:
+                from models import ApplicationReplica as _AppReplica
+                rep_result = await _rep_db.execute(
+                    select(_AppReplica).where(
+                        _AppReplica.status == "running",
+                        (_AppReplica.node_id == local_node_id) | (_AppReplica.node_id.is_(None)),
+                    )
+                )
+                running_replicas = rep_result.scalars().all()
+
+            replicas_by_app: dict[int, list] = {}
+            for _r in running_replicas:
+                replicas_by_app.setdefault(_r.app_id, []).append(_r)
+
             async def _one(a):
                 try:
                     if a.node_id and a.node_id != local_node_id:
@@ -145,9 +160,35 @@ async def _stats_collector():
                     import time as _time
                     timestamp = int(_time.time() * 1000)  # milliseconds
                     if a.use_docker:
-                        s = await asyncio.to_thread(pm.get_docker_stats, a.id)
-                        if not s:
-                            return
+                        app_replicas = replicas_by_app.get(a.id, [])
+                        if app_replicas:
+                            # Instance-based: aggregate stats from all running replicas
+                            stats_list = await asyncio.gather(*[
+                                asyncio.to_thread(
+                                    dm.get_container_stats_by_name,
+                                    dm.replica_container_name(a.id, r.id),
+                                )
+                                for r in app_replicas
+                            ])
+                            stats_list = [s for s in stats_list if s]
+                            if not stats_list:
+                                return
+                            n = len(stats_list)
+                            s = {
+                                "cpu_percent":    round(sum(s.get("cpu_percent",    0) for s in stats_list) / n, 2),
+                                "memory_mb":      round(sum(s.get("memory_mb",      0) for s in stats_list), 2),
+                                "memory_vms_mb":  round(sum(s.get("memory_vms_mb",  0) for s in stats_list), 2),
+                                "net_rx_mb":      round(sum(s.get("net_rx_mb",      0) for s in stats_list), 2),
+                                "net_tx_mb":      round(sum(s.get("net_tx_mb",      0) for s in stats_list), 2),
+                                "disk_read_mb":   round(sum(s.get("disk_read_mb",   0) for s in stats_list), 2),
+                                "disk_write_mb":  round(sum(s.get("disk_write_mb",  0) for s in stats_list), 2),
+                                "uptime_seconds": max((s.get("uptime_seconds", 0) for s in stats_list), default=0),
+                            }
+                        else:
+                            # Legacy single-container model
+                            s = await asyncio.to_thread(pm.get_docker_stats, a.id)
+                            if not s:
+                                return
                         mem = psutil.virtual_memory()
                         data = {
                             "status": "running",
@@ -185,17 +226,7 @@ async def _stats_collector():
             # Collect all apps concurrently — cpu_percent(interval=0.5) runs in threads
             await asyncio.gather(*[_one(a) for a in apps])
 
-            # Collect stats for local running replicas and push to parent app stream
-            async with AsyncSessionLocal() as db:
-                from models import ApplicationReplica as _AppReplica
-                rep_result = await db.execute(
-                    select(_AppReplica).where(
-                        _AppReplica.status == "running",
-                        (_AppReplica.node_id == local_node_id) | (_AppReplica.node_id.is_(None)),
-                    )
-                )
-                running_replicas = rep_result.scalars().all()
-
+            # Also push per-replica live stats so per-instance stream data is available
             async def _one_replica(replica):
                 try:
                     import time as _time

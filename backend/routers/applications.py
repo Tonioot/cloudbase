@@ -2606,92 +2606,105 @@ async def deploy_zero_downtime(app_id: int, db: AsyncSession = Depends(get_db), 
     if not app.working_dir:
         raise HTTPException(400, "No working directory — deploy the app first")
 
-    current_slot = app.active_slot or "blue"
-    new_slot = "green" if current_slot == "blue" else "blue"
-    internal_port = app.port or 8000
-    current_ext_port = app.external_port or internal_port
+    pm._push_line(app_id, "[ZD] Zero-downtime deploy starting…")
 
-    result_port_q = await db.execute(select(Application.external_port).where(Application.external_port.isnot(None)))
-    used_ports = {row[0] for row in result_port_q.all()}
-    used_ports.add(current_ext_port)
-    temp_port = await asyncio.to_thread(dm.pick_free_external_port, used_ports)
-
-    pm._push_line(app_id, f"[ZD] Zero-downtime deploy starting: active={current_slot} → new={new_slot}")
-    pm._push_line(app_id, f"[ZD] Temp port for new {new_slot} slot: {temp_port}")
-
+    # Step 1: Build a fresh image
     try:
+        def _push(_aid, line):
+            pm._push_line(app_id, str(line))
         img = await asyncio.to_thread(
-            dm.build_image_for_slot,
-            app_id, app.name, app.working_dir, pm._push_line,
-            app.app_type or "unknown", app.start_command or "", internal_port, new_slot,
+            dm.build_image,
+            app_id, app.name, app.working_dir, _push,
+            app.app_type or "unknown", app.start_command or "", app.port or 8000,
         )
     except Exception as e:
-        raise HTTPException(500, f"Failed to build {new_slot} image: {e}")
+        raise HTTPException(500, f"Failed to build image: {e}")
 
+    app.docker_image = img
+
+    # Step 2: Create a new replica row and assign a free port
+    new_ext_port = await _assign_external_port(None, local_node.id, None, db)
+    new_replica = ApplicationReplica(
+        app_id=app_id,
+        node_id=None,   # local node
+        external_port=new_ext_port,
+        status="starting",
+    )
+    db.add(new_replica)
+    await db.flush()   # populate new_replica.id
+
+    pm._push_line(app_id, f"[ZD] Starting new instance (id={new_replica.id}) on port {new_ext_port}…")
+
+    # Step 3: Start the new replica container
     env_vars = decrypt_env(app.env_vars or "")
     try:
-        await asyncio.to_thread(
-            dm.run_container_for_slot,
-            app_id, app.name, new_slot, img,
-            internal_port, temp_port,
-            env_vars, _docker_runtime_options(app), pm._push_line,
-        )
+        cid = await _start_instance_local(app, new_replica, env_vars, app_id)
+        new_replica.container_id = cid
     except Exception as e:
-        await asyncio.to_thread(dm.stop_slot_container, app_id, new_slot)
-        raise HTTPException(500, f"Failed to start {new_slot} container: {e}")
+        await db.delete(new_replica)
+        await db.commit()
+        raise HTTPException(500, f"Failed to start new instance: {e}")
 
-    pm._push_line(app_id, f"[ZD] Waiting for health check on port {temp_port} (max 60s)…")
+    await db.commit()
+    await db.refresh(new_replica)
+
+    # Step 4: Health check (60 s)
+    check_port = new_replica.external_port
+    pm._push_line(app_id, f"[ZD] Waiting for health check on port {check_port} (max 60s)…")
     deadline = asyncio.get_running_loop().time() + 60
     healthy = False
     while asyncio.get_running_loop().time() < deadline:
-        if await asyncio.to_thread(_local_http_service_ready, temp_port):
+        if await asyncio.to_thread(_local_http_service_ready, check_port):
             healthy = True
             break
         await asyncio.sleep(2)
 
     if not healthy:
-        pm._push_line(app_id, f"[ZD] Health check failed — rolling back, stopping {new_slot} slot")
-        await asyncio.to_thread(dm.stop_slot_container, app_id, new_slot)
-        raise HTTPException(502, f"New {new_slot} slot failed health check after 60s — rolled back")
+        pm._push_line(app_id, "[ZD] Health check failed — rolling back new instance")
+        await asyncio.to_thread(dm.stop_replica_container, app_id, new_replica.id)
+        await db.delete(new_replica)
+        await db.commit()
+        raise HTTPException(502, "New instance failed health check after 60s — rolled back")
 
-    pm._push_line(app_id, "[ZD] Health check passed. Swapping nginx to new slot…")
+    pm._push_line(app_id, "[ZD] Health check passed. Stopping old instances…")
+
+    # Step 5: Stop all previously-running instances for this app
+    old_result = await db.execute(
+        select(ApplicationReplica).where(
+            ApplicationReplica.app_id == app_id,
+            ApplicationReplica.id != new_replica.id,
+            ApplicationReplica.status == "running",
+        )
+    )
+    old_replicas = old_result.scalars().all()
+    for old_r in old_replicas:
+        await asyncio.to_thread(dm.stop_replica_container, app_id, old_r.id)
+        await db.delete(old_r)
+        pm._push_line(app_id, f"[ZD] Stopped and removed old instance {old_r.id}.")
+
+    new_replica.status = "running"
+    app.status = "running"
+
+    # Step 6: Regenerate nginx to point to the new instance
+    await db.flush()
+    backends = await _get_nginx_backends(app, db, local_node)
     ssl_cert, ssl_key = _resolve_ssl_paths(app.ssl_cert_path, app.ssl_key_path)
-    swap_cfg = nm.generate_config(
-        app.name, app.domain, temp_port,
+    cfg = nm.generate_config(
+        app.name, app.domain, backends,
         ssl_cert, ssl_key,
         app_id=app_id, mode="normal",
         extra_domains=json.loads(app.extra_domains or "[]"),
         redirect_domains=json.loads(app.redirect_domains or "[]"),
     )
-    ok, msg = nm.write_nginx_config(app.name, swap_cfg)
+    ok, msg = nm.write_nginx_config(app.name, cfg)
     if not ok:
-        await asyncio.to_thread(dm.stop_slot_container, app_id, new_slot)
-        raise HTTPException(500, f"Nginx swap failed: {msg}")
+        pm._push_line(app_id, f"[ZD] Warning: nginx config update failed: {msg}")
 
-    pm._push_line(app_id, f"[ZD] Nginx now routing to {new_slot} on port {temp_port}. Stopping old {current_slot} container…")
-    await asyncio.to_thread(dm.stop_container, app_id)
-
-    try:
-        client = dm._get_client()
-        slot_cname = dm.slot_container_name(app_id, new_slot)
-        canonical = dm.container_name(app_id)
-        c = client.containers.get(slot_cname)
-        c.rename(canonical)
-        pm._push_line(app_id, f"[ZD] Container renamed to {canonical}")
-    except Exception as e:
-        pm._push_line(app_id, f"[ZD] Warning: could not rename container: {e}")
-
-    # The new container runs on temp_port — persist that as the new external_port.
-    # Nginx already points to temp_port from the swap above; no second write needed.
-    app.active_slot = new_slot
-    app.docker_image = img
-    app.external_port = temp_port
-    app.status = "running"
-    await log_audit(db, "app.zero_downtime_deploy", actor=actor, app_id=app_id, detail={"name": app.name, "slot": new_slot})
+    await log_audit(db, "app.zero_downtime_deploy", actor=actor, app_id=app_id, detail={"name": app.name, "image": img})
     await db.commit()
 
-    pm._push_line(app_id, f"[ZD] Zero-downtime deploy complete. Active slot: {new_slot} on port {temp_port}")
-    return {"status": "ok", "active_slot": new_slot, "image": img}
+    pm._push_line(app_id, f"[ZD] Zero-downtime deploy complete. Instance {new_replica.id} on port {check_port}")
+    return {"status": "ok", "image": img, "instance_id": new_replica.id}
 
 
 def _sse_line(data: str) -> str:

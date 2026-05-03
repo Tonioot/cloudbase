@@ -114,6 +114,20 @@ class NodeCommand(Base):
     completed_at = Column(DateTime, nullable=True)
 
 
+class ApplicationReplica(Base):
+    __tablename__ = "application_replicas"
+
+    id            = Column(Integer, primary_key=True, index=True)
+    app_id        = Column(Integer, ForeignKey("applications.id", ondelete="CASCADE"), nullable=False, index=True)
+    node_id       = Column(Integer, ForeignKey("nodes.id"), nullable=True, index=True)
+    external_port = Column(Integer, nullable=True)
+    container_id  = Column(String(200), nullable=True)
+    status        = Column(String(20), default="stopped")  # pending|starting|running|stopping|stopped|error
+    last_error    = Column(Text, nullable=True)
+    created_at    = Column(DateTime, default=datetime.utcnow)
+    updated_at    = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class AuditLog(Base):
     __tablename__ = "audit_logs"
 

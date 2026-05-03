@@ -575,7 +575,7 @@ def _update_template(title: str, message: str, color: str, status_url: str = Non
 def generate_config(
     app_name: str,
     domain: str,
-    port: int,
+    port: int | list,
     ssl_cert: str = None,
     ssl_key: str = None,
     app_id: int = None,
@@ -584,6 +584,9 @@ def generate_config(
     redirect_domains: list = None,
 ) -> str:
     """Generate an nginx server block.
+
+    port: single int for legacy single-instance proxy, or list[str] of "host:port" backends
+          for multi-replica load balancing (nginx upstream block).
 
     mode:
       'normal'       -  proxy to app; 502/503 automatically serve downtime.html
@@ -595,6 +598,7 @@ def generate_config(
     extra_domains:    list of additional domains/subdomains served by the same app
     redirect_domains: list of domains that issue a 301 redirect to the primary domain
     """
+    import re as _re
     maint_root = f"{MAINTENANCE_DIR}/{app_id}" if app_id else f"{MAINTENANCE_DIR}/0"
 
     if mode == "maintenance":
@@ -605,10 +609,24 @@ def generate_config(
         return _static_page_config(domain, maint_root, "restart.html", ssl_cert, ssl_key, extra_domains, redirect_domains)
     if mode == "starting":
         return _static_page_config(domain, maint_root, "starting.html", ssl_cert, ssl_key, extra_domains, redirect_domains)
-    return _proxy_config(domain, port, maint_root, ssl_cert, ssl_key, extra_domains, redirect_domains)
+
+    # Build upstream block when multiple backends are provided
+    if isinstance(port, list) and len(port) > 1:
+        safe_name = _re.sub(r"[^a-z0-9_]", "_", app_name.lower())
+        upstream_name = f"cloudbase_{safe_name}"
+        upstream_block = f"upstream {upstream_name} {{\n"
+        for backend in port:
+            upstream_block += f"    server {backend};\n"
+        upstream_block += "}\n\n"
+        proxy_target = f"http://{upstream_name}"
+        return _proxy_config(domain, proxy_target, maint_root, ssl_cert, ssl_key, extra_domains, redirect_domains, upstream_block=upstream_block)
+
+    # Single backend (legacy int or single-item list)
+    single_port = port[0].split(":")[-1] if isinstance(port, list) else port
+    return _proxy_config(domain, f"http://127.0.0.1:{single_port}", maint_root, ssl_cert, ssl_key, extra_domains, redirect_domains)
 
 
-def _proxy_config(domain: str, port: int, maint_root: str, ssl_cert: str = None, ssl_key: str = None, extra_domains: list = None, redirect_domains: list = None) -> str:
+def _proxy_config(domain: str, proxy_target: str, maint_root: str, ssl_cert: str = None, ssl_key: str = None, extra_domains: list = None, redirect_domains: list = None, upstream_block: str = "") -> str:
     # NOTE: proxy_intercept_errors must be inside the proxying location block.
     # We use a regular 'internal' location (not named @) so that try_files works.
     # Named locations don't support try_files, which caused the file to not be served.
@@ -625,7 +643,7 @@ def _proxy_config(domain: str, port: int, maint_root: str, ssl_cert: str = None,
     }}
 
     location / {{
-        proxy_pass http://127.0.0.1:{port};
+        proxy_pass {proxy_target};
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection 'upgrade';
@@ -644,7 +662,7 @@ def _proxy_config(domain: str, port: int, maint_root: str, ssl_cert: str = None,
     redirect_blocks = _redirect_server_blocks(redirect_domains or [], domain, ssl_cert, ssl_key)
 
     if ssl_cert and ssl_key:
-        return f"""{redirect_blocks}server {{
+        return f"""{upstream_block}{redirect_blocks}server {{
     listen 80;
     server_name {server_name_str};
     return 301 https://$host$request_uri;
@@ -662,7 +680,7 @@ server {{
 {server_content}
 }}
 """
-    return f"""{redirect_blocks}server {{
+    return f"""{upstream_block}{redirect_blocks}server {{
     listen 80;
     server_name {server_name_str};
 

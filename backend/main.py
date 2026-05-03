@@ -184,6 +184,37 @@ async def _stats_collector():
 
             # Collect all apps concurrently — cpu_percent(interval=0.5) runs in threads
             await asyncio.gather(*[_one(a) for a in apps])
+
+            # Collect stats for local running replicas and push to parent app stream
+            async with AsyncSessionLocal() as db:
+                from models import ApplicationReplica as _AppReplica
+                rep_result = await db.execute(
+                    select(_AppReplica).where(
+                        _AppReplica.status == "running",
+                        (_AppReplica.node_id == local_node_id) | (_AppReplica.node_id.is_(None)),
+                    )
+                )
+                running_replicas = rep_result.scalars().all()
+
+            async def _one_replica(replica):
+                try:
+                    import time as _time
+                    cname = dm.replica_container_name(replica.app_id, replica.id)
+                    s = await asyncio.to_thread(dm.get_container_stats_by_name, cname)
+                    if not s:
+                        return
+                    timestamp = int(_time.time() * 1000)
+                    data = {
+                        "replica_id": replica.id,
+                        "timestamp": timestamp,
+                        **s,
+                    }
+                    pm._push_stat(replica.app_id, data)
+                except Exception:
+                    pass
+
+            await asyncio.gather(*[_one_replica(r) for r in running_replicas])
+
         except asyncio.CancelledError:
             return
         except Exception:

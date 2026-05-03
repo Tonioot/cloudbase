@@ -470,6 +470,34 @@ async def cmd_get_agent_logs(client, state, main_id, payload, headers):
         all_lines = f.readlines()
     return {"lines": [l.rstrip() for l in all_lines[-lines:]]}
 
+async def cmd_start_replica(client, state, main_id, payload, headers):
+    local_id = await _resolve_local_id(client, state, main_id, payload, headers)
+    body = {
+        "replica_id": payload["replica_id"],
+        "internal_port": payload.get("internal_port", 8000),
+        "external_port": payload["external_port"],
+        "env_vars": payload.get("env_vars") or {},
+        "docker_options": payload.get("docker_options"),
+    }
+    resp = await client.post(
+        f"{_LOCAL_API_BASE}/api/apps/{local_id}/replicas/run-remote",
+        json=body, headers=headers, timeout=120,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def cmd_stop_replica(client, state, main_id, payload, headers):
+    local_id = await _resolve_local_id(client, state, main_id, payload, headers)
+    replica_id = payload["replica_id"]
+    resp = await client.delete(
+        f"{_LOCAL_API_BASE}/api/apps/{local_id}/replicas/{replica_id}/stop-remote",
+        headers=headers, timeout=60,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
 # ─── Command Dispatcher ───────────────────────────────────────────────────────
 
 COMMAND_HANDLERS: Dict[str, Callable] = {
@@ -494,6 +522,8 @@ COMMAND_HANDLERS: Dict[str, Callable] = {
     "upload_cert": cmd_upload_cert,
     "get_agent_logs": cmd_get_agent_logs,
     "delete_app": cmd_delete_app,
+    "start_replica": cmd_start_replica,
+    "stop_replica": cmd_stop_replica,
 }
 
 async def _execute_command(

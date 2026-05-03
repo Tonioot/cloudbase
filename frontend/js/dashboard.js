@@ -472,6 +472,7 @@ function appCardHTML(app) {
         ${renderPortRows(app)}
         <div class="app-meta-row">${icon.server}<span style="color:${nodeOffline ? 'var(--red)' : 'inherit'}">Node: ${nodeLabel} (${nodeStatus})</span></div>
         <div class="app-meta-row">${icon.link}<span>${repoShort}</span></div>
+        ${(app.replica_count || 0) > 0 ? `<div class="app-meta-row"><span style="color:#58a6ff;font-size:11px;font-weight:600;letter-spacing:.04em">${app.replica_count + 1} REPLICAS</span></div>` : ''}
       </div>
 
       <div class="app-card-actions">

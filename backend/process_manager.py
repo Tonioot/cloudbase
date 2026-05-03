@@ -444,6 +444,49 @@ def stop_docker_app(app_id: int) -> bool:
     return ok
 
 
+def start_docker_replica(
+    app_id: int,
+    replica_id: int,
+    app_name: str,
+    internal_port: int,
+    external_port: int,
+    env_vars: dict,
+    docker_options: dict | None = None,
+) -> str:
+    """Start a replica container using the existing image (no rebuild). Returns container ID."""
+    def _push(aid, line):
+        log_buffers.setdefault(aid, deque(maxlen=5000)).append(str(line))
+        _push_line(aid, line)
+
+    img = dm.image_name(app_id, app_name)
+    try:
+        container_id = dm.run_replica_container(
+            app_id, replica_id, app_name, img,
+            internal_port, external_port, env_vars or {}, docker_options, _push,
+        )
+    except Exception as e:
+        message = str(e) or "Unknown Docker error"
+        _push(app_id, f"[Replica] Start failed for replica {replica_id}: {message}")
+        raise RuntimeError(message) from e
+
+    if _main_loop is not None and not _main_loop.is_closed():
+        dm.attach_container_log_tailer(app_id, log_buffers, _push_line, _main_loop)
+
+    _debug(f"Replica {replica_id} for app {app_id} started, container_id={container_id[:12]}")
+    return container_id
+
+
+def stop_docker_replica(app_id: int, replica_id: int) -> bool:
+    """Stop and remove a replica container."""
+    def _push(aid, line):
+        log_buffers.setdefault(aid, deque(maxlen=5000)).append(str(line))
+        _push_line(aid, line)
+
+    ok = dm.stop_replica_container(app_id, replica_id, push_line_fn=_push)
+    _debug(f"Replica {replica_id} for app {app_id} stopped, ok={ok}")
+    return ok
+
+
 def is_docker_app_running(app_id: int) -> bool:
     return dm.is_container_running(app_id)
 

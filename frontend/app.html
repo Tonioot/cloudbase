@@ -584,6 +584,34 @@
               </div>
             </div>
 
+            <!-- Replicas -->
+            <div class="settings-group" id="replicas-section" style="display:none" data-admin>
+              <div class="settings-group-hd">
+                <div class="settings-group-title">Replicas</div>
+                <div class="settings-group-sub">Run additional instances of this app across nodes. Nginx will load balance between them automatically.</div>
+              </div>
+              <div class="settings-group-bd">
+                <table style="width:100%;border-collapse:collapse;margin-bottom:12px">
+                  <thead>
+                    <tr style="border-bottom:1px solid #30363d">
+                      <th style="padding:6px 12px;text-align:left;font-size:12px;color:#8b949e;font-weight:500">ID</th>
+                      <th style="padding:6px 12px;text-align:left;font-size:12px;color:#8b949e;font-weight:500">Node</th>
+                      <th style="padding:6px 12px;text-align:left;font-size:12px;color:#8b949e;font-weight:500">Port</th>
+                      <th style="padding:6px 12px;text-align:left;font-size:12px;color:#8b949e;font-weight:500">Status</th>
+                      <th style="padding:6px 12px;text-align:right;font-size:12px;color:#8b949e;font-weight:500"></th>
+                    </tr>
+                  </thead>
+                  <tbody id="replicas-tbody">
+                    <tr><td colspan="5" style="color:#8b949e;text-align:center;padding:12px">Loading…</td></tr>
+                  </tbody>
+                </table>
+                <button class="btn btn-secondary btn-sm" id="btn-add-replica">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                  Add Replica
+                </button>
+              </div>
+            </div>
+
             <!-- Danger Zone -->
             <div class="settings-group settings-group--danger" data-admin>
               <div class="settings-group-hd">

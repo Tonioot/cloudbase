@@ -718,3 +718,159 @@ def rebuild_image(
     """Remove old image and build fresh. Returns new image tag."""
     remove_image(app_id, app_name)
     return build_image(app_id, app_name, app_dir, push_line_fn, app_type, start_command, port)
+
+
+# ── Replica helpers ───────────────────────────────────────────────────────────
+
+def replica_container_name(app_id: int, replica_id: int) -> str:
+    return f"cloudbase-app-{app_id}-replica-{replica_id}"
+
+
+def run_replica_container(
+    app_id: int,
+    replica_id: int,
+    app_name: str,
+    img: str,
+    internal_port: int,
+    external_port: int,
+    env_vars: dict,
+    docker_options: dict | None,
+    push_line_fn,
+) -> str:
+    """Start a replica container. Returns container ID."""
+    client = _get_client()
+    cname = replica_container_name(app_id, replica_id)
+    docker_options = docker_options or {}
+    try:
+        old = client.containers.get(cname)
+        old.remove(force=True)
+        push_line_fn(app_id, f"[Replica] Removed old container for replica {replica_id}.")
+    except Exception:
+        pass
+
+    port_bindings = {}
+    if internal_port and external_port:
+        port_bindings[f"{internal_port}/tcp"] = external_port
+
+    run_kwargs = {
+        "detach": True,
+        "name": cname,
+        "ports": port_bindings,
+        "environment": env_vars,
+        "restart_policy": _restart_policy_config(docker_options.get("restart_policy")),
+        "labels": {
+            "cloudbase.app_id": str(app_id),
+            "cloudbase.replica_id": str(replica_id),
+            "cloudbase.app_name": app_name,
+            "cloudbase.internal_port": str(internal_port),
+            "cloudbase.external_port": str(external_port),
+        },
+    }
+
+    cpu_limit = docker_options.get("cpu_limit")
+    if cpu_limit:
+        run_kwargs["nano_cpus"] = int(float(cpu_limit) * 1_000_000_000)
+
+    memory_limit_mb = docker_options.get("memory_limit_mb")
+    if memory_limit_mb:
+        run_kwargs["mem_limit"] = int(memory_limit_mb) * 1024 * 1024
+
+    if docker_options.get("read_only_root"):
+        run_kwargs["read_only"] = True
+
+    if docker_options.get("tmpfs_enabled"):
+        tmpfs_opts = ["rw", "nosuid", "nodev", "noexec"]
+        tmpfs_size_mb = docker_options.get("tmpfs_size_mb")
+        if tmpfs_size_mb:
+            tmpfs_opts.append(f"size={int(tmpfs_size_mb)}m")
+        run_kwargs["tmpfs"] = {"/tmp": ",".join(tmpfs_opts)}
+
+    container = client.containers.run(img, **run_kwargs)
+    push_line_fn(app_id, f"[Replica] Container {replica_id} started: {container.short_id} (:{external_port} → :{internal_port})")
+    return container.id
+
+
+def stop_replica_container(app_id: int, replica_id: int, push_line_fn=None) -> bool:
+    client = _get_client()
+    cname = replica_container_name(app_id, replica_id)
+    try:
+        c = client.containers.get(cname)
+        c.stop(timeout=10)
+        c.remove()
+        if push_line_fn:
+            push_line_fn(app_id, f"[Replica] Container {replica_id} stopped and removed.")
+        return True
+    except Exception as e:
+        if push_line_fn:
+            push_line_fn(app_id, f"[Replica] Stop error for replica {replica_id}: {e}")
+        return False
+
+
+def is_replica_container_running(app_id: int, replica_id: int) -> bool:
+    try:
+        client = _get_client()
+        c = client.containers.get(replica_container_name(app_id, replica_id))
+        c.reload()
+        return c.status == "running"
+    except Exception:
+        return False
+
+
+def get_container_stats_by_name(container_name_str: str) -> dict:
+    """Like get_container_stats but accepts an explicit container name instead of app_id."""
+    try:
+        client = _get_client()
+        c = client.containers.get(container_name_str)
+        raw = c.stats(stream=False)
+
+        cpu_delta = raw["cpu_stats"]["cpu_usage"]["total_usage"] - raw["precpu_stats"]["cpu_usage"]["total_usage"]
+        system_delta = raw["cpu_stats"].get("system_cpu_usage", 0) - raw["precpu_stats"].get("system_cpu_usage", 0)
+        num_cpus = raw["cpu_stats"].get("online_cpus") or len(raw["cpu_stats"]["cpu_usage"].get("percpu_usage") or [1])
+        cpu_percent = (cpu_delta / system_delta * num_cpus * 100.0) if system_delta > 0 else 0.0
+
+        mem_stats = raw.get("memory_stats", {})
+        mem_usage = mem_stats.get("usage", 0)
+        mem_inner = mem_stats.get("stats", {})
+        if mem_usage == 0 and mem_inner:
+            rss = mem_inner.get("anon", 0)
+            mem_usage = rss + mem_inner.get("file", 0)
+        else:
+            mem_cache = mem_inner.get("inactive_file", mem_inner.get("cache", 0))
+            rss = max(mem_usage - mem_cache, 0)
+
+        c.reload()
+        started_at = c.attrs.get("State", {}).get("StartedAt", "")
+        uptime = 0
+        if started_at:
+            import datetime
+            try:
+                started = datetime.datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+                uptime = int((datetime.datetime.now(datetime.timezone.utc) - started).total_seconds())
+            except Exception:
+                pass
+
+        networks = raw.get("networks") or {}
+        net_rx = sum(v.get("rx_bytes", 0) for v in networks.values())
+        net_tx = sum(v.get("tx_bytes", 0) for v in networks.values())
+
+        blkio = raw.get("blkio_stats", {})
+        io_list = blkio.get("io_service_bytes_recursive") or []
+        disk_read  = sum(e.get("value", 0) for e in io_list if e.get("op", "").lower() == "read")
+        disk_write = sum(e.get("value", 0) for e in io_list if e.get("op", "").lower() == "write")
+
+        return {
+            "cpu_percent": round(cpu_percent, 2),
+            "memory_mb": round(rss / 1024 / 1024, 2),
+            "memory_vms_mb": round(mem_usage / 1024 / 1024, 2),
+            "uptime_seconds": uptime,
+            "status": c.status,
+            "num_threads": 0,
+            "num_connections": 0,
+            "net_rx_mb": round(net_rx / 1024 / 1024, 2),
+            "net_tx_mb": round(net_tx / 1024 / 1024, 2),
+            "disk_read_mb": round(disk_read / 1024 / 1024, 2),
+            "disk_write_mb": round(disk_write / 1024 / 1024, 2),
+        }
+    except Exception:
+        log.warning("get_container_stats_by_name failed for %s", container_name_str, exc_info=True)
+        return {}

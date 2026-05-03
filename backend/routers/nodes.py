@@ -278,6 +278,27 @@ async def _apply_command_result(
                         app.update_mode = bool(payload.get("previous_update_mode"))
                     if error_message:
                         app.last_error = error_message
+            elif cmd.command_type in ("start_replica", "stop_replica"):
+                from models import ApplicationReplica
+                replica_id = payload.get("replica_id")
+                if replica_id:
+                    rep_result = await db.execute(
+                        select(ApplicationReplica).where(ApplicationReplica.id == int(replica_id))
+                    )
+                    replica = rep_result.scalar_one_or_none()
+                    if replica:
+                        if cmd.command_type == "start_replica":
+                            if status == "done":
+                                replica.status = "running"
+                                replica.container_id = (result_payload or {}).get("container_id")
+                                replica.last_error = None
+                            else:
+                                replica.status = "error"
+                                replica.last_error = error_message
+                        else:  # stop_replica
+                            replica.status = "stopped" if status == "done" else "error"
+                            if status != "done" and error_message:
+                                replica.last_error = error_message
             app.updated_at = _utcnow()
 
     await db.commit()

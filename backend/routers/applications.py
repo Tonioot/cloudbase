@@ -10,12 +10,12 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, UploadFile, File, Query, Body, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 import datetime as _dt
-from models import Application, Node, StatsHistory
+from models import Application, ApplicationReplica, Node, StatsHistory
 import process_manager as pm
 import nginx_manager as nm
 import token_vault
@@ -117,6 +117,14 @@ async def _assign_external_port(requested: Optional[int], node_id: int, exclude_
         )
     )
     used: set[int] = {row[0] for row in result.all()}
+
+    replica_result = await db.execute(
+        select(ApplicationReplica.external_port).where(
+            ApplicationReplica.node_id == node_id,
+            ApplicationReplica.external_port.isnot(None),
+        )
+    )
+    used |= {row[0] for row in replica_result.all()}
 
     if requested:
         if requested in used:
@@ -790,8 +798,21 @@ async def list_apps(request: Request, db: AsyncSession = Depends(get_db)):
     if dirty:
         await db.commit()
 
+    # Load replica counts in one query
+    replica_counts_result = await db.execute(
+        select(ApplicationReplica.app_id, func.count(ApplicationReplica.id).label("cnt"))
+        .group_by(ApplicationReplica.app_id)
+    )
+    replica_count_map = {row[0]: row[1] for row in replica_counts_result.all()}
+
     include_sensitive = _request_is_admin(request)
-    return [_app_to_dict(a, node_map.get(a.node_id) or local_node, include_sensitive=include_sensitive) for a in apps]
+    result_list = []
+    for a in apps:
+        count = replica_count_map.get(a.id, 0)
+        # Pass a placeholder list of the right length so replica_count is populated
+        replica_stubs = [{}] * count
+        result_list.append(_app_to_dict(a, node_map.get(a.node_id) or local_node, include_sensitive=include_sensitive, replicas=replica_stubs))
+    return result_list
 
 
 @router.post("")
@@ -913,7 +934,13 @@ async def get_app(app_id: int, request: Request, db: AsyncSession = Depends(get_
     app = await _get_or_404(app_id, db)
     await _sync_process_status(app, db)
     node = await _get_app_node(app, db, local_node)
-    return _app_to_dict(app, node, include_sensitive=_request_is_admin(request))
+    node_map = await _load_node_map(db)
+    replica_result = await db.execute(
+        select(ApplicationReplica).where(ApplicationReplica.app_id == app_id)
+    )
+    replicas = replica_result.scalars().all()
+    replicas_dicts = [_replica_to_dict(r, node_map.get(r.node_id)) for r in replicas]
+    return _app_to_dict(app, node, include_sensitive=_request_is_admin(request), replicas=replicas_dicts)
 
 
 @router.get("/{app_id}/stats/history")
@@ -1094,6 +1121,23 @@ async def delete_app(app_id: int, db: AsyncSession = Depends(get_db), actor: str
             await db.delete(app)
             await db.commit()
             return {"message": f"App '{app.name}' removed (node '{node.name}' was offline — app files may still exist on the node)"}
+
+    # Stop replica containers before deleting (DB rows cascade-delete with the app row)
+    replica_result = await db.execute(
+        select(ApplicationReplica).where(ApplicationReplica.app_id == app_id)
+    )
+    node_map = await _load_node_map(db)
+    for replica in replica_result.scalars().all():
+        if replica.status in ("running", "starting"):
+            r_node = node_map.get(replica.node_id)
+            if r_node and r_node.is_local:
+                await asyncio.to_thread(pm.stop_docker_replica, app_id, replica.id)
+            elif r_node and r_node.status == "online":
+                await queue_node_command(
+                    db, node_id=r_node.id, app_id=app_id,
+                    command_type="stop_replica",
+                    payload={"app_id": app_id, "replica_id": replica.id, "app_name": app.name},
+                )
 
     if app.use_docker:
         await asyncio.to_thread(pm.stop_docker_app, app_id)
@@ -1628,6 +1672,41 @@ async def start_app(app_id: int, db: AsyncSession = Depends(get_db), actor: str 
                 use_docker=True,
             ))
 
+        # Start any stopped replicas
+        replica_result = await db.execute(
+            select(ApplicationReplica).where(ApplicationReplica.app_id == app_id)
+        )
+        for replica in replica_result.scalars().all():
+            if replica.status in ("stopped", "error"):
+                replica_node_result = await db.execute(select(Node).where(Node.id == replica.node_id))
+                replica_node = replica_node_result.scalar_one_or_none()
+                if replica_node and replica_node.is_local:
+                    try:
+                        rid = await asyncio.to_thread(
+                            pm.start_docker_replica,
+                            app_id, replica.id, app.name,
+                            app.port or 8000, replica.external_port or app.port or 8000,
+                            env_vars, _docker_runtime_options(app),
+                        )
+                        replica.status = "running"
+                        replica.container_id = rid
+                    except Exception:
+                        replica.status = "error"
+                elif replica_node and replica_node.status == "online":
+                    await queue_node_command(
+                        db, node_id=replica_node.id, app_id=app_id,
+                        command_type="start_replica",
+                        payload={
+                            "app_id": app_id, "replica_id": replica.id,
+                            "app_name": app.name,
+                            "internal_port": app.port or 8000,
+                            "external_port": replica.external_port or app.port or 8000,
+                            "env_vars": env_vars,
+                            "docker_options": _docker_runtime_options(app),
+                        },
+                    )
+                    replica.status = "starting"
+
         await log_audit(db, "app.start", actor=actor, app_id=app_id, detail={"name": app.name})
         await db.commit()
         return {"status": "running", "container_id": container_id[:12]}
@@ -1706,6 +1785,26 @@ async def stop_app(app_id: int, db: AsyncSession = Depends(get_db), actor: str =
         pm.stop_app(app_id, app.pid)
     app.status = "stopped"
     app.pid = None
+
+    # Stop running replicas (keep rows so they can be restarted later)
+    replica_result = await db.execute(
+        select(ApplicationReplica).where(ApplicationReplica.app_id == app_id)
+    )
+    for replica in replica_result.scalars().all():
+        if replica.status == "running":
+            replica_node_result = await db.execute(select(Node).where(Node.id == replica.node_id))
+            replica_node = replica_node_result.scalar_one_or_none()
+            if replica_node and replica_node.is_local:
+                await asyncio.to_thread(pm.stop_docker_replica, app_id, replica.id)
+                replica.status = "stopped"
+            elif replica_node and replica_node.status == "online":
+                await queue_node_command(
+                    db, node_id=replica_node.id, app_id=app_id,
+                    command_type="stop_replica",
+                    payload={"app_id": app_id, "replica_id": replica.id, "app_name": app.name},
+                )
+                replica.status = "stopping"
+
     await log_audit(db, "app.stop", actor=actor, app_id=app_id, detail={"name": app.name})
     await db.commit()
     return {"status": "stopped"}
@@ -1815,6 +1914,180 @@ async def restart_app(app_id: int, db: AsyncSession = Depends(get_db), actor: st
     await log_audit(db, "app.restart", actor=actor, app_id=app_id, detail={"name": app.name})
     await db.commit()
     return {"status": "running", "pid": pid}
+
+
+class ScaleRequest(BaseModel):
+    node_id: Optional[int] = None
+
+
+class RunReplicaRequest(BaseModel):
+    replica_id: int
+    internal_port: int
+    external_port: int
+    env_vars: Optional[dict] = None
+    docker_options: Optional[dict] = None
+
+
+@router.post("/{app_id}/replicas/run-remote")
+async def run_replica_remote(app_id: int, req: RunReplicaRequest, db: AsyncSession = Depends(get_db)):
+    """Internal endpoint called by the node agent to start a replica container locally.
+    Does NOT create a DB row — the main server already has it."""
+    app = await _get_or_404(app_id, db)
+    try:
+        env_vars = req.env_vars or {}
+        container_id = await asyncio.to_thread(
+            pm.start_docker_replica,
+            app_id, req.replica_id, app.name,
+            req.internal_port, req.external_port,
+            env_vars, req.docker_options,
+        )
+        return {"container_id": container_id, "replica_id": req.replica_id}
+    except Exception as e:
+        raise HTTPException(500, str(e)) from e
+
+
+@router.delete("/{app_id}/replicas/{replica_id}/stop-remote")
+async def stop_replica_remote(app_id: int, replica_id: int, db: AsyncSession = Depends(get_db)):
+    """Internal endpoint called by the node agent to stop a replica container locally."""
+    await _get_or_404(app_id, db)
+    ok = await asyncio.to_thread(pm.stop_docker_replica, app_id, replica_id)
+    return {"ok": ok, "replica_id": replica_id}
+
+
+@router.get("/{app_id}/replicas")
+async def list_replicas(app_id: int, db: AsyncSession = Depends(get_db)):
+    await _get_or_404(app_id, db)
+    node_map = await _load_node_map(db)
+    result = await db.execute(
+        select(ApplicationReplica).where(ApplicationReplica.app_id == app_id)
+    )
+    replicas = result.scalars().all()
+    return [_replica_to_dict(r, node_map.get(r.node_id)) for r in replicas]
+
+
+@router.post("/{app_id}/scale")
+async def scale_app(app_id: int, req: ScaleRequest, db: AsyncSession = Depends(get_db), actor: str = Depends(_auth.get_current_actor)):
+    app = await _get_or_404(app_id, db)
+    local_node = await ensure_local_node(db)
+
+    # Resolve target node for the new replica
+    if req.node_id is not None:
+        target_node_result = await db.execute(select(Node).where(Node.id == req.node_id, Node.enabled == True))
+        target_node = target_node_result.scalar_one_or_none()
+        if not target_node:
+            raise HTTPException(400, "Target node not found or not enabled")
+    else:
+        target_node = await _get_app_node(app, db, local_node)
+
+    external_port = await _assign_external_port(None, target_node.id, None, db)
+
+    replica = ApplicationReplica(
+        app_id=app_id,
+        node_id=target_node.id,
+        external_port=external_port,
+        status="pending",
+    )
+    db.add(replica)
+    await db.flush()  # get replica.id before starting container
+
+    env_vars = decrypt_env(app.env_vars or "")
+
+    if target_node.is_local:
+        try:
+            container_id = await asyncio.to_thread(
+                pm.start_docker_replica,
+                app_id, replica.id, app.name,
+                app.port or 8000, external_port,
+                env_vars, _docker_runtime_options(app),
+            )
+            replica.status = "running"
+            replica.container_id = container_id
+        except Exception as e:
+            replica.status = "error"
+            replica.last_error = str(e)
+            await db.commit()
+            raise HTTPException(500, f"Failed to start replica: {e}") from e
+
+        # Regenerate nginx with new backend
+        if app.nginx_enabled and app.domain:
+            backends = await _get_nginx_backends(app, db, local_node)
+            _ensure_maintenance_files(app, app_id)
+            config = nm.generate_config(
+                app.name, app.domain, backends,
+                app.ssl_cert_path, app.ssl_key_path,
+                app_id=app_id, mode=_get_nginx_mode(app),
+                extra_domains=json.loads(app.extra_domains or "[]"),
+                redirect_domains=json.loads(app.redirect_domains or "[]"),
+            )
+            nm.write_nginx_config(app.name, config)
+    else:
+        if target_node.status != "online":
+            raise HTTPException(400, f"Node '{target_node.name}' is not online")
+        await queue_node_command(
+            db, node_id=target_node.id, app_id=app_id,
+            command_type="start_replica",
+            payload={
+                "app_id": app_id, "replica_id": replica.id,
+                "app_name": app.name,
+                "internal_port": app.port or 8000,
+                "external_port": external_port,
+                "env_vars": env_vars,
+                "docker_options": _docker_runtime_options(app),
+            },
+        )
+        replica.status = "starting"
+
+    await log_audit(db, "app.scale_up", actor=actor, app_id=app_id, detail={"replica_id": replica.id, "node": target_node.name})
+    await db.commit()
+    await db.refresh(replica)
+    return _replica_to_dict(replica, target_node)
+
+
+@router.delete("/{app_id}/replicas/{replica_id}")
+async def remove_replica(app_id: int, replica_id: int, db: AsyncSession = Depends(get_db), actor: str = Depends(_auth.get_current_actor)):
+    app = await _get_or_404(app_id, db)
+    local_node = await ensure_local_node(db)
+
+    replica_result = await db.execute(
+        select(ApplicationReplica).where(ApplicationReplica.id == replica_id, ApplicationReplica.app_id == app_id)
+    )
+    replica = replica_result.scalar_one_or_none()
+    if not replica:
+        raise HTTPException(404, "Replica not found")
+
+    replica_node = None
+    if replica.node_id:
+        node_result = await db.execute(select(Node).where(Node.id == replica.node_id))
+        replica_node = node_result.scalar_one_or_none()
+
+    if replica_node and replica_node.is_local:
+        await asyncio.to_thread(pm.stop_docker_replica, app_id, replica_id)
+    elif replica_node and replica_node.status == "online":
+        await queue_node_command(
+            db, node_id=replica_node.id, app_id=app_id,
+            command_type="stop_replica",
+            payload={"app_id": app_id, "replica_id": replica_id, "app_name": app.name},
+        )
+
+    await db.delete(replica)
+
+    # Regenerate nginx without the removed backend
+    if app.nginx_enabled and app.domain:
+        await db.flush()
+        backends = await _get_nginx_backends(app, db, local_node)
+        _ensure_maintenance_files(app, app_id)
+        config = nm.generate_config(
+            app.name, app.domain, backends,
+            app.ssl_cert_path, app.ssl_key_path,
+            app_id=app_id, mode=_get_nginx_mode(app),
+            extra_domains=json.loads(app.extra_domains or "[]"),
+            redirect_domains=json.loads(app.redirect_domains or "[]"),
+        )
+        nm.write_nginx_config(app.name, config)
+
+    await log_audit(db, "app.scale_down", actor=actor, app_id=app_id, detail={"replica_id": replica_id})
+    await db.commit()
+    return {"ok": True}
 
 
 @router.post("/{app_id}/pull")
@@ -2529,7 +2802,7 @@ async def _get_or_404(app_id: int, db: AsyncSession) -> Application:
     return app
 
 
-def _app_to_dict(app: Application, node: Optional[Node] = None, include_sensitive: bool = True) -> dict:
+def _app_to_dict(app: Application, node: Optional[Node] = None, include_sensitive: bool = True, replicas: Optional[list] = None) -> dict:
     return {
         "id": app.id,
         "name": app.name,
@@ -2575,7 +2848,56 @@ def _app_to_dict(app: Application, node: Optional[Node] = None, include_sensitiv
         "github_token": "***" if app.github_token else None,
         "created_at": app.created_at.isoformat() if app.created_at else None,
         "updated_at": app.updated_at.isoformat() if app.updated_at else None,
+        "replicas": replicas if replicas is not None else [],
+        "replica_count": len(replicas) if replicas is not None else 0,
     }
+
+
+def _replica_to_dict(replica: ApplicationReplica, node: Optional[Node] = None) -> dict:
+    return {
+        "id": replica.id,
+        "app_id": replica.app_id,
+        "node_id": replica.node_id,
+        "node_name": node.name if node else None,
+        "node_is_local": bool(node.is_local) if node else False,
+        "external_port": replica.external_port,
+        "container_id": replica.container_id,
+        "status": replica.status,
+        "last_error": replica.last_error,
+        "created_at": replica.created_at.isoformat() if replica.created_at else None,
+    }
+
+
+async def _get_nginx_backends(app: Application, db: AsyncSession, local_node: "Node") -> "int | list[str]":
+    """Return nginx backend(s) for an app. Single int for legacy path, list[str] when replicas exist."""
+    result = await db.execute(
+        select(ApplicationReplica, Node).join(Node, ApplicationReplica.node_id == Node.id, isouter=True).where(
+            ApplicationReplica.app_id == app.id,
+            ApplicationReplica.status == "running",
+        )
+    )
+    running_replicas = result.all()
+
+    if not running_replicas:
+        return app.external_port or app.port
+
+    # Build list: main container + each running replica
+    def _addr(node: Optional[Node], port: int) -> str:
+        if node is None or node.is_local:
+            return f"127.0.0.1:{port}"
+        return f"{node.public_host}:{port}"
+
+    app_node_result = await db.execute(select(Node).where(Node.id == app.node_id))
+    app_node = app_node_result.scalar_one_or_none() or local_node
+
+    backends = [_addr(app_node, app.external_port or app.port)]
+    for replica, r_node in running_replicas:
+        if replica.external_port:
+            backends.append(_addr(r_node, replica.external_port))
+
+    if len(backends) == 1:
+        return app.external_port or app.port
+    return backends
 
 
 async def _get_app_node(app: Application, db: AsyncSession, local_node: Optional[Node] = None) -> Node:

@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cloudbase — Login</title>
+  <link rel="icon" type="image/png" href="/cloudbase.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/variables.css" />
+  <link rel="stylesheet" href="css/base.css" />
+  <style>
+    body {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background:
+        radial-gradient(700px 380px at 80% -20%, rgba(37, 99, 235, 0.2), transparent 60%),
+        radial-gradient(600px 320px at 10% 115%, rgba(14, 165, 233, 0.1), transparent 55%),
+        var(--bg-base);
+    }
+
+    .login-card {
+      width: 100%;
+      max-width: 390px;
+      background: linear-gradient(180deg, rgba(19, 28, 48, 0.96), rgba(13, 20, 37, 0.94));
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 36px 32px 32px;
+      box-shadow: var(--shadow-lg);
+    }
+
+    .login-logo {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 28px;
+    }
+
+    .login-logo-icon {
+      width: 40px;
+      height: 40px;
+      background: linear-gradient(135deg, var(--accent-dark), var(--accent));
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .login-logo-text .title {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .login-logo-text .sub {
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    .login-heading {
+      font-size: 20px;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin: 0 0 4px;
+    }
+
+    .login-subtext {
+      font-size: 13px;
+      color: var(--text-secondary);
+      margin: 0 0 24px;
+    }
+
+    .form-group {
+      margin-bottom: 16px;
+    }
+
+    .form-label {
+      display: block;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .form-input {
+      width: 100%;
+      padding: 9px 12px;
+      background: var(--bg-muted);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-primary);
+      font-size: 14px;
+      font-family: 'JetBrains Mono', monospace;
+      outline: none;
+      box-sizing: border-box;
+      transition: border-color 0.15s;
+    }
+
+    .form-input:focus {
+      border-color: var(--accent);
+    }
+
+    .btn-login {
+      width: 100%;
+      padding: 10px;
+      background: var(--accent-dark);
+      border: none;
+      border-radius: 6px;
+      color: #fff;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      margin-top: 8px;
+      transition: background 0.15s, opacity 0.15s;
+    }
+
+    .btn-login:hover {
+      background: var(--accent);
+    }
+
+    .btn-login:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .login-error {
+      display: none;
+      margin-top: 14px;
+      padding: 10px 12px;
+      background: var(--red-bg);
+      border: 1px solid var(--red-border);
+      border-radius: 6px;
+      color: var(--red);
+      font-size: 13px;
+    }
+
+    .login-error.visible {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+
+<div class="login-card">
+  <div class="login-logo">
+    <div class="login-logo-icon" style="background:none;padding:0;overflow:hidden">
+      <img src="/cloudbase.png" alt="Cloudbase" style="width:40px;height:40px;object-fit:contain;display:block" />
+    </div>
+    <div class="login-logo-text">
+      <div class="title">Cloudbase</div>
+      <div class="sub">Deployment Panel</div>
+    </div>
+  </div>
+
+  <h1 class="login-heading">Sign in</h1>
+  <p class="login-subtext">Enter your credentials to continue.</p>
+
+  <form id="login-form" autocomplete="off">
+    <div class="form-group">
+      <label class="form-label" for="username">Username</label>
+      <input
+        id="username"
+        class="form-input"
+        type="text"
+        autocomplete="username"
+        placeholder="admin"
+        required
+        autofocus
+      />
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="password">Password</label>
+      <input
+        id="password"
+        class="form-input"
+        type="password"
+        autocomplete="current-password"
+        placeholder="••••••••••••••••"
+        required
+      />
+    </div>
+    <button class="btn-login" type="submit" id="login-btn">Sign in</button>
+    <div class="login-error" id="login-error"></div>
+  </form>
+</div>
+
+<script>
+  const form   = document.getElementById('login-form');
+  const btn    = document.getElementById('login-btn');
+  const errEl  = document.getElementById('login-error');
+  const pwdEl  = document.getElementById('password');
+  const userEl = document.getElementById('username');
+
+  function showError(msg) {
+    errEl.textContent = msg;
+    errEl.classList.add('visible');
+  }
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    btn.disabled = true;
+    btn.textContent = 'Signing in…';
+    errEl.classList.remove('visible');
+
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ username: userEl.value.trim(), password: pwdEl.value }),
+      });
+
+      if (res.ok) {
+        const redirect = new URLSearchParams(location.search).get('next') || '/';
+        location.href = redirect;
+        return;
+      }
+
+      if (res.status === 429) {
+        showError('Too many attempts. Please wait a minute and try again.');
+      } else if (res.status === 401) {
+        showError('Invalid username or password.');
+        pwdEl.value = '';
+        pwdEl.focus();
+      } else {
+        showError('An unexpected error occurred.');
+      }
+    } catch {
+      showError('Could not reach the server.');
+    }
+
+    btn.disabled = false;
+    btn.textContent = 'Sign in';
+  });
+</script>
+</body>
+</html>

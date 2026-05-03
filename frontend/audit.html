@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cloudbase — Audit Logs</title>
+  <link rel="icon" type="image/png" href="/cloudbase.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/variables.css" />
+  <link rel="stylesheet" href="css/base.css" />
+  <link rel="stylesheet" href="css/components.css" />
+  <link rel="stylesheet" href="css/pages.css" />
+</head>
+<body>
+
+<div class="shell">
+
+  <!-- ─── Sidebar ──────────────────────────────────────────────────────── -->
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <div class="logo-icon" style="background:none;padding:0;overflow:hidden">
+        <img src="/cloudbase.png" alt="Cloudbase" style="width:40px;height:40px;object-fit:contain;display:block" />
+      </div>
+      <div class="logo-text">
+        <div class="logo-title">Cloudbase</div>
+        <div class="logo-sub">Deployment Panel</div>
+      </div>
+    </div>
+
+    <nav class="sidebar-nav">
+      <a href="/" class="nav-item">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+        Dashboard
+      </a>
+      <a href="/audit.html" class="nav-item active">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+        Audit Logs
+      </a>
+
+      <div class="sidebar-section-label">Infrastructure</div>
+      <div id="sidebar-nodes">
+        <div class="sidebar-apps-empty">Loading…</div>
+      </div>
+    </nav>
+
+    <!-- System stats -->
+    <div class="sys-stats">
+      <div class="sys-stats-title">System</div>
+
+      <div class="mini-stat" id="bar-cpu">
+        <div class="mini-stat-row">
+          <span>CPU</span>
+          <span class="val">—</span>
+        </div>
+        <div class="mini-bar"><div class="mini-bar-fill blue" style="width:0%"></div></div>
+      </div>
+
+      <div class="mini-stat" id="bar-ram">
+        <div class="mini-stat-row">
+          <span>RAM</span>
+          <span class="val">—</span>
+        </div>
+        <div class="mini-bar"><div class="mini-bar-fill purple" style="width:0%"></div></div>
+      </div>
+
+      <div class="mini-stat" id="bar-disk">
+        <div class="mini-stat-row">
+          <span>Disk</span>
+          <span class="val">—</span>
+        </div>
+        <div class="mini-bar"><div class="mini-bar-fill orange" style="width:0%"></div></div>
+      </div>
+    </div>
+
+    <!-- Session timer -->
+    <div id="session-timer-bar" class="session-timer-bar">
+      <div class="session-timer-label">Session: —</div>
+      <div class="session-timer-track">
+        <div class="session-timer-fill" style="width:100%"></div>
+      </div>
+    </div>
+
+    <div class="sidebar-footer">
+      <button class="sidebar-footer-btn" id="btn-github-tokens" data-admin>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
+        GitHub Tokens
+      </button>
+      <button class="sidebar-footer-btn" id="btn-export-import" data-admin>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        Export / Import Apps
+      </button>
+      <button class="sidebar-footer-btn" id="btn-pdm-nginx" data-admin>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+        Cloudbase Domain &amp; SSL
+      </button>
+      <button class="sidebar-footer-btn" id="btn-change-password">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        Change Password
+      </button>
+      <button class="sidebar-footer-btn" id="btn-manage-users" style="display:none">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        Manage Users
+      </button>
+      <button class="sidebar-footer-btn sidebar-footer-btn--danger" id="btn-logout">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        Sign out
+      </button>
+    </div>
+  </aside>
+
+  <!-- ─── Main ─────────────────────────────────────────────────────────── -->
+  <main class="main-content">
+
+    <div class="page-header">
+      <div class="page-header-row">
+        <div>
+          <div class="page-title">Audit Logs</div>
+          <div class="page-sub">All events across all apps and users</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <input class="input" id="filter-actor" placeholder="Filter by user" style="width:150px;height:36px" />
+          <select class="input" id="filter-action" style="width:200px;height:36px">
+            <option value="">All actions</option>
+            <option value="app.deploy">app.deploy</option>
+            <option value="app.start">app.start</option>
+            <option value="app.stop">app.stop</option>
+            <option value="app.restart">app.restart</option>
+            <option value="app.pull">app.pull</option>
+            <option value="app.rebuild">app.rebuild</option>
+            <option value="app.config_update">app.config_update</option>
+            <option value="app.delete">app.delete</option>
+            <option value="app.zero_downtime_deploy">app.zero_downtime_deploy</option>
+            <option value="auth.login">auth.login</option>
+            <option value="auth.logout">auth.logout</option>
+            <option value="auth.change_password">auth.change_password</option>
+            <option value="user.create">user.create</option>
+            <option value="user.update">user.update</option>
+            <option value="user.delete">user.delete</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="page-body">
+      <div class="card" style="padding:0;overflow:hidden">
+        <div id="audit-log-wrap" style="color:var(--text-muted);font-size:13px;padding:20px">Loading…</div>
+      </div>
+      <div style="text-align:center;padding:16px">
+        <button class="btn btn-secondary" id="btn-load-more" style="display:none">Load more</button>
+      </div>
+    </div>
+
+  </main>
+
+</div>
+
+<div id="toast-container"></div>
+
+<!-- Change password modal -->
+<div id="change-pwd-modal" style="display:none" class="dialog-backdrop">
+  <div class="dialog" style="max-width:360px;width:90%">
+    <div class="dialog-title">Change Admin Password</div>
+    <form id="change-pwd-form" onsubmit="return false;">
+    <div class="dialog-body" style="display:flex;flex-direction:column;gap:14px">
+      <div class="field" style="margin:0">
+        <label class="field-label">New Password <span class="hint">(min 8 chars)</span></label>
+        <input class="input input-mono" id="pwd-new" type="password" placeholder="••••••••••" />
+      </div>
+      <div class="field" style="margin:0">
+        <label class="field-label">Confirm Password</label>
+        <input class="input input-mono" id="pwd-confirm" type="password" placeholder="••••••••••" />
+      </div>
+      <div id="pwd-error" style="display:none;font-size:12px;padding:8px 10px;border-radius:6px;background:var(--red-bg);border:1px solid var(--red-border);color:var(--red)"></div>
+    </div>
+    <div class="dialog-actions">
+      <button type="button" class="btn btn-secondary" id="pwd-cancel">Cancel</button>
+      <button type="button" class="btn btn-primary" id="pwd-save">Update Password</button>
+    </div>
+    </form>
+  </div>
+</div>
+
+<!-- Cloudbase nginx modal -->
+<div id="pdm-nginx-modal" style="display:none" class="dialog-backdrop">
+  <div class="dialog" style="max-width:500px;width:90%">
+    <div class="dialog-title">Cloudbase — Domain &amp; SSL</div>
+    <div class="dialog-body" style="display:flex;flex-direction:column;gap:14px">
+      <p style="margin:0;font-size:13px;color:var(--text-secondary)">
+        Set up nginx to serve Cloudbase under your own domain with optional SSL.
+        Cloudbase itself runs on port 7823; nginx will proxy it.
+      </p>
+      <div class="field" style="margin:0">
+        <label class="field-label">Domain <span class="req">*</span></label>
+        <input class="input" id="pdm-domain" placeholder="panel.example.com" />
+      </div>
+      <div class="field" style="margin:0">
+        <label class="field-label">SSL Certificate <span class="hint">(optional)</span></label>
+        <div class="cert-upload-row">
+          <span class="cert-filename" id="pdm-cert-name">No file selected</span>
+          <button type="button" class="btn-scan" id="pdm-upload-cert">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            Upload .pem / .crt
+          </button>
+          <input type="file" id="pdm-cert-file" accept=".pem,.crt,.cer" style="display:none">
+          <input type="hidden" id="pdm-cert">
+        </div>
+      </div>
+      <div class="field" style="margin:0">
+        <label class="field-label">SSL Key <span class="hint">(optional)</span></label>
+        <div class="cert-upload-row">
+          <span class="cert-filename" id="pdm-key-name">No file selected</span>
+          <button type="button" class="btn-scan" id="pdm-upload-key">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            Upload .pem / .key
+          </button>
+          <input type="file" id="pdm-key-file" accept=".pem,.key" style="display:none">
+          <input type="hidden" id="pdm-key">
+        </div>
+      </div>
+      <div id="pdm-nginx-msg" style="display:none;font-size:12px;padding:8px 10px;border-radius:6px"></div>
+    </div>
+    <div class="dialog-actions">
+      <button class="btn btn-secondary" id="pdm-nginx-close">Cancel</button>
+      <button class="btn btn-primary" id="pdm-nginx-apply">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+        Generate &amp; Apply
+      </button>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+  import { api } from './js/api.js';
+  import { initAuditLogs } from './js/audit.js';
+  import { initSidebar } from './js/sidebar.js';
+
+  try {
+    await api.checkAuth();
+  } catch {
+    location.href = '/login.html';
+  }
+
+  initSidebar();
+  initAuditLogs();
+
+  document.getElementById('btn-logout').addEventListener('click', async () => {
+    await api.logout().catch(() => {});
+    location.href = '/login.html';
+  });
+
+  const pwdModal = document.getElementById('change-pwd-modal');
+  const pwdError = document.getElementById('pwd-error');
+  document.getElementById('btn-change-password').addEventListener('click', () => {
+    document.getElementById('pwd-new').value = '';
+    document.getElementById('pwd-confirm').value = '';
+    pwdError.style.display = 'none';
+    pwdModal.style.display = 'flex';
+    document.getElementById('pwd-new').focus();
+  });
+  document.getElementById('pwd-cancel').addEventListener('click', () => { pwdModal.style.display = 'none'; });
+  pwdModal.addEventListener('click', e => { if (e.target === pwdModal) pwdModal.style.display = 'none'; });
+  document.getElementById('pwd-save').addEventListener('click', async () => {
+    const pwd  = document.getElementById('pwd-new').value;
+    const pwd2 = document.getElementById('pwd-confirm').value;
+    pwdError.style.display = 'none';
+    if (pwd.length < 8) { pwdError.textContent = 'Password must be at least 8 characters.'; pwdError.style.display = 'block'; return; }
+    if (pwd !== pwd2)   { pwdError.textContent = 'Passwords do not match.'; pwdError.style.display = 'block'; return; }
+    const btn = document.getElementById('pwd-save');
+    btn.disabled = true;
+    try {
+      await api.changePassword(pwd);
+      pwdModal.style.display = 'none';
+      await api.logout().catch(() => {});
+      location.href = '/login.html';
+    } catch (e) {
+      pwdError.textContent = e.message;
+      pwdError.style.display = 'block';
+      btn.disabled = false;
+    }
+  });
+</script>
+</body>
+</html>

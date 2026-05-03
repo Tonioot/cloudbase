@@ -1,0 +1,892 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>App — Cloudbase</title>
+  <link rel="icon" type="image/png" href="/cloudbase.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/variables.css" />
+  <link rel="stylesheet" href="css/base.css" />
+  <link rel="stylesheet" href="css/components.css" />
+  <link rel="stylesheet" href="css/pages.css" />
+</head>
+<body>
+
+<div class="shell">
+
+  <!-- ─── Sidebar ──────────────────────────────────────────────────────── -->
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <div class="logo-icon" style="background:none;padding:0;overflow:hidden">
+        <img src="/cloudbase.png" alt="Cloudbase" style="width:40px;height:40px;object-fit:contain;display:block" />
+      </div>
+      <div class="logo-text">
+        <div class="logo-title">Cloudbase</div>
+        <div class="logo-sub">Deployment Panel</div>
+      </div>
+    </div>
+
+    <nav class="sidebar-nav">
+      <a href="/" class="nav-item">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+        Dashboard
+      </a>
+      <a href="/audit.html" class="nav-item">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+        Audit Logs
+      </a>
+
+      <div class="sidebar-section-label">Infrastructure</div>
+      <div id="sidebar-nodes">
+        <div class="sidebar-apps-empty">Loading…</div>
+      </div>
+    </nav>
+
+    <div class="sys-stats">
+      <div class="sys-stats-title">System</div>
+      <div class="mini-stat" id="bar-cpu">
+        <div class="mini-stat-row"><span>CPU</span><span class="val">—</span></div>
+        <div class="mini-bar"><div class="mini-bar-fill blue" style="width:0%"></div></div>
+      </div>
+      <div class="mini-stat" id="bar-ram">
+        <div class="mini-stat-row"><span>RAM</span><span class="val">—</span></div>
+        <div class="mini-bar"><div class="mini-bar-fill purple" style="width:0%"></div></div>
+      </div>
+      <div class="mini-stat" id="bar-disk">
+        <div class="mini-stat-row"><span>Disk</span><span class="val">—</span></div>
+        <div class="mini-bar"><div class="mini-bar-fill orange" style="width:0%"></div></div>
+      </div>
+    </div>
+
+    <!-- Session timer -->
+    <div id="session-timer-bar" class="session-timer-bar">
+      <div class="session-timer-label">Session: —</div>
+      <div class="session-timer-track">
+        <div class="session-timer-fill" style="width:100%"></div>
+      </div>
+    </div>
+
+    <div class="sidebar-footer">
+      <button class="sidebar-footer-btn" id="btn-github-tokens" data-admin>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
+        GitHub Tokens
+      </button>
+      <button class="sidebar-footer-btn" id="btn-export-import" data-admin>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        Export / Import Apps
+      </button>
+      <button class="sidebar-footer-btn" id="btn-pdm-nginx" data-admin>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+        Cloudbase Domain &amp; SSL
+      </button>
+      <button class="sidebar-footer-btn" id="btn-change-password">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        Change Password
+      </button>
+      <button class="sidebar-footer-btn" id="btn-manage-users" style="display:none">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        Manage Users
+      </button>
+      <button class="sidebar-footer-btn sidebar-footer-btn--danger" id="btn-logout">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        Sign out
+      </button>
+    </div>
+  </aside>
+
+  <!-- ─── Main ─────────────────────────────────────────────────────────── -->
+  <main class="main-content" style="display:flex;flex-direction:column">
+
+    <!-- Header -->
+    <div class="detail-header">
+      <div class="breadcrumb">
+        <a href="/">Dashboard</a>
+        <span class="sep">/</span>
+        <span class="current" id="app-name-crumb">Loading…</span>
+      </div>
+
+      <div class="detail-hero">
+        <div class="detail-identity">
+          <div class="detail-type-icon" id="app-type-icon"></div>
+          <div>
+            <div class="detail-name-row">
+              <div class="detail-name" id="app-name">Loading…</div>
+              <div id="app-badge"></div>
+            </div>
+            <div class="detail-meta" id="app-meta">—</div>
+          </div>
+        </div>
+
+        <div class="detail-actions">
+          <button class="btn btn-success" id="btn-start" data-admin>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
+            Start
+          </button>
+          <button class="btn btn-danger" id="btn-stop" data-admin>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+            Stop
+          </button>
+          <button class="btn btn-secondary" id="btn-restart" data-admin>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+            Restart
+          </button>
+          <div class="detail-actions-sep" data-admin></div>
+          <button class="btn btn-mode" id="btn-maintenance-mode" data-admin title="Toggle downtime mode — serves the custom downtime page via nginx">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+            Downtime
+          </button>
+          <button class="btn btn-mode" id="btn-update-mode" data-admin title="Toggle update mode — serves the custom update page via nginx">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/></svg>
+            Update Mode
+          </button>
+        </div>
+      </div>
+
+      <!-- Tabs -->
+      <div class="tabs">
+        <button class="tab-btn" id="tab-logs">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="4,17 10,11 4,5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+          Logs
+        </button>
+        <button class="tab-btn" id="tab-stats">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="22,12 18,12 15,21 9,3 6,12 2,12"/></svg>
+          Stats
+        </button>
+        <button class="tab-btn" id="tab-files">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+          Files
+        </button>
+        <button class="tab-btn" id="tab-settings">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          Settings
+        </button>
+        <button class="tab-btn" id="tab-activity">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+          Activity
+        </button>
+      </div>
+    </div>
+
+    <!-- Tab panels -->
+    <div class="detail-body">
+
+      <!-- LOGS -->
+      <div class="tab-panel" id="panel-logs">
+        <div class="logs-panel">
+          <div class="log-terminal" id="log-terminal">
+            <div class="log-empty">Waiting for log output…</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- STATS -->
+      <div class="tab-panel" id="panel-stats">
+        <div class="stats-panel">
+
+          <div id="stats-stopped" style="display:none" class="empty-state">
+            <div class="empty-icon">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="22,12 18,12 15,21 9,3 6,12 2,12"/></svg>
+            </div>
+            <div class="empty-title">App is not running</div>
+            <div class="empty-sub">Start the application to see real-time performance statistics.</div>
+          </div>
+
+          <div id="stats-content" style="display:none">
+            <div class="stats-layout">
+
+              <!-- Left 1/3: live metrics list, always 10 rows -->
+              <div class="card sinfo-panel">
+                <div class="sinfo-row"><span class="sinfo-label">CPU Usage</span><span class="sinfo-val" id="s-cpu">—</span></div>
+                <div class="sinfo-row"><span class="sinfo-label">Memory RSS</span><span class="sinfo-val" id="s-mem">—</span></div>
+                <div class="sinfo-row"><span class="sinfo-label">Virtual Mem</span><span class="sinfo-val" id="s-vms">—</span></div>
+                <div class="sinfo-row"><span class="sinfo-label">Uptime</span><span class="sinfo-val" id="s-uptime">—</span></div>
+                <div class="sinfo-row"><span class="sinfo-label">System CPU</span><span class="sinfo-val" id="s-syscpu">—</span></div>
+                <div class="sinfo-divider"></div>
+                <div class="sinfo-row"><span class="sinfo-label" id="sl-r6">PID</span><span class="sinfo-val smet-mono" id="s-r6">—</span></div>
+                <div class="sinfo-row"><span class="sinfo-label" id="sl-r7">Threads</span><span class="sinfo-val" id="s-r7">—</span></div>
+                <div class="sinfo-row"><span class="sinfo-label" id="sl-r8">Connections</span><span class="sinfo-val" id="s-r8">—</span></div>
+                <div class="sinfo-row"><span class="sinfo-label">Disk Read</span><span class="sinfo-val" id="s-disk-read">—</span></div>
+                <div class="sinfo-row"><span class="sinfo-label">Disk Write</span><span class="sinfo-val" id="s-disk-write">—</span></div>
+              </div>
+
+              <!-- Right 2/3: 2×2 real-time charts -->
+              <div class="stats-charts-grid">
+                <div class="card chart-card">
+                  <div class="chart-hdr"><div><div class="chart-title">CPU Usage</div><div class="chart-subtitle">Last 2 min · 2s</div></div><span class="chart-badge">%</span></div>
+                  <canvas id="chart-cpu" style="width:100%;height:120px;display:block"></canvas>
+                </div>
+                <div class="card chart-card">
+                  <div class="chart-hdr"><div><div class="chart-title">Memory RSS</div><div class="chart-subtitle">Last 2 min · 2s</div></div><span class="chart-badge">MB</span></div>
+                  <canvas id="chart-mem" style="width:100%;height:120px;display:block"></canvas>
+                </div>
+                <div class="card chart-card">
+                  <div class="chart-hdr"><div><div class="chart-title">Network Traffic</div><div class="chart-subtitle">Cumulative RX + TX</div></div><span class="chart-badge">MB</span></div>
+                  <canvas id="chart-net" style="width:100%;height:120px;display:block"></canvas>
+                </div>
+                <div class="card chart-card">
+                  <div class="chart-hdr"><div><div class="chart-title">Disk I/O</div><div class="chart-subtitle">Cumulative Read + Write</div></div><span class="chart-badge">MB</span></div>
+                  <canvas id="chart-disk" style="width:100%;height:120px;display:block"></canvas>
+                </div>
+              </div>
+
+            </div>
+          </div>
+
+          <!-- Historical stats charts -->
+          <div id="stats-history-section" style="margin-top:0">
+            <!-- Shared time-range control -->
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+              <span style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em">History</span>
+              <div style="display:flex;align-items:center;gap:8px">
+                <span style="font-size:11px;color:var(--text-muted)">Time range</span>
+                <select id="history-hours" class="input" style="width:auto;font-size:11px;padding:4px 8px">
+                  <option value="1">Last 1h</option>
+                  <option value="6">Last 6h</option>
+                  <option value="24" selected>Last 24h</option>
+                  <option value="72">Last 3 days</option>
+                  <option value="168">Last 7 days</option>
+                </select>
+              </div>
+            </div>
+            <div class="history-row">
+              <div class="card chart-card">
+                <div class="chart-hdr"><div><div class="chart-title">CPU History</div><div class="chart-subtitle">Averaged per 30s interval</div></div></div>
+                <canvas id="chart-cpu-history" style="width:100%;height:140px;display:block"></canvas>
+              </div>
+              <div class="card chart-card">
+                <div class="chart-hdr"><div><div class="chart-title">Memory History</div><div class="chart-subtitle">Averaged per 30s interval</div></div></div>
+                <canvas id="chart-mem-history" style="width:100%;height:140px;display:block"></canvas>
+              </div>
+            </div>
+            <div class="history-row" style="margin-top:12px">
+              <div class="card chart-card">
+                <div class="chart-hdr"><div><div class="chart-title">Traffic History</div><div class="chart-subtitle">Cumulative RX+TX per 30s</div></div></div>
+                <canvas id="chart-net-history" style="width:100%;height:140px;display:block"></canvas>
+              </div>
+              <div class="card chart-card">
+                <div class="chart-hdr"><div><div class="chart-title">Disk I/O History</div><div class="chart-subtitle">Cumulative Read+Write per 30s</div></div></div>
+                <canvas id="chart-disk-history" style="width:100%;height:140px;display:block"></canvas>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- FILES -->
+      <div class="tab-panel" id="panel-files">
+        <div class="files-panel">
+          <div class="files-sidebar">
+            <div class="files-breadcrumb" id="files-breadcrumb">
+              <button class="crumb-btn" data-path="">~</button>
+            </div>
+            <div class="files-list" id="files-list">
+              <div style="padding:14px;color:var(--text-muted);font-size:12px">Loading…</div>
+            </div>
+          </div>
+          <div class="files-viewer" id="file-viewer">
+            <div class="file-viewer-header" id="file-viewer-header">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13,2 13,9 20,9"/></svg>
+              <span class="file-path" style="color:var(--text-muted)">Select a file to view</span>
+            </div>
+            <div class="file-empty-hint" id="file-empty-hint">
+              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" style="opacity:.3"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13,2 13,9 20,9"/></svg>
+              <span>Select a file to view its contents</span>
+            </div>
+            <pre class="file-content" id="file-content" style="display:none"></pre>
+          </div>
+        </div>
+      </div>
+
+      <!-- SETTINGS -->
+      <div class="tab-panel" id="panel-settings">
+        <div class="settings-panel">
+
+          <!-- Sticky action bar -->
+          <div class="settings-bar">
+            <span class="settings-bar-title">Application Settings</span>
+            <button class="btn btn-primary btn-sm" id="btn-save" data-admin>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17,21 17,13 7,13 7,21"/><polyline points="7,3 7,8 15,8"/></svg>
+              Save Changes
+            </button>
+          </div>
+
+          <!-- Scrollable content -->
+          <div class="settings-content">
+
+            <!-- General -->
+            <div class="settings-group">
+              <div class="settings-group-hd">
+                <div class="settings-group-title">General</div>
+                <div class="settings-group-sub">Application overview and identity</div>
+              </div>
+              <div class="settings-group-bd">
+                <div class="info-row"><span class="label">Name</span><span class="value" id="si-name">—</span></div>
+                <div class="info-row"><span class="label">Repository</span><span class="value" id="si-repo" style="font-size:12px;word-break:break-all;text-align:right;max-width:65%">—</span></div>
+                <div class="info-row"><span class="label">Type</span><span class="value" id="si-type">—</span></div>
+                <div class="info-row"><span class="label">Deployed</span><span class="value" id="si-date">—</span></div>
+              </div>
+            </div>
+
+            <!-- Runtime -->
+            <div class="settings-group">
+              <div class="settings-group-hd">
+                <div class="settings-group-title">Runtime</div>
+                <div class="settings-group-sub">Process configuration and restart behaviour</div>
+              </div>
+              <div class="settings-group-bd">
+                <div class="field">
+                  <label class="field-label">Start Command</label>
+                  <input class="input input-mono" id="cfg-cmd" placeholder="npm start" />
+                </div>
+                <div class="field">
+                  <label class="field-label">Internal Port</label>
+                  <input class="input" id="cfg-port" type="number" placeholder="3000" style="max-width:140px" />
+                  <div class="field-hint">For Docker apps this is the container port. Nginx proxies to the external host port automatically.</div>
+                </div>
+                <div class="field">
+                  <label class="toggle-row">
+                    <span class="field-label" style="margin-bottom:0">Auto-start on boot</span>
+                    <label class="toggle">
+                      <input type="checkbox" id="cfg-autostart" />
+                      <span class="toggle-slider"></span>
+                    </label>
+                  </label>
+                  <div class="field-hint">Start this app automatically when Cloudbase starts</div>
+                </div>
+                <div class="field" style="margin-bottom:0">
+                  <label class="field-label">Restart Policy</label>
+                  <select class="input" id="cfg-restart-policy" style="cursor:pointer;max-width:360px">
+                    <option value="no">No — stay stopped on crash</option>
+                    <option value="on-failure">On failure — restart if it crashes</option>
+                    <option value="always">Always — restart on any exit</option>
+                  </select>
+                  <div class="field-hint">Max 5 restarts per 60s before giving up</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="settings-group" id="docker-runtime-section">
+              <div class="settings-group-hd">
+                <div class="settings-group-title">Docker Runtime</div>
+                <div class="settings-group-sub">Container resources and filesystem restrictions</div>
+              </div>
+              <div class="settings-group-bd">
+                <div class="grid-3-1">
+                  <div class="field">
+                    <label class="field-label">CPU Limit</label>
+                    <input class="input" id="cfg-docker-cpu" type="number" min="0.1" step="0.1" placeholder="1.0" style="max-width:140px" />
+                    <div class="field-hint">Optional. Maximum CPUs for this container.</div>
+                  </div>
+                  <div class="field">
+                    <label class="field-label">Memory Limit (MB)</label>
+                    <input class="input" id="cfg-docker-memory" type="number" min="1" step="1" placeholder="512" style="max-width:140px" />
+                    <div class="field-hint">Optional hard memory cap.</div>
+                  </div>
+                </div>
+                <div class="field">
+                  <label class="toggle-row">
+                    <span class="field-label" style="margin-bottom:0">Read-only root filesystem</span>
+                    <label class="toggle">
+                      <input type="checkbox" id="cfg-docker-readonly" />
+                      <span class="toggle-slider"></span>
+                    </label>
+                  </label>
+                  <div class="field-hint">Makes the container root filesystem read-only except mounted paths.</div>
+                </div>
+                <div class="field" style="margin-bottom:0">
+                  <label class="toggle-row">
+                    <span class="field-label" style="margin-bottom:0">Tmpfs at /tmp</span>
+                    <label class="toggle">
+                      <input type="checkbox" id="cfg-docker-tmpfs-enabled" />
+                      <span class="toggle-slider"></span>
+                    </label>
+                  </label>
+                  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px">
+                    <input class="input" id="cfg-docker-tmpfs-size" type="number" min="1" step="1" placeholder="64" style="max-width:140px" />
+                    <span style="font-size:12px;color:var(--text-muted)">MB for /tmp tmpfs</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Network -->
+            <div class="settings-group">
+              <div class="settings-group-hd">
+                <div class="settings-group-title">Network</div>
+                <div class="settings-group-sub">Domains, redirects and SSL certificates</div>
+              </div>
+              <div class="settings-group-bd">
+                <div class="field">
+                  <label class="field-label">Domains <span style="font-weight:400;color:var(--text-muted);font-size:11px">(first is primary)</span></label>
+                  <div id="cfg-domains-rows"></div>
+                  <button type="button" class="btn-scan" id="cfg-add-domain" style="margin-top:6px">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    Add domain
+                  </button>
+                </div>
+                <div class="field">
+                  <label class="field-label">Redirect Domains <span style="font-weight:400;color:var(--text-muted);font-size:11px">(301 → primary)</span></label>
+                  <div id="cfg-redirect-domains-rows"></div>
+                  <button type="button" class="btn-scan" id="cfg-add-redirect-domain" style="margin-top:6px">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    Add domain
+                  </button>
+                </div>
+                <div class="field">
+                  <label class="field-label">SSL Certificate</label>
+                  <div class="cert-upload-row">
+                    <span class="cert-filename" id="cfg-cert-name">No file selected</span>
+                    <button type="button" class="btn-scan" id="cfg-scan-cert">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                      Scan
+                    </button>
+                    <button type="button" class="btn-scan" id="cfg-upload-cert">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                      Upload
+                    </button>
+                    <input type="file" id="cfg-cert-file" accept=".pem,.crt,.cer" style="display:none">
+                    <input type="hidden" id="cfg-cert">
+                  </div>
+                </div>
+                <div class="field" style="margin-bottom:0">
+                  <label class="field-label">SSL Key</label>
+                  <div class="cert-upload-row">
+                    <span class="cert-filename" id="cfg-key-name">No file selected</span>
+                    <button type="button" class="btn-scan" id="cfg-scan-key">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                      Scan
+                    </button>
+                    <button type="button" class="btn-scan" id="cfg-upload-key">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                      Upload
+                    </button>
+                    <input type="file" id="cfg-key-file" accept=".pem,.key" style="display:none">
+                    <input type="hidden" id="cfg-key">
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Credentials & Environment -->
+            <div class="settings-group">
+              <div class="settings-group-hd">
+                <div class="settings-group-title">Credentials &amp; Environment</div>
+                <div class="settings-group-sub">GitHub token and runtime environment variables</div>
+              </div>
+              <div class="settings-group-bd">
+                <div class="field">
+                  <label class="field-label">GitHub Token <span class="hint">(leave blank to keep current)</span></label>
+                  <div style="display:flex;gap:6px;align-items:center">
+                    <input class="input input-mono" id="cfg-token" type="password" placeholder="ghp_…" style="flex:1;min-width:0" />
+                    <button type="button" class="btn btn-secondary btn-sm" id="cfg-token-pick" style="white-space:nowrap;flex-shrink:0">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
+                      Saved
+                    </button>
+                  </div>
+                  <input type="hidden" id="cfg-token-id" />
+                </div>
+                <div class="field-label" style="display:block;margin-bottom:10px">Environment Variables</div>
+                <div id="cfg-env-rows"></div>
+                <button class="add-env-btn" id="cfg-add-env">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                  Add variable
+                </button>
+              </div>
+            </div>
+
+            <!-- Actions -->
+            <div class="settings-group" data-admin>
+              <div class="settings-group-hd">
+                <div class="settings-group-title">Actions</div>
+                <div class="settings-group-sub">Repository and deployment operations</div>
+              </div>
+              <div class="settings-group-bd">
+                <div class="action-grid">
+                  <button class="action-tile" id="tile-pull" data-admin>
+                    <div class="action-tile-icon">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><line x1="6" y1="9" x2="6" y2="21"/></svg>
+                    </div>
+                    <div>
+                      <div class="action-tile-title" id="tile-pull-title">Pull Latest Commit</div>
+                      <div class="action-tile-sub" id="tile-pull-sub">Fetch updates from repository</div>
+                    </div>
+                  </button>
+                  <button class="action-tile" id="tile-rebuild" data-admin>
+                    <div class="action-tile-icon">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/><path d="M7 12h10"/></svg>
+                    </div>
+                    <div>
+                      <div class="action-tile-title" id="tile-rebuild-title">Rebuild Image</div>
+                      <div class="action-tile-sub" id="tile-rebuild-sub">Rebuild Docker image and restart if running</div>
+                    </div>
+                  </button>
+                  <button class="action-tile" id="tile-nginx" data-admin>
+                    <div class="action-tile-icon">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                    </div>
+                    <div>
+                      <div class="action-tile-title">Nginx Config</div>
+                      <div class="action-tile-sub">View &amp; edit reverse proxy config</div>
+                    </div>
+                  </button>
+                  <button class="action-tile" id="tile-zero-downtime" data-admin style="display:none">
+                    <div class="action-tile-icon" style="color:var(--green)">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+                    </div>
+                    <div>
+                      <div class="action-tile-title">Zero-downtime Deploy</div>
+                      <div class="action-tile-sub">Blue-green swap — no maintenance page shown</div>
+                    </div>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Maintenance Pages -->
+            <div class="settings-group" id="maintenance-pages-section" data-admin>
+              <div class="settings-group-hd">
+                <div class="settings-group-title">Maintenance Pages</div>
+                <div class="settings-group-sub">Static pages served by nginx — visible even when the app is offline</div>
+                <span id="maint-no-nginx-warn" class="maint-no-nginx-warn" style="display:none;margin-top:8px">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                  Requires nginx
+                </span>
+              </div>
+              <div class="settings-group-bd">
+                <div class="maint-row-actions" style="flex-wrap:wrap">
+                  <button class="btn btn-secondary btn-sm maint-row-btn maint-row-btn--red" id="btn-open-downtime-modal" title="Edit Downtime Page" data-admin>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                    <span>Downtime</span>
+                    <span id="maint-downtime-badge" class="maint-row-badge maint-badge--off">Off</span>
+                  </button>
+                  <button class="btn btn-secondary btn-sm maint-row-btn maint-row-btn--orange" id="btn-open-update-modal" title="Edit Update Page" data-admin>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
+                    <span>Update</span>
+                    <span id="maint-update-badge" class="maint-row-badge maint-badge--off">Off</span>
+                  </button>
+                  <button class="btn btn-secondary btn-sm maint-row-btn maint-row-btn--blue" id="btn-open-restart-modal" title="Edit Restart Page" data-admin>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                    <span>Restart</span>
+                    <span id="maint-restart-badge" class="maint-row-badge maint-badge--off">Auto</span>
+                  </button>
+                  <button class="btn btn-secondary btn-sm maint-row-btn maint-row-btn--blue" id="btn-open-starting-modal" title="Edit Starting Page" data-admin>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                    <span>Starting</span>
+                    <span id="maint-starting-badge" class="maint-row-badge maint-badge--off">Auto</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Move to Node (hidden until multi-node) -->
+            <div class="settings-group" id="move-node-section" style="display:none">
+              <div class="settings-group-hd">
+                <div class="settings-group-title">Move to Node</div>
+                <div class="settings-group-sub">Transfer this application to a different node. The app will be stopped, removed from the current node, and redeployed on the target.</div>
+              </div>
+              <div class="settings-group-bd">
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                  <select class="input" id="move-node-select" style="flex:1;min-width:180px;max-width:300px"></select>
+                  <input class="input input-mono" id="move-node-port" type="number" min="1" max="65535" placeholder="Internal port (keep current)" style="width:180px" />
+                  <button class="btn btn-secondary" id="btn-move-node" data-admin>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="5 9 2 12 5 15"/><polyline points="19 9 22 12 19 15"/><line x1="2" y1="12" x2="22" y2="12"/></svg>
+                    Move App
+                  </button>
+                </div>
+                <div style="margin-top:8px;font-size:12px;color:var(--text-muted)">This changes the app's internal runtime port on the target node. Docker host ports are managed separately.</div>
+              </div>
+            </div>
+
+            <!-- Danger Zone -->
+            <div class="settings-group settings-group--danger" data-admin>
+              <div class="settings-group-hd">
+                <div class="settings-group-title">Danger Zone</div>
+                <div class="settings-group-sub">Irreversible and destructive actions</div>
+              </div>
+              <div class="settings-group-bd">
+                <div class="danger-row">
+                  <div class="danger-row-text">
+                    <div class="title">Delete Application</div>
+                    <div class="sub">Permanently remove this app and all its files</div>
+                  </div>
+                  <button class="btn btn-danger" id="btn-delete" data-admin>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="3,6 5,6 21,6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+                    Delete
+                  </button>
+                </div>
+              </div>
+            </div>
+
+          </div><!-- /settings-content -->
+
+        </div><!-- /settings-panel -->
+      </div><!-- /panel-settings -->
+
+      <!-- ACTIVITY -->
+      <div class="tab-panel" id="panel-activity">
+        <div class="settings-panel">
+          <div class="settings-bar">
+            <span class="settings-bar-title">Activity Log</span>
+          </div>
+          <div class="settings-content">
+            <div id="audit-log-table-wrap">
+              <div style="color:var(--text-muted);font-size:13px;padding:20px">Loading…</div>
+            </div>
+          </div>
+        </div>
+      </div><!-- /panel-activity -->
+
+      <!-- Nginx config modal -->
+      <div id="nginx-modal" style="display:none" class="dialog-backdrop">
+        <div class="dialog nginx-dialog">
+          <div class="dialog-title">
+            Nginx Config
+            <span id="nginx-status-badge" style="margin-left:8px;font-size:11px;font-weight:400"></span>
+          </div>
+          <div class="dialog-body" style="padding:0;display:flex;flex-direction:column;gap:0">
+            <div style="padding:12px 16px 8px;font-size:12px;color:var(--text-muted)" id="nginx-config-path"></div>
+            <textarea id="nginx-config-textarea" class="input input-mono nginx-textarea" spellcheck="false"></textarea>
+            <div id="nginx-save-msg" style="padding:6px 16px;font-size:12px;display:none"></div>
+          </div>
+          <div class="dialog-actions">
+            <button class="btn btn-secondary" id="nginx-close">Close</button>
+            <button class="btn btn-primary" id="nginx-save">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17,21 17,13 7,13 7,21"/><polyline points="7,3 7,8 15,8"/></svg>
+              Save &amp; Reload Nginx
+            </button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+</div>
+
+<div id="toast-container"></div>
+
+<!-- Change password modal -->
+<div id="change-pwd-modal" style="display:none" class="dialog-backdrop">
+  <div class="dialog" style="max-width:360px;width:90%">
+    <div class="dialog-title">Change Admin Password</div>
+    <form id="change-pwd-form" onsubmit="return false;">
+    <div class="dialog-body" style="display:flex;flex-direction:column;gap:14px">
+      <div class="field" style="margin:0">
+        <label class="field-label">New Password <span class="hint">(min 8 chars)</span></label>
+        <input class="input input-mono" id="pwd-new" type="password" placeholder="••••••••••" />
+      </div>
+      <div class="field" style="margin:0">
+        <label class="field-label">Confirm Password</label>
+        <input class="input input-mono" id="pwd-confirm" type="password" placeholder="••••••••••" />
+      </div>
+      <div id="pwd-error" style="display:none;font-size:12px;padding:8px 10px;border-radius:6px;background:var(--red-bg);border:1px solid var(--red-border);color:var(--red)"></div>
+    </div>
+    <div class="dialog-actions">
+      <button type="button" class="btn btn-secondary" id="pwd-cancel">Cancel</button>
+      <button type="button" class="btn btn-primary" id="pwd-save">Update Password</button>
+    </div>
+    </form>
+  </div>
+</div>
+
+<!-- Cloudbase nginx modal (same as dashboard) -->
+<div id="pdm-nginx-modal" style="display:none" class="dialog-backdrop">
+  <div class="dialog" style="max-width:500px;width:90%">
+    <div class="dialog-title">Cloudbase — Domain &amp; SSL</div>
+    <div class="dialog-body" style="display:flex;flex-direction:column;gap:14px">
+      <p style="margin:0;font-size:13px;color:var(--text-secondary)">
+        Set up nginx to serve Cloudbase under your own domain with optional SSL.
+        Cloudbase itself runs on port 7823; nginx will proxy it.
+      </p>
+      <div class="field" style="margin:0">
+        <label class="field-label">Domain <span class="req">*</span></label>
+        <input class="input" id="pdm-domain" placeholder="panel.example.com" />
+      </div>
+      <div class="field" style="margin:0">
+        <label class="field-label">SSL Certificate <span class="hint">(optional)</span></label>
+        <div class="cert-upload-row">
+          <span class="cert-filename" id="pdm-cert-name">No file selected</span>
+          <button type="button" class="btn-scan" id="pdm-upload-cert">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            Upload .pem / .crt
+          </button>
+          <input type="file" id="pdm-cert-file" accept=".pem,.crt,.cer" style="display:none">
+          <input type="hidden" id="pdm-cert">
+        </div>
+      </div>
+      <div class="field" style="margin:0">
+        <label class="field-label">SSL Key <span class="hint">(optional)</span></label>
+        <div class="cert-upload-row">
+          <span class="cert-filename" id="pdm-key-name">No file selected</span>
+          <button type="button" class="btn-scan" id="pdm-upload-key">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            Upload .pem / .key
+          </button>
+          <input type="file" id="pdm-key-file" accept=".pem,.key" style="display:none">
+          <input type="hidden" id="pdm-key">
+        </div>
+      </div>
+      <div id="pdm-nginx-msg" style="display:none;font-size:12px;padding:8px 10px;border-radius:6px"></div>
+    </div>
+    <div class="dialog-actions">
+      <button class="btn btn-secondary" id="pdm-nginx-close">Cancel</button>
+      <button class="btn btn-primary" id="pdm-nginx-apply">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+        Generate &amp; Apply
+      </button>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+  import { api, wsSystemStats } from './js/api.js';
+  import { initApp } from './js/app.js';
+  import { initSidebar } from './js/sidebar.js';
+
+  // Guard: redirect to login if not authenticated
+  try {
+    await api.checkAuth();
+  } catch {
+    location.href = '/login.html';
+  }
+
+  initApp();
+  initSidebar();
+
+  document.getElementById('btn-logout').addEventListener('click', async () => {
+    await api.logout().catch(() => {});
+    location.href = '/login.html';
+  });
+
+  const pwdModal = document.getElementById('change-pwd-modal');
+  const pwdError = document.getElementById('pwd-error');
+  document.getElementById('btn-change-password').addEventListener('click', () => {
+    document.getElementById('pwd-new').value = '';
+    document.getElementById('pwd-confirm').value = '';
+    pwdError.style.display = 'none';
+    pwdModal.style.display = 'flex';
+    document.getElementById('pwd-new').focus();
+  });
+  document.getElementById('pwd-cancel').addEventListener('click', () => { pwdModal.style.display = 'none'; });
+  pwdModal.addEventListener('click', e => { if (e.target === pwdModal) pwdModal.style.display = 'none'; });
+  document.getElementById('pwd-save').addEventListener('click', async () => {
+    const pwd  = document.getElementById('pwd-new').value;
+    const pwd2 = document.getElementById('pwd-confirm').value;
+    pwdError.style.display = 'none';
+    if (pwd.length < 8) { pwdError.textContent = 'Password must be at least 8 characters.'; pwdError.style.display = 'block'; return; }
+    if (pwd !== pwd2)   { pwdError.textContent = 'Passwords do not match.'; pwdError.style.display = 'block'; return; }
+    const btn = document.getElementById('pwd-save');
+    btn.disabled = true;
+    try {
+      await api.changePassword(pwd);
+      pwdModal.style.display = 'none';
+      await api.logout().catch(() => {});
+      location.href = '/login.html';
+    } catch (e) {
+      pwdError.textContent = e.message;
+      pwdError.style.display = 'block';
+      btn.disabled = false;
+    }
+  });
+
+  // Sidebar system stats (also on app detail page)
+
+  wsSystemStats(data => {
+    const setBar = (id, pct, label) => {
+      const w = document.getElementById(id);
+      if (!w) return;
+      w.querySelector('.mini-bar-fill').style.width = `${Math.min(pct||0,100)}%`;
+      w.querySelector('.val').textContent = label;
+    };
+    setBar('bar-cpu',  data.cpu_percent,   `${data.cpu_percent?.toFixed(0)}%`);
+    setBar('bar-ram',  data.memory_percent, `${data.memory_percent?.toFixed(0)}%`);
+    setBar('bar-disk', data.disk_percent,   `${data.disk_percent?.toFixed(0)}%`);
+  });
+
+</script>
+
+<!-- ── Maintenance page editor modal ──────────────────────────────────────── -->
+<div id="maint-modal-backdrop" class="modal-backdrop" style="display:none">
+  <div class="modal maint-modal">
+
+    <div class="modal-header">
+      <div>
+        <div class="modal-title" id="maint-modal-title">Downtime Page</div>
+        <div class="modal-sub" id="maint-modal-sub">Customize what visitors see when your app is offline</div>
+      </div>
+      <button class="modal-close" id="maint-modal-close">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+
+    <div class="modal-body">
+
+      <div class="modal-section">
+        <div class="field">
+          <label class="field-label">Title</label>
+          <input class="input" id="maint-modal-title-input" placeholder="Down for Maintenance" />
+        </div>
+        <div class="field">
+          <label class="field-label">Message</label>
+          <textarea class="input" id="maint-modal-message" rows="3" placeholder="We'll be back shortly. Thanks for your patience."></textarea>
+        </div>
+        <div class="field">
+          <label class="field-label">Status Page URL <span class="hint">(optional)</span></label>
+          <input class="input input-mono" id="maint-modal-status-url" type="url" placeholder="https://status.example.com" />
+          <div class="field-hint">If set, a &ldquo;View status page&rdquo; link appears on the page</div>
+        </div>
+        <div class="field">
+          <label class="field-label">Accent Color</label>
+          <div class="maint-color-row">
+            <input type="color" id="maint-modal-color-picker" class="maint-color-swatch" />
+            <input class="input input-mono" id="maint-modal-color" style="max-width:110px" placeholder="#f85149" />
+          </div>
+        </div>
+        <div class="field">
+          <label class="field-label">Logo <span class="hint">(optional &mdash; shown above the icon)</span></label>
+          <div id="maint-modal-logo-preview" style="display:none;margin-bottom:8px">
+            <img id="maint-modal-logo-img" src="" alt="Logo" style="max-height:48px;max-width:180px;object-fit:contain;border:1px solid var(--border);border-radius:6px;padding:4px;background:#fff" />
+          </div>
+          <div style="display:flex;gap:6px;align-items:center">
+            <button type="button" class="btn btn-secondary btn-sm" id="btn-maint-logo-upload">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              Upload Logo
+            </button>
+            <button type="button" class="btn btn-secondary btn-sm" id="btn-maint-logo-clear" style="display:none">Remove</button>
+          </div>
+          <input type="file" id="maint-modal-logo-file" accept="image/*" style="display:none">
+        </div>
+        <div class="field">
+          <label class="toggle-row">
+            <span class="field-label" style="margin-bottom:0">Custom HTML</span>
+            <label class="toggle"><input type="checkbox" id="maint-modal-custom-toggle" /><span class="toggle-slider"></span></label>
+          </label>
+          <div id="maint-modal-custom-wrap" style="display:none;margin-top:10px">
+            <textarea class="input input-mono" id="maint-modal-custom-html" rows="12" placeholder="&lt;!DOCTYPE html&gt;&#10;&lt;html&gt;&#10;  ...&#10;&lt;/html&gt;"></textarea>
+            <div class="field-hint">Overrides all fields above &mdash; full control over the page</div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /modal-body -->
+
+    <div class="modal-footer">
+      <button class="btn btn-secondary" id="maint-modal-preview">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+        Preview
+      </button>
+      <div style="flex:1"></div>
+      <button class="btn btn-secondary" id="maint-modal-cancel">Cancel</button>
+      <button class="btn btn-primary" id="maint-modal-save">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17,21 17,13 7,13 7,21"/><polyline points="7,3 7,8 15,8"/></svg>
+        Save Page
+      </button>
+    </div>
+
+  </div>
+</div><!-- /maint-modal-backdrop -->
+
+</body>
+</html>

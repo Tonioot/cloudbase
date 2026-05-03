@@ -75,6 +75,7 @@ class UpdateRequest(BaseModel):
     github_token_id: Optional[str] = None   # ID of a saved vault token
     auto_start:     Optional[bool] = None
     restart_policy: Optional[str] = None   # no | always | on-failure
+    working_dir:    Optional[str] = None   # set by node agents after source extraction
 
 
 class MaintenancePageConfig(BaseModel):
@@ -477,18 +478,6 @@ def _recent_git_commits(app_dir: str, limit: int = 20) -> list[dict]:
     return commits
 
 
-@router.post("/{app_id}/set-working-dir")
-async def set_working_dir(app_id: int, payload: dict = Body(...), db: AsyncSession = Depends(get_db)):
-    """Internal endpoint called by a node agent after extracting a source archive locally."""
-    app = await _get_or_404(app_id, db)
-    working_dir = payload.get("working_dir")
-    if not working_dir:
-        raise HTTPException(400, "working_dir required")
-    app.working_dir = working_dir
-    await db.commit()
-    return {"ok": True, "working_dir": working_dir}
-
-
 @router.get("/{app_id}/source-archive")
 async def get_source_archive(app_id: int, db: AsyncSession = Depends(get_db)):
     """Return a .tar.gz of the app's working directory for remote nodes to build from.
@@ -814,8 +803,15 @@ async def _sync_process_status(app, db) -> None:
                 r_node = rn_result.scalar_one_or_none()
                 if r_node is not None and not r_node.is_local:
                     continue
-            # Skip transient statuses
-            if replica.status in ("starting", "stopping", "deploying"):
+            # Timeout stuck deploying/starting instances (> 10 min = something went wrong)
+            if replica.status in ("deploying", "starting"):
+                age = (_dt.datetime.utcnow() - (replica.updated_at or replica.created_at)).total_seconds()
+                if age > 600:
+                    replica.status = "error"
+                    replica.last_error = f"Timed out after {int(age)}s in '{replica.status}' state"
+                    changed = True
+                continue
+            if replica.status == "stopping":
                 continue
             alive = await asyncio.to_thread(dm.is_replica_container_running, app.id, replica.id)
             new_status = "running" if alive else "stopped"
@@ -1128,6 +1124,8 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
         app.auto_start = req.auto_start
     if req.restart_policy is not None and req.restart_policy in ("no", "always", "on-failure"):
         app.restart_policy = req.restart_policy
+    if req.working_dir is not None:
+        app.working_dir = req.working_dir
 
     if not node.is_local:
         # If domain and port are provided, we assume the user wants Nginx enabled.
@@ -2343,26 +2341,12 @@ class RunReplicaRequest(BaseModel):
     app_name: Optional[str] = None
 
 
-def _image_arch_ok(image_name: str) -> bool:
-    """Return True if the Docker image exists locally and matches the host CPU architecture."""
-    import platform
-    host = platform.machine().lower()
-    expected = "arm64" if ("aarch64" in host or "arm64" in host) else "amd64"
-    try:
-        r = subprocess.run(
-            ["docker", "inspect", "--format", "{{.Architecture}}", image_name],
-            capture_output=True, text=True, timeout=10,
-        )
-        return r.returncode == 0 and r.stdout.strip() == expected
-    except Exception:
-        return False
-
 
 @router.post("/{app_id}/replicas/run-remote")
 async def run_replica_remote(app_id: int, req: RunReplicaRequest, db: AsyncSession = Depends(get_db)):
     """Internal endpoint called by the node agent to start a replica container locally.
+    The agent guarantees the image is already built before calling this endpoint.
     Does NOT create a DB row — the main server already has it."""
-    local_app = None
     if req.local_app_id is not None:
         local_app = await _get_or_404(req.local_app_id, db)
         app_name = local_app.name
@@ -2372,27 +2356,8 @@ async def run_replica_remote(app_id: int, req: RunReplicaRequest, db: AsyncSessi
         app = await _get_or_404(app_id, db)
         app_name = app.name
 
-    def _push(_aid, line):
-        pm._push_line(app_id, str(line))
-
-    # Use local_app_id for the image name when provided — the image was built
-    # on this node under its own local app id, not the main node's app id.
+    # Image is named after local_app_id (built under that id on this node)
     build_app_id = req.local_app_id if req.local_app_id is not None else app_id
-    img = dm.image_name(build_app_id, app_name)
-
-    # If the image is missing or has the wrong architecture (e.g. amd64 cached
-    # on an arm64 Pi from a previous transfer), rebuild it natively first.
-    if local_app and local_app.working_dir and not await asyncio.to_thread(_image_arch_ok, img):
-        try:
-            await asyncio.to_thread(
-                dm.build_image,
-                build_app_id, app_name, local_app.working_dir, _push,
-                local_app.app_type or "unknown",
-                local_app.start_command or "",
-                req.internal_port or local_app.port or 8000,
-            )
-        except Exception as build_err:
-            raise HTTPException(500, f"Image build failed: {build_err}") from build_err
 
     try:
         env_vars = req.env_vars or {}
@@ -2620,14 +2585,20 @@ async def delete_instance(
     replica_node = node_result.scalar_one_or_none() if node_result else None
 
     if replica_node is None or replica_node.is_local:
-        if replica.status in ("running", "starting"):
-            await asyncio.to_thread(pm.stop_docker_replica, app_id, replica.id)
-    elif replica_node.status == "online":
+        # Always attempt stop for any non-terminal status — ignore errors if container
+        # doesn't exist (deploying failed, already stopped, etc.)
+        if replica.status not in ("stopped", "error"):
+            try:
+                await asyncio.to_thread(pm.stop_docker_replica, app_id, replica.id)
+            except Exception:
+                pass
+    elif replica_node.status == "online" and replica.status not in ("stopped", "error", "deploying"):
         await queue_node_command(
             db, node_id=replica_node.id, app_id=app_id,
             command_type="stop_replica",
             payload={"app_id": app_id, "replica_id": replica.id, "app_name": app.name},
         )
+    # Always delete the DB row regardless of container state or node availability
 
     await db.delete(replica)
     await db.flush()

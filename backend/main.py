@@ -522,6 +522,17 @@ class _AuthMiddleware(BaseHTTPMiddleware):
             agent_token = request.headers.get("X-Agent-Token", "")
             if agent_token and auth.verify_agent_token(agent_token):
                 return await call_next(request)
+            # Allow remote node agents via X-Node-Token (e.g. fetching source archives)
+            node_token = request.headers.get("X-Node-Token", "")
+            if node_token:
+                from sqlalchemy import select as _select, and_ as _and
+                from models import Node as _Node
+                async with AsyncSessionLocal() as _db:
+                    _res = await _db.execute(
+                        _select(_Node).where(_and(_Node.auth_token == node_token, _Node.enabled == True))
+                    )
+                    if _res.scalar_one_or_none():
+                        return await call_next(request)
             return JSONResponse({"detail": "Not authenticated"}, status_code=401)
         return await call_next(request)
 

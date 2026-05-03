@@ -2597,114 +2597,279 @@ async def deploy_zero_downtime(app_id: int, db: AsyncSession = Depends(get_db), 
     local_node = await ensure_local_node(db)
     node = await _get_app_node(app, db, local_node)
 
-    if not node.is_local:
-        raise HTTPException(400, "Zero-downtime deploy is only available for local apps")
     if not app.use_docker:
         raise HTTPException(400, "Zero-downtime deploy is only available for Docker apps")
     if not app.nginx_enabled or not app.domain:
         raise HTTPException(400, "Zero-downtime deploy requires nginx to be enabled with a domain")
-    if not app.working_dir:
-        raise HTTPException(400, "No working directory — deploy the app first")
 
     pm._push_line(app_id, "[ZD] Zero-downtime deploy starting…")
 
-    # Step 1: Build a fresh image
-    try:
-        def _push(_aid, line):
-            pm._push_line(app_id, str(line))
-        img = await asyncio.to_thread(
-            dm.build_image,
-            app_id, app.name, app.working_dir, _push,
-            app.app_type or "unknown", app.start_command or "", app.port or 8000,
+    if node.is_local:
+        # ── Local path ────────────────────────────────────────────────────
+        if not app.working_dir:
+            raise HTTPException(400, "No working directory — deploy the app first")
+
+        # Step 1: Build a fresh image
+        try:
+            def _push(_aid, line):
+                pm._push_line(app_id, str(line))
+            img = await asyncio.to_thread(
+                dm.build_image,
+                app_id, app.name, app.working_dir, _push,
+                app.app_type or "unknown", app.start_command or "", app.port or 8000,
+            )
+        except Exception as e:
+            raise HTTPException(500, f"Failed to build image: {e}")
+
+        app.docker_image = img
+
+        # Step 2: Create a new replica row and assign a free port
+        new_ext_port = await _assign_external_port(None, local_node.id, None, db)
+        new_replica = ApplicationReplica(
+            app_id=app_id,
+            node_id=None,   # local node
+            external_port=new_ext_port,
+            status="starting",
         )
-    except Exception as e:
-        raise HTTPException(500, f"Failed to build image: {e}")
+        db.add(new_replica)
+        await db.flush()
 
-    app.docker_image = img
+        pm._push_line(app_id, f"[ZD] Starting new instance (id={new_replica.id}) on port {new_ext_port}…")
 
-    # Step 2: Create a new replica row and assign a free port
-    new_ext_port = await _assign_external_port(None, local_node.id, None, db)
-    new_replica = ApplicationReplica(
-        app_id=app_id,
-        node_id=None,   # local node
-        external_port=new_ext_port,
-        status="starting",
-    )
-    db.add(new_replica)
-    await db.flush()   # populate new_replica.id
+        # Step 3: Start the new replica container
+        env_vars = decrypt_env(app.env_vars or "")
+        try:
+            cid = await _start_instance_local(app, new_replica, env_vars, app_id)
+            new_replica.container_id = cid
+        except Exception as e:
+            await db.delete(new_replica)
+            await db.commit()
+            raise HTTPException(500, f"Failed to start new instance: {e}")
 
-    pm._push_line(app_id, f"[ZD] Starting new instance (id={new_replica.id}) on port {new_ext_port}…")
-
-    # Step 3: Start the new replica container
-    env_vars = decrypt_env(app.env_vars or "")
-    try:
-        cid = await _start_instance_local(app, new_replica, env_vars, app_id)
-        new_replica.container_id = cid
-    except Exception as e:
-        await db.delete(new_replica)
         await db.commit()
-        raise HTTPException(500, f"Failed to start new instance: {e}")
+        await db.refresh(new_replica)
 
-    await db.commit()
-    await db.refresh(new_replica)
+        # Step 4: Health check (60 s)
+        check_port = new_replica.external_port
+        pm._push_line(app_id, f"[ZD] Waiting for health check on port {check_port} (max 60s)…")
+        deadline = asyncio.get_running_loop().time() + 60
+        healthy = False
+        while asyncio.get_running_loop().time() < deadline:
+            if await asyncio.to_thread(_local_http_service_ready, check_port):
+                healthy = True
+                break
+            await asyncio.sleep(2)
 
-    # Step 4: Health check (60 s)
-    check_port = new_replica.external_port
-    pm._push_line(app_id, f"[ZD] Waiting for health check on port {check_port} (max 60s)…")
-    deadline = asyncio.get_running_loop().time() + 60
-    healthy = False
-    while asyncio.get_running_loop().time() < deadline:
-        if await asyncio.to_thread(_local_http_service_ready, check_port):
-            healthy = True
-            break
-        await asyncio.sleep(2)
+        if not healthy:
+            pm._push_line(app_id, "[ZD] Health check failed — rolling back new instance")
+            await asyncio.to_thread(dm.stop_replica_container, app_id, new_replica.id)
+            await db.refresh(new_replica)
+            await db.delete(new_replica)
+            await db.commit()
+            raise HTTPException(502, "New instance failed health check after 60s — rolled back")
 
-    if not healthy:
-        pm._push_line(app_id, "[ZD] Health check failed — rolling back new instance")
-        await asyncio.to_thread(dm.stop_replica_container, app_id, new_replica.id)
-        await db.delete(new_replica)
-        await db.commit()
-        raise HTTPException(502, "New instance failed health check after 60s — rolled back")
+        pm._push_line(app_id, "[ZD] Health check passed. Stopping old instances…")
 
-    pm._push_line(app_id, "[ZD] Health check passed. Stopping old instances…")
-
-    # Step 5: Stop all previously-running instances for this app
-    old_result = await db.execute(
-        select(ApplicationReplica).where(
-            ApplicationReplica.app_id == app_id,
-            ApplicationReplica.id != new_replica.id,
-            ApplicationReplica.status == "running",
+        # Step 5: Stop all previously-running instances
+        old_result = await db.execute(
+            select(ApplicationReplica).where(
+                ApplicationReplica.app_id == app_id,
+                ApplicationReplica.id != new_replica.id,
+                ApplicationReplica.status == "running",
+            )
         )
-    )
-    old_replicas = old_result.scalars().all()
-    for old_r in old_replicas:
-        await asyncio.to_thread(dm.stop_replica_container, app_id, old_r.id)
-        await db.delete(old_r)
-        pm._push_line(app_id, f"[ZD] Stopped and removed old instance {old_r.id}.")
+        old_replicas = old_result.scalars().all()
+        for old_r in old_replicas:
+            await asyncio.to_thread(dm.stop_replica_container, app_id, old_r.id)
+            await db.delete(old_r)
+            pm._push_line(app_id, f"[ZD] Stopped and removed old instance {old_r.id}.")
 
-    new_replica.status = "running"
-    app.status = "running"
+        new_replica.status = "running"
+        app.status = "running"
 
-    # Step 6: Regenerate nginx to point to the new instance
-    await db.flush()
-    backends = await _get_nginx_backends(app, db, local_node)
-    ssl_cert, ssl_key = _resolve_ssl_paths(app.ssl_cert_path, app.ssl_key_path)
-    cfg = nm.generate_config(
-        app.name, app.domain, backends,
-        ssl_cert, ssl_key,
-        app_id=app_id, mode="normal",
-        extra_domains=json.loads(app.extra_domains or "[]"),
-        redirect_domains=json.loads(app.redirect_domains or "[]"),
-    )
-    ok, msg = nm.write_nginx_config(app.name, cfg)
-    if not ok:
-        pm._push_line(app_id, f"[ZD] Warning: nginx config update failed: {msg}")
+        # Step 6: Regenerate nginx
+        await db.flush()
+        backends = await _get_nginx_backends(app, db, local_node)
+        ssl_cert, ssl_key = _resolve_ssl_paths(app.ssl_cert_path, app.ssl_key_path)
+        cfg = nm.generate_config(
+            app.name, app.domain, backends,
+            ssl_cert, ssl_key,
+            app_id=app_id, mode="normal",
+            extra_domains=json.loads(app.extra_domains or "[]"),
+            redirect_domains=json.loads(app.redirect_domains or "[]"),
+        )
+        ok, msg = nm.write_nginx_config(app.name, cfg)
+        if not ok:
+            pm._push_line(app_id, f"[ZD] Warning: nginx config update failed: {msg}")
 
-    await log_audit(db, "app.zero_downtime_deploy", actor=actor, app_id=app_id, detail={"name": app.name, "image": img})
+        instance_id = new_replica.id
+        image = img
+
+    else:
+        # ── Remote path ───────────────────────────────────────────────────
+        from database import AsyncSessionLocal
+        if node.status != "online":
+            raise HTTPException(400, f"Node '{node.name}' is offline")
+
+        # Step 1: Refresh source and rebuild image on the remote node
+        pm._push_line(app_id, f"[ZD] Refreshing source and rebuilding image on node '{node.name}'…")
+        env_vars = decrypt_env(app.env_vars or "")
+        refresh_cmd = await queue_node_command(
+            db, node_id=node.id, app_id=app_id,
+            command_type="refresh_source",
+            payload={
+                "app_name": app.name,
+                "app_id": app_id,
+                "app_type": app.app_type or "unknown",
+                "start_command": app.start_command or "",
+                "internal_port": app.port or 8000,
+                "env_vars": env_vars,
+                "docker_options": _docker_runtime_options(app),
+            },
+        )
+        refresh_done = await wait_for_node_command(db, refresh_cmd.id, timeout_seconds=300)
+        if refresh_done.status != "done":
+            raise HTTPException(500, f"Source refresh failed on node '{node.name}': {refresh_done.error_message}")
+        pm._push_line(app_id, "[ZD] Source refreshed and image built on remote node.")
+
+        # Step 2: Create a new replica row
+        new_ext_port = await _assign_external_port(None, node.id, None, db)
+        new_replica = ApplicationReplica(
+            app_id=app_id,
+            node_id=node.id,
+            external_port=new_ext_port,
+            status="starting",
+        )
+        db.add(new_replica)
+        await db.flush()
+        # Commit so the tunnel WS handler can update this row when it connects
+        await db.commit()
+
+        pm._push_line(app_id, f"[ZD] Starting new instance (id={new_replica.id}) on node '{node.name}'…")
+
+        # Step 3: Queue start_replica command
+        remote_payload = _remote_replica_command_payload(app, env_vars, new_ext_port)
+        await queue_node_command(
+            db, node_id=node.id, app_id=app_id,
+            command_type="start_replica",
+            payload={**remote_payload, "replica_id": new_replica.id},
+        )
+        await db.commit()
+
+        # Step 4: Poll until tunnel connects (status=running + tunnel_port set) — max 120s
+        pm._push_line(app_id, "[ZD] Waiting for remote instance tunnel to connect (max 120s)…")
+        deadline = asyncio.get_running_loop().time() + 120
+        tunnel_port = None
+        while asyncio.get_running_loop().time() < deadline:
+            await asyncio.sleep(3)
+            async with AsyncSessionLocal() as _poll_db:
+                r = await _poll_db.execute(
+                    select(ApplicationReplica).where(ApplicationReplica.id == new_replica.id)
+                )
+                fresh = r.scalar_one_or_none()
+            if fresh is None:
+                break
+            if fresh.status == "error":
+                async with AsyncSessionLocal() as _del_db:
+                    victim = await _del_db.get(ApplicationReplica, new_replica.id)
+                    if victim:
+                        await _del_db.delete(victim)
+                        await _del_db.commit()
+                raise HTTPException(500, f"Remote instance failed to start: {fresh.last_error}")
+            if fresh.tunnel_port:
+                tunnel_port = fresh.tunnel_port
+                break
+
+        if not tunnel_port:
+            pm._push_line(app_id, "[ZD] Tunnel did not connect in time — rolling back")
+            await queue_node_command(
+                db, node_id=node.id, app_id=app_id,
+                command_type="stop_replica",
+                payload={"app_id": app_id, "replica_id": new_replica.id, "app_name": app.name},
+            )
+            async with AsyncSessionLocal() as _del_db:
+                victim = await _del_db.get(ApplicationReplica, new_replica.id)
+                if victim:
+                    await _del_db.delete(victim)
+                    await _del_db.commit()
+            await db.commit()
+            raise HTTPException(502, "New remote instance did not connect within 120s — rolled back")
+
+        # Step 5: Health check via tunnel port
+        check_port = tunnel_port
+        pm._push_line(app_id, f"[ZD] Tunnel on port {check_port}. Running health check…")
+        deadline = asyncio.get_running_loop().time() + 60
+        healthy = False
+        while asyncio.get_running_loop().time() < deadline:
+            if await asyncio.to_thread(_local_http_service_ready, check_port):
+                healthy = True
+                break
+            await asyncio.sleep(2)
+
+        if not healthy:
+            pm._push_line(app_id, "[ZD] Health check failed — rolling back")
+            await queue_node_command(
+                db, node_id=node.id, app_id=app_id,
+                command_type="stop_replica",
+                payload={"app_id": app_id, "replica_id": new_replica.id, "app_name": app.name},
+            )
+            async with AsyncSessionLocal() as _del_db:
+                victim = await _del_db.get(ApplicationReplica, new_replica.id)
+                if victim:
+                    await _del_db.delete(victim)
+                    await _del_db.commit()
+            await db.commit()
+            raise HTTPException(502, "New remote instance failed health check after 60s — rolled back")
+
+        pm._push_line(app_id, "[ZD] Health check passed. Stopping old instances…")
+
+        # Step 6: Stop all old running replicas
+        old_result = await db.execute(
+            select(ApplicationReplica).where(
+                ApplicationReplica.app_id == app_id,
+                ApplicationReplica.id != new_replica.id,
+                ApplicationReplica.status == "running",
+            )
+        )
+        old_replicas = old_result.scalars().all()
+        for old_r in old_replicas:
+            old_node_id = old_r.node_id or node.id
+            await queue_node_command(
+                db, node_id=old_node_id, app_id=app_id,
+                command_type="stop_replica",
+                payload={"app_id": app_id, "replica_id": old_r.id, "app_name": app.name},
+            )
+            await db.delete(old_r)
+            pm._push_line(app_id, f"[ZD] Queued stop for old instance {old_r.id}.")
+
+        # Refresh new_replica to get tunnel_port and current status from DB
+        await db.refresh(new_replica)
+        app.status = "running"
+        app.docker_image = dm.image_name(app_id, app.name)
+
+        # Step 7: Regenerate nginx
+        await db.flush()
+        backends = await _get_nginx_backends(app, db, local_node)
+        ssl_cert, ssl_key = _resolve_ssl_paths(app.ssl_cert_path, app.ssl_key_path)
+        cfg = nm.generate_config(
+            app.name, app.domain, backends,
+            ssl_cert, ssl_key,
+            app_id=app_id, mode="normal",
+            extra_domains=json.loads(app.extra_domains or "[]"),
+            redirect_domains=json.loads(app.redirect_domains or "[]"),
+        )
+        ok, msg = nm.write_nginx_config(app.name, cfg)
+        if not ok:
+            pm._push_line(app_id, f"[ZD] Warning: nginx config update failed: {msg}")
+
+        instance_id = new_replica.id
+        image = app.docker_image
+
+    await log_audit(db, "app.zero_downtime_deploy", actor=actor, app_id=app_id, detail={"name": app.name})
     await db.commit()
 
-    pm._push_line(app_id, f"[ZD] Zero-downtime deploy complete. Instance {new_replica.id} on port {check_port}")
-    return {"status": "ok", "image": img, "instance_id": new_replica.id}
+    pm._push_line(app_id, f"[ZD] Zero-downtime deploy complete. Instance {instance_id}.")
+    return {"status": "ok", "image": image, "instance_id": instance_id}
 
 
 def _sse_line(data: str) -> str:

@@ -1699,6 +1699,15 @@ async function initInstances() {
   const addBtn = document.getElementById('btn-add-instance');
   if (addBtn) {
     addBtn.onclick = async () => {
+      let nodes = [];
+      try {
+        nodes = await api.listNodes();
+      } catch {
+        toast('Failed to load nodes', 'error');
+        return;
+      }
+      const available = nodes.filter(n => n.enabled && n.status === 'online');
+
       const _field = (id, label, type, placeholder, hint) =>
         `<div style="margin-bottom:10px">
           <div style="font-size:12px;font-weight:500;color:var(--text-secondary);margin-bottom:4px">${label}</div>
@@ -1714,6 +1723,11 @@ async function initInstances() {
           <div class="dialog" style="max-width:440px">
             <div class="dialog-title">Add Instance</div>
             <div class="dialog-body" style="color:var(--text-secondary);font-size:13px;line-height:1.5">
+              <div style="margin-bottom:12px;font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em">Node</div>
+              <select id="inst-node-select" style="width:100%;padding:7px 10px;background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px;font-size:13px;margin-bottom:16px">
+                <option value="">Local (this machine)</option>
+                ${available.filter(n => !n.is_local).map(n => `<option value="${n.id}">${n.name} (${n.public_host || n.status})</option>`).join('')}
+              </select>
               <div style="margin-bottom:8px;font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em">Docker Runtime <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional overrides)</span></div>
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
                 ${_field('inst-cpu', 'CPU Limit', 'number', app.docker_cpu_limit || '1.0', 'Max CPUs')}
@@ -1740,6 +1754,7 @@ async function initInstances() {
           </div>`;
         document.body.appendChild(backdrop);
         const ok = () => {
+          const nodeVal = backdrop.querySelector('#inst-node-select').value;
           const cpu = parseFloat(backdrop.querySelector('#inst-cpu').value);
           const mem = parseInt(backdrop.querySelector('#inst-mem').value, 10);
           const readonly = backdrop.querySelector('#inst-readonly').checked;
@@ -1747,6 +1762,7 @@ async function initInstances() {
           const tmpfsSz = parseInt(backdrop.querySelector('#inst-tmpfs-size').value, 10);
           backdrop.remove();
           resolve({
+            nodeId: nodeVal ? parseInt(nodeVal, 10) : null,
             cpu: Number.isFinite(cpu) ? cpu : null,
             mem: Number.isInteger(mem) ? mem : null,
             readonly,
@@ -1773,6 +1789,7 @@ async function initInstances() {
       addBtn.textContent = 'Starting...';
       try {
         await api.scaleApp(APP_ID, {
+          node_id: result.nodeId,
           docker_cpu_limit: result.cpu,
           docker_memory_limit_mb: result.mem,
           docker_read_only_root: result.readonly,

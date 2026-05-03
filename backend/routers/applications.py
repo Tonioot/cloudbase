@@ -2079,6 +2079,11 @@ async def run_replica_remote(app_id: int, req: RunReplicaRequest, db: AsyncSessi
         )
         return {"container_id": container_id, "replica_id": req.replica_id}
     except Exception as e:
+        import logging as _logging
+        _logging.getLogger("cloudbase.apps").error(
+            "run-remote failed app_id=%d replica_id=%d local_app_id=%s build_app_id=%d: %s",
+            app_id, req.replica_id, req.local_app_id, build_app_id, e, exc_info=True,
+        )
         raise HTTPException(500, str(e)) from e
 
 
@@ -2629,7 +2634,7 @@ async def deploy_zero_downtime(app_id: int, db: AsyncSession = Depends(get_db), 
         new_ext_port = await _assign_external_port(None, local_node.id, None, db)
         new_replica = ApplicationReplica(
             app_id=app_id,
-            node_id=None,   # local node
+            node_id=local_node.id,  # always set — null confused the API response
             external_port=new_ext_port,
             status="starting",
         )
@@ -2670,9 +2675,30 @@ async def deploy_zero_downtime(app_id: int, db: AsyncSession = Depends(get_db), 
             await db.commit()
             raise HTTPException(502, "New instance failed health check after 60s — rolled back")
 
-        pm._push_line(app_id, "[ZD] Health check passed. Stopping old instances…")
+        pm._push_line(app_id, "[ZD] Health check passed. Switching nginx to new instance…")
 
-        # Step 5: Stop all previously-running instances
+        # Step 5: Regenerate nginx pointing ONLY to the new instance BEFORE stopping old ones.
+        # This is what makes it truly zero-downtime: the cutover happens here; old containers
+        # are still running so nginx can complete any in-flight requests, then we stop them.
+        new_replica.status = "running"
+        app.status = "running"
+        await db.flush()
+        ssl_cert, ssl_key = _resolve_ssl_paths(app.ssl_cert_path, app.ssl_key_path)
+        new_backends = [f"127.0.0.1:{new_ext_port}"]
+        cfg = nm.generate_config(
+            app.name, app.domain, new_backends,
+            ssl_cert, ssl_key,
+            app_id=app_id, mode="normal",
+            extra_domains=json.loads(app.extra_domains or "[]"),
+            redirect_domains=json.loads(app.redirect_domains or "[]"),
+        )
+        ok, msg = nm.write_nginx_config(app.name, cfg)
+        if not ok:
+            pm._push_line(app_id, f"[ZD] Warning: nginx config update failed: {msg}")
+        else:
+            pm._push_line(app_id, "[ZD] Nginx switched to new instance. Stopping old instances…")
+
+        # Step 6: Stop all previously-running instances (nginx no longer routes to them)
         old_result = await db.execute(
             select(ApplicationReplica).where(
                 ApplicationReplica.app_id == app_id,
@@ -2685,24 +2711,6 @@ async def deploy_zero_downtime(app_id: int, db: AsyncSession = Depends(get_db), 
             await asyncio.to_thread(dm.stop_replica_container, app_id, old_r.id)
             await db.delete(old_r)
             pm._push_line(app_id, f"[ZD] Stopped and removed old instance {old_r.id}.")
-
-        new_replica.status = "running"
-        app.status = "running"
-
-        # Step 6: Regenerate nginx
-        await db.flush()
-        backends = await _get_nginx_backends(app, db, local_node)
-        ssl_cert, ssl_key = _resolve_ssl_paths(app.ssl_cert_path, app.ssl_key_path)
-        cfg = nm.generate_config(
-            app.name, app.domain, backends,
-            ssl_cert, ssl_key,
-            app_id=app_id, mode="normal",
-            extra_domains=json.loads(app.extra_domains or "[]"),
-            redirect_domains=json.loads(app.redirect_domains or "[]"),
-        )
-        ok, msg = nm.write_nginx_config(app.name, cfg)
-        if not ok:
-            pm._push_line(app_id, f"[ZD] Warning: nginx config update failed: {msg}")
 
         instance_id = new_replica.id
         image = img
@@ -2823,9 +2831,29 @@ async def deploy_zero_downtime(app_id: int, db: AsyncSession = Depends(get_db), 
             await db.commit()
             raise HTTPException(502, "New remote instance failed health check after 60s — rolled back")
 
-        pm._push_line(app_id, "[ZD] Health check passed. Stopping old instances…")
+        pm._push_line(app_id, "[ZD] Health check passed. Switching nginx to new instance…")
 
-        # Step 6: Stop all old running replicas
+        # Step 6: Regenerate nginx pointing ONLY to the new instance BEFORE stopping old ones.
+        await db.refresh(new_replica)
+        app.status = "running"
+        app.docker_image = dm.image_name(app_id, app.name)
+        await db.flush()
+        ssl_cert, ssl_key = _resolve_ssl_paths(app.ssl_cert_path, app.ssl_key_path)
+        new_backends = [f"127.0.0.1:{new_replica.tunnel_port}"]
+        cfg = nm.generate_config(
+            app.name, app.domain, new_backends,
+            ssl_cert, ssl_key,
+            app_id=app_id, mode="normal",
+            extra_domains=json.loads(app.extra_domains or "[]"),
+            redirect_domains=json.loads(app.redirect_domains or "[]"),
+        )
+        ok, msg = nm.write_nginx_config(app.name, cfg)
+        if not ok:
+            pm._push_line(app_id, f"[ZD] Warning: nginx config update failed: {msg}")
+        else:
+            pm._push_line(app_id, "[ZD] Nginx switched to new instance. Stopping old instances…")
+
+        # Step 7: Stop all old running replicas (nginx no longer routes to them)
         old_result = await db.execute(
             select(ApplicationReplica).where(
                 ApplicationReplica.app_id == app_id,
@@ -2843,26 +2871,6 @@ async def deploy_zero_downtime(app_id: int, db: AsyncSession = Depends(get_db), 
             )
             await db.delete(old_r)
             pm._push_line(app_id, f"[ZD] Queued stop for old instance {old_r.id}.")
-
-        # Refresh new_replica to get tunnel_port and current status from DB
-        await db.refresh(new_replica)
-        app.status = "running"
-        app.docker_image = dm.image_name(app_id, app.name)
-
-        # Step 7: Regenerate nginx
-        await db.flush()
-        backends = await _get_nginx_backends(app, db, local_node)
-        ssl_cert, ssl_key = _resolve_ssl_paths(app.ssl_cert_path, app.ssl_key_path)
-        cfg = nm.generate_config(
-            app.name, app.domain, backends,
-            ssl_cert, ssl_key,
-            app_id=app_id, mode="normal",
-            extra_domains=json.loads(app.extra_domains or "[]"),
-            redirect_domains=json.loads(app.redirect_domains or "[]"),
-        )
-        ok, msg = nm.write_nginx_config(app.name, cfg)
-        if not ok:
-            pm._push_line(app_id, f"[ZD] Warning: nginx config update failed: {msg}")
 
         instance_id = new_replica.id
         image = app.docker_image

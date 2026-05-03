@@ -747,9 +747,24 @@ async def get_node_apps(
     if not x_node_token:
         raise HTTPException(401, "Missing node token")
     node = await get_node_by_token_or_401(x_node_token, db)
-    from models import Application
-    result = await db.execute(select(Application).where(Application.node_id == node.id))
-    apps = result.scalars().all()
+    from models import Application, ApplicationReplica
+    # Include apps that are directly assigned to this node (legacy)
+    # AND apps that have at least one replica running on this node (replica model)
+    result_direct = await db.execute(select(Application).where(Application.node_id == node.id))
+    direct_apps = {a.id: a for a in result_direct.scalars().all()}
+
+    rep_result = await db.execute(
+        select(ApplicationReplica.app_id).where(ApplicationReplica.node_id == node.id).distinct()
+    )
+    replica_app_ids = [row[0] for row in rep_result.all()]
+    if replica_app_ids:
+        result_replica = await db.execute(
+            select(Application).where(Application.id.in_(replica_app_ids))
+        )
+        for a in result_replica.scalars().all():
+            direct_apps[a.id] = a
+
+    apps = list(direct_apps.values())
     return {"apps": [{"id": a.id, "name": a.name} for a in apps]}
 
 

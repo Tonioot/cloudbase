@@ -853,7 +853,10 @@ async def _ensure_replica_app_deployed(client: httpx.AsyncClient, state, main_id
             if main_id:
                 state.app_id_map[str(main_id)] = local_id
                 _save_state(state)
+            _agent_log(f"[deploy] Image {img} already present, skipping build")
             return local_id
+        else:
+            _agent_log(f"[deploy] Image {img} missing or wrong arch, rebuilding…")
 
     # Image missing or wrong arch — fetch source from primary and build
     app_dir = await _download_and_extract_source(client, state, main_id, app_name, headers)

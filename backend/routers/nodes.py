@@ -196,6 +196,23 @@ async def _apply_command_result(
                     app.status = "error"
                     if error_message:
                         app.last_error = error_message
+                # Update the first ApplicationReplica status if it was created pre-deploy
+                first_replica_id = payload.get("first_replica_id")
+                if first_replica_id:
+                    from models import ApplicationReplica
+                    frep_result = await db.execute(
+                        select(ApplicationReplica).where(ApplicationReplica.id == int(first_replica_id))
+                    )
+                    first_replica = frep_result.scalar_one_or_none()
+                    if first_replica:
+                        if status == "done":
+                            deployed_status = (result_payload or {}).get("status", "stopped")
+                            first_replica.status = deployed_status if deployed_status in ("running", "stopped", "error") else "stopped"
+                            first_replica.last_error = None
+                        else:
+                            first_replica.status = "error"
+                            if error_message:
+                                first_replica.last_error = error_message
             elif cmd.command_type == "update_app":
                 if status == "done":
                     if result_payload and "nginx_enabled" in result_payload:

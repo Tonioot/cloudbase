@@ -125,6 +125,8 @@ export const api = {
   listInstances:  (id)             => request('GET',    `/apps/${id}/instances`),
   scaleApp:       (id, body)       => request('POST',   `/apps/${id}/scale`, body),
   removeReplica:  (id, replicaId)  => request('DELETE', `/apps/${id}/replicas/${replicaId}`),
+  deleteInstance: (id, instanceId) => request('DELETE', `/apps/${id}/instances/${instanceId}`),
+  restartInstance:(id, instanceId) => request('POST',   `/apps/${id}/instances/${instanceId}/restart`),
   getInstanceLogs:(id, repId, lines) => request('GET',  `/apps/${id}/replicas/${repId}/logs?lines=${lines || 200}`),
   getAppLogsTail: (id, lines)      => request('GET',    `/apps/${id}/logs/tail?limit=${lines || 200}`),
   getServerLogs: (lines) => request('GET', `/system/logs?lines=${lines || 500}`),

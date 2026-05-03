@@ -125,6 +125,12 @@ class ApplicationReplica(Base):
     container_id  = Column(String(200), nullable=True)
     status        = Column(String(20), default="stopped")  # pending|starting|running|stopping|stopped|error
     last_error    = Column(Text, nullable=True)
+    # Per-instance Docker resource overrides (null = use app-level defaults)
+    docker_cpu_limit        = Column(Float, nullable=True)
+    docker_memory_limit_mb  = Column(Integer, nullable=True)
+    docker_read_only_root   = Column(Boolean, default=False)
+    docker_tmpfs_enabled    = Column(Boolean, default=False)
+    docker_tmpfs_size_mb    = Column(Integer, nullable=True)
     created_at    = Column(DateTime, default=datetime.utcnow)
     updated_at    = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

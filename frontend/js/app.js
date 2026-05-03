@@ -84,7 +84,7 @@ function renderHeader() {
   document.title = `${app.name} — Cloudbase`;
   const nodeLabel = app.node?.is_local ? 'Primary Node' : (app.node?.name || 'Primary Node');
   const replicaCount = app.replica_count || 0;
-  const instanceLabel = replicaCount > 0 ? ` · ${replicaCount + 1} instances` : '';
+  const instanceLabel = replicaCount > 0 ? ` · ${replicaCount} instance${replicaCount !== 1 ? 's' : ''}` : '';
   document.getElementById('app-meta').textContent =
     `${app.app_type || 'unknown'} · ${formatPortSummary(app)}${instanceLabel} · ${nodeLabel} (${(app.node && app.node.status) || 'online'})`;
 
@@ -385,7 +385,7 @@ function initLogs() {
     api.listInstances(APP_ID).then(instances => {
       if (!select) return;
       select.innerHTML = '<option value="primary">Instance 0 (live)</option>';
-      instances.filter(i => !i.is_primary).forEach(r => {
+      instances.forEach(r => {
         const label = `Instance #${r.id} — ${r.node_name || 'local'} :${r.external_port || '?'}`;
         const opt = document.createElement('option');
         opt.value = String(r.id);
@@ -1604,23 +1604,18 @@ async function initInstances() {
             ? '#d29922'
             : '#8b949e';
 
-      const tunnelCell = inst.is_primary
-        ? '<span style="color:#8b949e;font-size:11px">local</span>'
-        : inst.node_is_local
+      const tunnelCell = inst.node_is_local
           ? '<span style="color:#8b949e;font-size:11px">local</span>'
           : inst.tunnel_connected
             ? '<span style="color:#3fb950;font-size:11px">&#x25cf; connected</span>'
             : '<span style="color:#f85149;font-size:11px">&#x25cb; disconnected</span>';
 
-      const nodeName = inst.is_primary
-        ? `${inst.node_name || 'Local'} <span style="background:#1f6feb;color:#e6edf3;font-size:10px;padding:1px 5px;border-radius:3px;margin-left:4px">instance 0</span>`
-        : (inst.node_name || 'Local');
+      const nodeName = inst.node_name || 'Local';
 
-      const actionBtn = inst.is_primary
-        ? `<button class="btn btn-secondary btn-sm inst-move-btn" data-id="${inst.id}" style="padding:4px 10px;font-size:12px">Move</button>`
-        : `<button class="btn-danger btn-sm inst-remove-btn" data-id="${inst.id}" style="padding:4px 10px;font-size:12px">Remove</button>`;
+      const actionBtn = `<button class="btn-danger btn-sm inst-remove-btn" data-id="${inst.id}" style="padding:4px 10px;font-size:12px">Remove</button>`;
+      const restartBtn = `<button class="btn btn-secondary btn-sm inst-restart-btn" data-id="${inst.id}" style="padding:4px 10px;font-size:12px">Restart</button>`;
 
-      const logsBtn = `<button class="btn btn-secondary btn-sm inst-logs-btn" data-id="${inst.is_primary ? 'primary' : inst.id}" data-primary="${inst.is_primary}" style="padding:4px 10px;font-size:12px">Logs</button>`;
+      const logsBtn = `<button class="btn btn-secondary btn-sm inst-logs-btn" data-id="${inst.id}" data-primary="false" style="padding:4px 10px;font-size:12px">Logs</button>`;
 
       return `<tr style="border-bottom:1px solid #21262d">
         <td style="padding:8px 12px;color:#e6edf3;font-size:13px">${idx + 1}</td>
@@ -1633,6 +1628,7 @@ async function initInstances() {
         </td>
         <td style="padding:8px 12px;text-align:right;white-space:nowrap">
           ${logsBtn}
+          ${restartBtn}
           ${actionBtn}
         </td>
       </tr>`;
@@ -1653,81 +1649,34 @@ async function initInstances() {
         <tbody>${rows}</tbody>
       </table>`;
 
-    wrap.querySelectorAll('.inst-move-btn').forEach(moveBtn => {
-      moveBtn.addEventListener('click', async () => {
-        let nodes = [];
+    wrap.querySelectorAll('.inst-restart-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const instanceId = parseInt(btn.dataset.id, 10);
+        const ok = await confirm('Restart instance?', 'The instance container will be stopped and restarted.');
+        if (!ok) return;
+        btn.disabled = true;
+        btn.textContent = 'Restarting...';
         try {
-          nodes = await api.listNodes();
-        } catch {
-          toast('Failed to load nodes', 'error');
-          return;
-        }
-        const others = nodes.filter(n => n.enabled && n.id !== (app.node?.id || app.node_id));
-        if (!others.length) {
-          toast('No other nodes available', 'error');
-          return;
-        }
-
-        const nodeId = await new Promise(resolve => {
-          const backdrop = document.createElement('div');
-          backdrop.className = 'dialog-backdrop';
-          backdrop.innerHTML = `
-            <div class="dialog">
-              <div class="dialog-title">Move Instance 0</div>
-              <div class="dialog-body" style="color:var(--text-secondary);font-size:13px;line-height:1.5">
-                <div style="margin-bottom:12px">Move instance 0 to a different node.<br>The app will be stopped and redeployed on the target.</div>
-                <select id="move-inst-node-select" style="width:100%;padding:8px;background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px;font-size:14px">
-                  ${others.map(n => `<option value="${n.id}">${n.name} (${n.is_local ? 'local' : n.status})</option>`).join('')}
-                </select>
-              </div>
-              <div class="dialog-actions">
-                <button class="btn btn-secondary" id="move-inst-cancel">Cancel</button>
-                <button class="btn btn-primary" id="move-inst-ok">Move Instance</button>
-              </div>
-            </div>`;
-          document.body.appendChild(backdrop);
-          const ok = () => {
-            const val = backdrop.querySelector('#move-inst-node-select').value;
-            backdrop.remove();
-            resolve(val ? parseInt(val, 10) : null);
-          };
-          backdrop.querySelector('#move-inst-ok').onclick = ok;
-          backdrop.querySelector('#move-inst-cancel').onclick = () => {
-            backdrop.remove();
-            resolve(undefined);
-          };
-          backdrop.addEventListener('click', e => {
-            if (e.target === backdrop) {
-              backdrop.remove();
-              resolve(undefined);
-            }
-          });
-        });
-
-        if (nodeId === undefined) return;
-        moveBtn.disabled = true;
-        moveBtn.textContent = 'Moving...';
-        try {
-          await api.moveApp(APP_ID, nodeId, null);
-          toast(`Moving "${app.name}" to selected node...`);
-          window.location.href = '/';
+          await api.restartInstance(APP_ID, instanceId);
+          toast('Instance restarting…');
+          await renderInstances();
         } catch (e) {
           toast(e.message, 'error');
-          moveBtn.disabled = false;
-          moveBtn.textContent = 'Move';
+          btn.disabled = false;
+          btn.textContent = 'Restart';
         }
       });
     });
 
     wrap.querySelectorAll('.inst-remove-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
-        const replicaId = parseInt(btn.dataset.id, 10);
+        const instanceId = parseInt(btn.dataset.id, 10);
         const ok = await confirm('Remove instance?', 'The instance container will be stopped and removed.');
         if (!ok) return;
         btn.disabled = true;
         btn.textContent = 'Removing...';
         try {
-          await api.removeReplica(APP_ID, replicaId);
+          await api.deleteInstance(APP_ID, instanceId);
           toast('Instance removed');
           app = await api.getApp(APP_ID);
           updateHeaderStatus();

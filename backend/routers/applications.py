@@ -1248,7 +1248,7 @@ async def delete_app(app_id: int, db: AsyncSession = Depends(get_db), actor: str
             r_node = node_map.get(replica.node_id)
             if r_node and r_node.is_local:
                 await asyncio.to_thread(pm.stop_docker_replica, app_id, replica.id)
-            elif r_node and r_node.status == "online":
+            elif r_node and not r_node.is_local:
                 await queue_node_command(
                     db, node_id=r_node.id, app_id=app_id,
                     command_type="stop_replica",
@@ -2269,7 +2269,9 @@ async def delete_instance(
                 await asyncio.to_thread(pm.stop_docker_replica, app_id, replica.id)
             except Exception:
                 pass
-    elif replica_node.status == "online" and replica.status not in ("stopped", "error", "deploying"):
+    elif replica.status not in ("stopped", "error", "deploying"):
+        # Queue stop command even when the node is offline — it will be dispatched
+        # as soon as the node reconnects, preventing orphaned containers.
         await queue_node_command(
             db, node_id=replica_node.id, app_id=app_id,
             command_type="stop_replica",

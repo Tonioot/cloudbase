@@ -711,7 +711,13 @@ def _local_image_ok(img: str) -> bool:
             ["docker", "inspect", "--format", "{{.Architecture}}", img],
             capture_output=True, text=True, timeout=10,
         )
-        return r.returncode == 0 and r.stdout.strip() == expected
+        if r.returncode != 0:
+            return False
+        arch = r.stdout.strip()
+        # Docker normalises x86_64 → amd64, but be lenient in both directions
+        if expected == "amd64":
+            return arch in ("amd64", "x86_64")
+        return arch == expected
     except Exception:
         return False
 

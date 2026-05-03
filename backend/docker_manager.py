@@ -30,6 +30,18 @@ def _get_client():
         return _docker_client
 
 
+def _assert_image_local(client, img: str) -> None:
+    """Raise RuntimeError if the image is not present locally, preventing docker-py
+    from silently falling through to a Docker Hub pull attempt."""
+    import docker
+    try:
+        client.images.get(img)
+    except docker.errors.ImageNotFound:
+        raise RuntimeError(
+            f"Image '{img}' not found locally. Deploy the app first to build the image."
+        )
+
+
 def _get_build_lock(app_id: int) -> threading.Lock:
     with _build_locks_guard:
         lock = _build_locks.get(app_id)
@@ -418,6 +430,7 @@ def run_container(
             tmpfs_opts.append(f"size={int(tmpfs_size_mb)}m")
         run_kwargs["tmpfs"] = {"/tmp": ",".join(tmpfs_opts)}
 
+    _assert_image_local(client, img)
     container = client.containers.run(
         img,
         **run_kwargs,
@@ -688,6 +701,7 @@ def run_container_for_slot(
         if docker_options.get("tmpfs_size_mb"):
             tmpfs_opts.append(f"size={int(docker_options['tmpfs_size_mb'])}m")
         run_kwargs["tmpfs"] = {"/tmp": ",".join(tmpfs_opts)}
+    _assert_image_local(client, img)
     container = client.containers.run(img, **run_kwargs)
     push_line_fn(app_id, f"[ZD] Slot container started: {container.short_id} on :{external_port}")
     return container.id
@@ -785,6 +799,7 @@ def run_replica_container(
             tmpfs_opts.append(f"size={int(tmpfs_size_mb)}m")
         run_kwargs["tmpfs"] = {"/tmp": ",".join(tmpfs_opts)}
 
+    _assert_image_local(client, img)
     container = client.containers.run(img, **run_kwargs)
     push_line_fn(app_id, f"[Replica] Container {replica_id} started: {container.short_id} (:{external_port} → :{internal_port})")
     return container.id

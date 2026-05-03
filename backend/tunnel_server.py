@@ -197,5 +197,11 @@ def get_tunnel_port(replica_id: int) -> Optional[int]:
     return entry.local_port if entry else None
 
 
+def is_active_tunnel(replica_id: int, ws) -> bool:
+    """Return True only if *ws* is the currently registered tunnel websocket."""
+    entry = _tunnels.get(replica_id)
+    return entry is not None and entry.ws is ws
+
+
 def active_tunnel_count() -> int:
     return len(_tunnels)

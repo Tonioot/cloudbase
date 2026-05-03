@@ -1408,6 +1408,9 @@ async def replica_tunnel_ws(replica_id: int, websocket: WebSocket):
     # Regenerate nginx to include the new backend
     await _regen_nginx_for_app(app_id)
 
+    # Capture node_id for later use in finally (node object may be detached)
+    _tunnel_node_id = node.id
+
     # Relay messages until the agent disconnects
     try:
         async for message in websocket.iter_text():
@@ -1418,23 +1421,33 @@ async def replica_tunnel_ws(replica_id: int, websocket: WebSocket):
         log.warning("[tunnel-ws] replica=%d error: %s", replica_id, e)
     finally:
         log.info("[tunnel-ws] replica=%d disconnected, tearing down tunnel", replica_id)
-        await tunnel_server.close_tunnel(replica_id)
 
-        # Clear tunnel_port and set status → stopped
-        async with AsyncSessionLocal() as db:
-            rep_result = await db.execute(
-                select(ApplicationReplica).where(ApplicationReplica.id == replica_id)
-            )
-            replica = rep_result.scalar_one_or_none()
-            if replica:
-                was_running = replica.status == "running"
-                replica.tunnel_port = None
-                replica.status = "stopped"
-                replica.updated_at = _utcnow()
-                await db.commit()
-                if was_running:
-                    # Regenerate nginx to remove the dropped backend
-                    await _regen_nginx_for_app(app_id)
+        # Guard against race condition: if the agent reconnected and opened a new
+        # tunnel for this replica before our cleanup runs, leave the new tunnel alone.
+        was_active = tunnel_server.is_active_tunnel(replica_id, websocket)
+        if was_active:
+            await tunnel_server.close_tunnel(replica_id)
+
+        # Only update DB state if we were still the active tunnel
+        if was_active:
+            async with AsyncSessionLocal() as db:
+                rep_result = await db.execute(
+                    select(ApplicationReplica).where(ApplicationReplica.id == replica_id)
+                )
+                replica = rep_result.scalar_one_or_none()
+                if replica:
+                    was_running = replica.status == "running"
+                    replica.tunnel_port = None
+                    # If the node agent WS is no longer connected, the tunnel dropped
+                    # due to a node outage — mark the replica for automatic recovery.
+                    # If the agent is still connected, the container stopped on its own.
+                    agent_online = _tunnel_node_id in _node_ws_connections
+                    replica.status = "stopped" if agent_online else "node_offline"
+                    replica.updated_at = _utcnow()
+                    await db.commit()
+                    if was_running:
+                        # Regenerate nginx to remove the dropped backend
+                        await _regen_nginx_for_app(app_id)
 
 
 @router.get("/{node_id}/agent-logs")

@@ -970,13 +970,14 @@ async def deploy_app(req: DeployRequest, background_tasks: BackgroundTasks, db: 
         await _deploy_app(app)
         app.status = "stopped"
 
-        if app.domain and _nginx_proxy_port(app):
+        if app.domain:
             maint_ok, maint_msg = _ensure_maintenance_files(app, app.id)
             if not maint_ok:
                 raise HTTPException(500, f"Maintenance files failed: {maint_msg}")
             ssl_cert, ssl_key = _resolve_ssl_paths(app.ssl_cert_path, app.ssl_key_path)
+            backends = await _get_nginx_backends(app, db)
             config = nm.generate_config(
-                app.name, app.domain, _nginx_proxy_port(app),
+                app.name, app.domain, backends,
                 ssl_cert, ssl_key,
                 app_id=app.id, mode=_get_nginx_mode(app),
                 extra_domains=json.loads(app.extra_domains or "[]"),
@@ -1141,13 +1142,14 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
             raise HTTPException(500, f"Failed to update remote app settings: {done.error_message}")
         return _app_to_dict(app, node)
 
-    if app.domain and _nginx_proxy_port(app):
+    if app.domain:
         maint_ok, maint_msg = _ensure_maintenance_files(app, app.id)
         if not maint_ok:
             raise HTTPException(500, f"Maintenance files failed: {maint_msg}")
         ssl_cert, ssl_key = _resolve_ssl_paths(app.ssl_cert_path, app.ssl_key_path)
+        backends = await _get_nginx_backends(app, db)
         config = nm.generate_config(
-            app.name, app.domain, _nginx_proxy_port(app),
+            app.name, app.domain, backends,
             ssl_cert, ssl_key,
             app_id=app.id, mode=_get_nginx_mode(app),
             extra_domains=json.loads(app.extra_domains or "[]"),
@@ -1260,7 +1262,6 @@ async def export_apps(req: ExportRequest, db: AsyncSession = Depends(get_db)):
             "docker_tmpfs_enabled": bool(app.docker_tmpfs_enabled),
             "docker_tmpfs_size_mb": app.docker_tmpfs_size_mb,
             "external_port": None,
-            "node_id": app.node_id,
             "maintenance_mode": app.maintenance_mode,
             "update_mode": app.update_mode,
             "downtime_page": json.loads(app.downtime_page or "{}"),
@@ -1312,7 +1313,7 @@ async def import_apps(req: ImportRequest, background_tasks: BackgroundTasks, db:
             docker_tmpfs_enabled=bool(app_data.get("docker_tmpfs_enabled")) if app_data.get("docker_tmpfs_enabled") is not None else False,
             docker_tmpfs_size_mb=app_data.get("docker_tmpfs_size_mb"),
             status="deploying",
-            node_id=target_node.id,
+            node_id=target_node.id if not target_node.is_local else None,
             maintenance_mode=app_data.get("maintenance_mode", False),
             update_mode=app_data.get("update_mode", False),
             downtime_page=json.dumps(app_data.get("downtime_page") or {}),
@@ -1325,6 +1326,14 @@ async def import_apps(req: ImportRequest, background_tasks: BackgroundTasks, db:
         await db.refresh(app)
 
         if not target_node.is_local:
+            first_replica = ApplicationReplica(
+                app_id=app.id,
+                node_id=target_node.id,
+                external_port=import_external_port,
+                status="deploying",
+            )
+            db.add(first_replica)
+            await db.flush()
             await queue_node_command(
                 db,
                 node_id=target_node.id,
@@ -1351,17 +1360,18 @@ async def import_apps(req: ImportRequest, background_tasks: BackgroundTasks, db:
                     "auto_start": app.auto_start,
                     "restart_policy": app.restart_policy,
                     "use_docker": True,
+                    "first_replica_id": first_replica.id,
                 },
             )
         else:
             try:
-                # Deploy it locally (async logic wait handled simply here)
                 await _deploy_app(app)
                 app.status = "stopped"
-                if app.domain and app.port:
+                if app.domain:
                     _ensure_maintenance_files(app, app.id)
+                    backends = await _get_nginx_backends(app, db)
                     config = nm.generate_config(
-                        app.name, app.domain, app.external_port or app.port,
+                        app.name, app.domain, backends,
                         app.ssl_cert_path, app.ssl_key_path,
                         app_id=app.id, mode=_get_nginx_mode(app),
                         extra_domains=json.loads(app.extra_domains or "[]"),
@@ -1369,11 +1379,10 @@ async def import_apps(req: ImportRequest, background_tasks: BackgroundTasks, db:
                     )
                     ok, _ = nm.write_nginx_config(app.name, config)
                     app.nginx_enabled = ok
-                await db.commit()
             except Exception as e:
                 app.status = "error"
                 app.last_error = str(e)
-                await db.commit()
+        await db.commit()
         imported_count += 1
 
     return {"message": f"Successfully imported {imported_count} apps."}
@@ -3303,9 +3312,10 @@ async def get_nginx_config(app_id: int, db: AsyncSession = Depends(get_db)):
     config_path = os.path.join(nm.NGINX_SITES_DIR, safe)
     if not os.path.exists(config_path):
         generated = None
-        if app.domain and app.port:
+        if app.domain:
+            backends = await _get_nginx_backends(app, db)
             generated = nm.generate_config(
-                app.name, app.domain, app.external_port or app.port,
+                app.name, app.domain, backends,
                 app.ssl_cert_path, app.ssl_key_path,
                 app_id=app.id, mode=_get_nginx_mode(app),
                 extra_domains=json.loads(app.extra_domains or "[]"),
@@ -3513,68 +3523,30 @@ def _replica_to_dict(replica: ApplicationReplica, node: Optional[Node] = None) -
     }
 
 
-async def _get_nginx_backends(app: Application, db: AsyncSession, local_node: "Node") -> "int | list[str]":
-    """Return nginx backend(s) for an app.
+async def _get_nginx_backends(app: Application, db: AsyncSession, local_node: "Node" = None) -> "list[str]":
+    """Return nginx backend addresses for an app as a list of 'host:port' strings.
 
-    Returns a single int (legacy direct proxy) when there are no running replicas.
-    Returns a list[str] of "host:port" strings for upstream load balancing when
-    one or more replicas are running.
-
-    Remote replicas are reached via the reverse WebSocket tunnel: their backend
-    address is 127.0.0.1:{replica.tunnel_port} on the main node, not the remote
-    node's public IP.  Replicas that are running but have no tunnel_port yet
-    (tunnel still connecting) are omitted from the upstream list.
-
-    For apps using the new instance model (any ApplicationReplica rows exist),
-    only replica addresses are used — there is no separate "primary container".
+    Local replicas use 127.0.0.1:{external_port}.
+    Remote replicas use 127.0.0.1:{tunnel_port} (reverse WebSocket tunnel on main node).
+    Replicas that are running but have no address yet are omitted.
+    Returns an empty list when no running replicas exist.
     """
     result = await db.execute(
-        select(ApplicationReplica, Node).join(Node, ApplicationReplica.node_id == Node.id, isouter=True).where(
+        select(ApplicationReplica, Node)
+        .join(Node, ApplicationReplica.node_id == Node.id, isouter=True)
+        .where(
             ApplicationReplica.app_id == app.id,
             ApplicationReplica.status == "running",
         )
     )
-    running_replicas = result.all()
-
-    if not running_replicas:
-        return app.external_port or app.port
-
-    # Determine if we're in instance-based model (has any replica rows)
-    # by checking if running_replicas themselves exist (they do at this point).
-    # In instance-based mode, all containers are replicas — no separate primary.
-    all_replicas_result = await db.execute(
-        select(ApplicationReplica.id).where(ApplicationReplica.app_id == app.id).limit(1)
-    )
-    is_instance_based = all_replicas_result.scalar_one_or_none() is not None
-
-    app_node_result = await db.execute(select(Node).where(Node.id == app.node_id))
-    app_node = app_node_result.scalar_one_or_none() or local_node
-
-    def _main_addr() -> Optional[str]:
-        port = app.external_port or app.port
-        if not port:
-            return None
-        if app_node.is_local:
-            return f"127.0.0.1:{port}"
-        return f"{app_node.public_host}:{port}" if app_node.public_host else None
-
-    def _replica_addr(replica: ApplicationReplica, r_node: Optional[Node]) -> Optional[str]:
-        if r_node is None or r_node.is_local:
-            return f"127.0.0.1:{replica.external_port}" if replica.external_port else None
-        return f"127.0.0.1:{replica.tunnel_port}" if replica.tunnel_port else None
-
     backends: list[str] = []
-    if not is_instance_based:
-        main_addr = _main_addr()
-        if main_addr:
-            backends.append(main_addr)
-    for replica, r_node in running_replicas:
-        addr = _replica_addr(replica, r_node)
-        if addr:
-            backends.append(addr)
-
-    if len(backends) <= 1:
-        return app.external_port or app.port
+    for replica, r_node in result.all():
+        if r_node is None or r_node.is_local:
+            if replica.external_port:
+                backends.append(f"127.0.0.1:{replica.external_port}")
+        else:
+            if replica.tunnel_port:
+                backends.append(f"127.0.0.1:{replica.tunnel_port}")
     return backends
 
 
@@ -3959,7 +3931,7 @@ async def nginx_debug(app_id: int, db: AsyncSession = Depends(get_db)):
             ] if app.domain else [],
         },
         "generated_config": nm.generate_config(
-            app.name, app.domain or "(no domain)", _nginx_proxy_port(app) or 0,
+            app.name, app.domain or "(no domain)", await _get_nginx_backends(app, db),
             app.ssl_cert_path, app.ssl_key_path,
             app_id=app_id, mode=_get_nginx_mode(app),
             extra_domains=json.loads(app.extra_domains or "[]"),

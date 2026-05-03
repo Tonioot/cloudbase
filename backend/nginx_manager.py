@@ -610,20 +610,23 @@ def generate_config(
     if mode == "starting":
         return _static_page_config(domain, maint_root, "starting.html", ssl_cert, ssl_key, extra_domains, redirect_domains)
 
-    # Build upstream block when multiple backends are provided
-    if isinstance(port, list) and len(port) > 1:
+    # list[str] of "host:port" backends (instance-based model)
+    if isinstance(port, list):
+        if not port:
+            # No running instances — serve 503 maintenance page
+            return _static_page_config(domain, maint_root, "downtime.html", ssl_cert, ssl_key, extra_domains, redirect_domains)
+        if len(port) == 1:
+            return _proxy_config(domain, f"http://{port[0]}", maint_root, ssl_cert, ssl_key, extra_domains, redirect_domains)
         safe_name = _re.sub(r"[^a-z0-9_]", "_", app_name.lower())
         upstream_name = f"cloudbase_{safe_name}"
         upstream_block = f"upstream {upstream_name} {{\n"
         for backend in port:
             upstream_block += f"    server {backend};\n"
         upstream_block += "}\n\n"
-        proxy_target = f"http://{upstream_name}"
-        return _proxy_config(domain, proxy_target, maint_root, ssl_cert, ssl_key, extra_domains, redirect_domains, upstream_block=upstream_block)
+        return _proxy_config(domain, f"http://{upstream_name}", maint_root, ssl_cert, ssl_key, extra_domains, redirect_domains, upstream_block=upstream_block)
 
-    # Single backend (legacy int or single-item list)
-    single_port = port[0].split(":")[-1] if isinstance(port, list) else port
-    return _proxy_config(domain, f"http://127.0.0.1:{single_port}", maint_root, ssl_cert, ssl_key, extra_domains, redirect_domains)
+    # Legacy single int port
+    return _proxy_config(domain, f"http://127.0.0.1:{port}", maint_root, ssl_cert, ssl_key, extra_domains, redirect_domains)
 
 
 def _proxy_config(domain: str, proxy_target: str, maint_root: str, ssl_cert: str = None, ssl_key: str = None, extra_domains: list = None, redirect_domains: list = None, upstream_block: str = "") -> str:

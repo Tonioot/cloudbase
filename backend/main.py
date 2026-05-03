@@ -279,76 +279,82 @@ async def _crash_monitor():
     while True:
         try:
             async with AsyncSessionLocal() as db:
-                from models import Node as _Node
+                from models import Node as _Node, ApplicationReplica
                 local_node_result = await db.execute(select(_Node).where(_Node.is_local == True))
                 local_node_obj = local_node_result.scalar_one_or_none()
                 local_node_id = local_node_obj.id if local_node_obj else None
-                result = await db.execute(select(Application))
-                apps = result.scalars().all()
-                for a in apps:
-                    if a.status != "running":
-                        continue
-                    if a.node_id and a.node_id != local_node_id:
-                        continue  # remote node apps are managed by their own agent
 
-                    if a.use_docker:
-                        alive = pm.is_docker_app_running(a.id)
-                    else:
-                        if not a.pid:
-                            continue
-                        alive = pm.is_process_running(a.pid, a.id)
+                # Monitor local replica containers
+                rep_result = await db.execute(
+                    select(ApplicationReplica).where(ApplicationReplica.status == "running")
+                )
+                replicas = rep_result.scalars().all()
+                node_map: dict = {}
+                for replica in replicas:
+                    r_node_id = replica.node_id
+                    if r_node_id not in node_map:
+                        nr = await db.execute(select(_Node).where(_Node.id == r_node_id))
+                        node_map[r_node_id] = nr.scalar_one_or_none()
+                    r_node = node_map.get(r_node_id)
+                    if r_node and not r_node.is_local:
+                        continue  # remote replicas managed by their agent
 
+                    alive = await asyncio.to_thread(dm.is_replica_container_running, replica.app_id, replica.id)
                     if alive:
+                        continue
+
+                    app_result = await db.execute(select(Application).where(Application.id == replica.app_id))
+                    a = app_result.scalar_one_or_none()
+                    if not a:
                         continue
 
                     policy = a.restart_policy or "no"
                     if policy == "no":
-                        a.status = "stopped"
-                        a.pid = None
-                        pm._push_line(a.id, "⚠ Process exited.")
+                        replica.status = "stopped"
+                        pm._push_line(a.id, f"⚠ Instance {replica.id} exited.")
                         await db.commit()
                         continue
 
                     now = _time.time()
-                    history = _restart_history.setdefault(a.id, [])
+                    key = (a.id, replica.id)
+                    history = _restart_history.setdefault(key, [])
                     history[:] = [t for t in history if now - t < RESTART_WINDOW_SECONDS]
 
                     if len(history) >= MAX_RESTARTS_PER_WINDOW:
-                        a.status = "error"
-                        a.pid = None
-                        pm._push_line(a.id, f"✖ Crashed {MAX_RESTARTS_PER_WINDOW}× in {RESTART_WINDOW_SECONDS}s — giving up.")
+                        replica.status = "error"
+                        replica.last_error = f"Crashed {MAX_RESTARTS_PER_WINDOW}× in {RESTART_WINDOW_SECONDS}s"
+                        pm._push_line(a.id, f"✖ Instance {replica.id} crashed {MAX_RESTARTS_PER_WINDOW}× — giving up.")
                         await db.commit()
                         continue
 
                     history.append(now)
                     attempt = len(history)
-                    pm._push_line(a.id, f"⟳ Process exited — restarting (attempt {attempt}/{MAX_RESTARTS_PER_WINDOW})…")
+                    pm._push_line(a.id, f"⟳ Instance {replica.id} exited — restarting (attempt {attempt}/{MAX_RESTARTS_PER_WINDOW})…")
                     await asyncio.sleep(min(2 ** attempt, 30))
 
                     try:
                         env_vars = decrypt_env(a.env_vars or "")
-                        if a.use_docker:
-                            container_id = await asyncio.to_thread(
-                                pm.start_docker_app,
-                                a.id, a.name, a.working_dir,
-                                a.port or 8000, a.external_port or a.port or 8000,
-                                env_vars, a.app_type or "unknown", a.start_command or "",
-                                _docker_runtime_options(a),
-                                False,
-                            )
-                            a.pid = None
-                            a.status = "running"
-                            pm._push_line(a.id, f"✓ Container restarted ({container_id[:12]}).")
-                        else:
-                            final_cmd, env_vars = pm.prepare_app_env(a.start_command, a.working_dir, env_vars)
-                            new_pid = pm.start_app(a.id, a.name, final_cmd, a.working_dir, env_vars)
-                            a.pid = new_pid
-                            a.status = "running"
-                            pm._push_line(a.id, f"✓ Restarted (pid {new_pid}).")
+                        cid = await asyncio.to_thread(
+                            pm.start_docker_replica,
+                            a.id, replica.id, a.name,
+                            a.port or 8000, replica.external_port or a.port or 8000,
+                            env_vars, _docker_runtime_options(a),
+                        )
+                        replica.status = "running"
+                        replica.container_id = cid
+                        replica.last_error = None
+                        pm._push_line(a.id, f"✓ Instance {replica.id} restarted ({cid[:12]}).")
                     except Exception as e:
-                        a.status = "error"
-                        a.pid = None
-                        pm._push_line(a.id, f"✖ Restart failed: {e}")
+                        replica.status = "error"
+                        replica.last_error = str(e)
+                        pm._push_line(a.id, f"✖ Instance {replica.id} restart failed: {e}")
+
+                    # Sync app status from all its replicas
+                    all_rep_result = await db.execute(
+                        select(ApplicationReplica).where(ApplicationReplica.app_id == a.id)
+                    )
+                    from routers.applications import _derive_app_status_from_instances
+                    a.status = _derive_app_status_from_instances(all_rep_result.scalars().all())
                     await db.commit()
         except asyncio.CancelledError:
             return
@@ -380,64 +386,73 @@ async def lifespan(app: FastAPI):
     # Ensure internal agent token exists (used by node_agent.py)
     auth.get_or_create_agent_token()
 
-    # Recover running apps and auto-start
+    # Recover running instances and auto-start
     async with AsyncSessionLocal() as db:
+        from models import ApplicationReplica, Node as _Node
         local_node = await nodes.ensure_local_node(db)
-        local_node_id = local_node.id if local_node else None
+
+        # Recover replica container statuses
+        rep_result = await db.execute(select(ApplicationReplica))
+        all_replicas = rep_result.scalars().all()
+        node_map: dict = {}
+        for replica in all_replicas:
+            r_node_id = replica.node_id
+            if r_node_id not in node_map:
+                nr = await db.execute(select(_Node).where(_Node.id == r_node_id))
+                node_map[r_node_id] = nr.scalar_one_or_none()
+            r_node = node_map.get(r_node_id)
+            if r_node and not r_node.is_local:
+                continue  # remote replicas managed by their own agent
+            if replica.status in ("starting", "stopping", "deploying"):
+                continue
+            alive = dm.is_replica_container_running(replica.app_id, replica.id)
+            new_status = "running" if alive else "stopped"
+            if new_status != replica.status:
+                replica.status = new_status
+                pm._debug(f"RECOVERY replica {replica.id} app={replica.app_id}: → {new_status}")
+            if alive:
+                dm.attach_container_log_tailer(replica.app_id, pm.log_buffers, pm._push_line, asyncio.get_event_loop())
+
+        # Kill any orphan legacy containers (cloudbase-app-{id} without replica row)
+        app_ids_with_replicas = {r.app_id for r in all_replicas}
+        for app_id in list(app_ids_with_replicas):
+            if pm.is_docker_app_running(app_id):
+                pm.stop_docker_app(app_id)
+                pm._debug(f"RECOVERY killed orphan legacy container for app {app_id}")
+
+        # Sync app statuses from their replicas
         result = await db.execute(select(Application))
         apps = result.scalars().all()
-        for a in apps:
-            if a.node_id and a.node_id != local_node_id:
-                continue  # remote node apps — don't touch their status on the main server
-            if a.use_docker:
-                alive = pm.is_docker_app_running(a.id)
-                if alive:
-                    a.status = "running"
-                    pm._debug(f"RECOVERY Docker app {a.id} ({a.name}): container running → running")
-                    dm.attach_container_log_tailer(a.id, pm.log_buffers, pm._push_line, asyncio.get_event_loop())
-                else:
-                    a.status = "stopped"
-                    pm._debug(f"RECOVERY Docker app {a.id} ({a.name}): container not found → stopped")
-            elif a.pid:
-                if pm.is_process_running(a.pid, a.id):
-                    a.status = "running"
-                    pm._debug(f"RECOVERY app {a.id} ({a.name}): pid={a.pid} still alive → running")
-                    # Re-attach a log tailer so live streaming works after restart
-                    pm.attach_log_tailer(a.id, a.name, proc=None, seek_to_end=True)
-                else:
-                    recovered = pm.find_process_by_port(a.port) if a.port else None
-                    if recovered:
-                        pm._debug(f"RECOVERY app {a.id} ({a.name}): pid={a.pid} dead but found port-match pid={recovered}")
-                        a.pid = recovered
-                        a.status = "running"
-                        pm.attach_log_tailer(a.id, a.name, proc=None, seek_to_end=True)
-                    else:
-                        pm._debug(f"RECOVERY app {a.id} ({a.name}): pid={a.pid} dead, no port match → stopped")
-                        a.status = "stopped"
-                        a.pid = None
+        replica_map: dict[int, list] = {}
+        for r in all_replicas:
+            replica_map.setdefault(r.app_id, []).append(r)
 
-            if a.auto_start and a.status == "stopped" and a.start_command and a.working_dir:
-                try:
-                    env_vars = decrypt_env(a.env_vars or "")
-                    if a.use_docker:
-                        container_id = pm.start_docker_app(
-                            a.id, a.name, a.working_dir,
-                            a.port or 8000, a.external_port or a.port or 8000,
-                            env_vars, a.app_type or "unknown", a.start_command,
-                            _docker_runtime_options(a),
-                            False,
+        from routers.applications import _derive_app_status_from_instances
+        for a in apps:
+            app_replicas = replica_map.get(a.id)
+            if app_replicas:
+                a.status = _derive_app_status_from_instances(app_replicas)
+            # auto_start: start all stopped local replicas
+            if a.auto_start and a.start_command and a.working_dir and app_replicas:
+                env_vars = decrypt_env(a.env_vars or "")
+                for replica in app_replicas:
+                    r_node = node_map.get(replica.node_id)
+                    if r_node and not r_node.is_local:
+                        continue
+                    if replica.status != "stopped":
+                        continue
+                    try:
+                        cid = pm.start_docker_replica(
+                            a.id, replica.id, a.name,
+                            a.port or 8000, replica.external_port or a.port or 8000,
+                            env_vars, _docker_runtime_options(a),
                         )
-                        a.pid = None
-                        a.status = "running"
-                        pm._debug(f"AUTO-START Docker app {a.id} ({a.name}): container {container_id[:12]}")
-                    else:
-                        final_cmd, env_vars = pm.prepare_app_env(a.start_command, a.working_dir, env_vars)
-                        pid = pm.start_app(a.id, a.name, final_cmd, a.working_dir, env_vars)
-                        a.pid = pid
-                        a.status = "running"
-                        pm._debug(f"AUTO-START app {a.id} ({a.name}): new pid={pid}")
-                except Exception as exc:
-                    pm._debug(f"AUTO-START app {a.id} ({a.name}): FAILED — {exc}")
+                        replica.status = "running"
+                        replica.container_id = cid
+                        pm._debug(f"AUTO-START replica {replica.id} app={a.id}: {cid[:12]}")
+                    except Exception as exc:
+                        pm._debug(f"AUTO-START replica {replica.id} app={a.id}: FAILED — {exc}")
+                a.status = _derive_app_status_from_instances(app_replicas)
 
         await db.commit()
         await asyncio.to_thread(_restore_stuck_restart_configs, apps)

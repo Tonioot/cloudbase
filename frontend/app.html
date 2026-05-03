@@ -44,22 +44,6 @@
       </div>
     </nav>
 
-    <div class="sys-stats">
-      <div class="sys-stats-title">System</div>
-      <div class="mini-stat" id="bar-cpu">
-        <div class="mini-stat-row"><span>CPU</span><span class="val">—</span></div>
-        <div class="mini-bar"><div class="mini-bar-fill blue" style="width:0%"></div></div>
-      </div>
-      <div class="mini-stat" id="bar-ram">
-        <div class="mini-stat-row"><span>RAM</span><span class="val">—</span></div>
-        <div class="mini-bar"><div class="mini-bar-fill purple" style="width:0%"></div></div>
-      </div>
-      <div class="mini-stat" id="bar-disk">
-        <div class="mini-stat-row"><span>Disk</span><span class="val">—</span></div>
-        <div class="mini-bar"><div class="mini-bar-fill orange" style="width:0%"></div></div>
-      </div>
-    </div>
-
     <!-- Session timer -->
     <div id="session-timer-bar" class="session-timer-bar">
       <div class="session-timer-label">Session: —</div>
@@ -741,7 +725,7 @@
 </div>
 
 <script type="module">
-  import { api, wsSystemStats } from './js/api.js';
+  import { api } from './js/api.js';
   import { initApp } from './js/app.js';
   import { initSidebar } from './js/sidebar.js';
 
@@ -791,19 +775,6 @@
     }
   });
 
-  // Sidebar system stats (also on app detail page)
-
-  wsSystemStats(data => {
-    const setBar = (id, pct, label) => {
-      const w = document.getElementById(id);
-      if (!w) return;
-      w.querySelector('.mini-bar-fill').style.width = `${Math.min(pct||0,100)}%`;
-      w.querySelector('.val').textContent = label;
-    };
-    setBar('bar-cpu',  data.cpu_percent,   `${data.cpu_percent?.toFixed(0)}%`);
-    setBar('bar-ram',  data.memory_percent, `${data.memory_percent?.toFixed(0)}%`);
-    setBar('bar-disk', data.disk_percent,   `${data.disk_percent?.toFixed(0)}%`);
-  });
 
 </script>
 

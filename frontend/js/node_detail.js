@@ -47,21 +47,11 @@ export async function initNodePage() {
 
     if (!node.is_local) autoPing();
 
-    wsSystemStats(data => {
-        const setBar = (id, pct, label) => {
-            const w = document.getElementById(id);
-            if (!w) return;
-            w.querySelector('.mini-bar-fill').style.width = `${Math.min(pct || 0, 100)}%`;
-            w.querySelector('.val').textContent = label;
-        };
-        setBar('bar-cpu',  data.cpu_percent,    `${data.cpu_percent?.toFixed(0)}%`);
-        setBar('bar-ram',  data.memory_percent,  `${data.memory_percent?.toFixed(0)}%`);
-        setBar('bar-disk', data.disk_percent,    `${data.disk_percent?.toFixed(0)}%`);
-        // Feed node charts for the local primary node
-        if (node?.is_local) {
+    if (node.is_local) {
+        wsSystemStats(data => {
             updateMetrics({ cpu_percent: data.cpu_percent, memory_percent: data.memory_percent, disk_percent: data.disk_percent });
-        }
-    });
+        });
+    }
 }
 
 async function autoPing() {
@@ -240,6 +230,13 @@ function _setChartsOfflineState(offline) {
             if (canvas) canvas.style.opacity = '1';
         }
     });
+
+    const logsContent = document.getElementById('node-logs-content');
+    if (logsContent && offline) {
+        logsContent.textContent = 'Node offline — logs unavailable.';
+        hasLoadedLogs = false;
+        lastLogsText = '';
+    }
 }
 
 function _nodeChart(id, color) {
@@ -368,6 +365,12 @@ function renderCommands(cmds) {
 async function loadLogs() {
     const content = document.getElementById('node-logs-content');
     if (!content) return;
+    if (node?.status === 'offline') {
+        content.textContent = 'Node offline — logs unavailable.';
+        hasLoadedLogs = false;
+        lastLogsText = '';
+        return;
+    }
     const requestId = ++latestLogsRequest;
     const shouldAutoScroll = !hasLoadedLogs || _isNearBottom(content);
     const prevScrollTop = content.scrollTop;

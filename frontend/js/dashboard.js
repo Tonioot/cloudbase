@@ -1,10 +1,9 @@
-import { api, wsSystemStats, wsNodeEvents } from './api.js';
+import { api, wsNodeEvents } from './api.js';
 import { icon, typeIcon, badge, toast, confirm, spinner, setBtn } from './utils.js';
 import { openDeployModal } from './modal.js';
 
 let appsData = [];
 let nodesData = [];
-let sysWs = null;
 const _pingIntervals = new Map();
 
 function renderPortRows(app) {
@@ -33,8 +32,6 @@ export async function initDashboard() {
   await Promise.all([loadApps(), loadNodes()]);
   setInterval(loadApps, 6000);
   setInterval(loadNodes, 15000);
-
-  sysWs = wsSystemStats(updateSysStats);
 }
 
 /* ─── Load apps ─────────────────────────────────────────────────────────── */
@@ -526,16 +523,3 @@ function _waitForCommand(commandId, nodeId) {
   });
 }
 
-/* ─── System stats (sidebar) ────────────────────────────────────────────── */
-function updateSysStats(data) {
-  setBar('bar-cpu',  data.cpu_percent,   `${data.cpu_percent?.toFixed(0)}%`);
-  setBar('bar-ram',  data.memory_percent, `${data.memory_percent?.toFixed(0)}%`);
-  setBar('bar-disk', data.disk_percent,   `${data.disk_percent?.toFixed(0)}%`);
-}
-
-function setBar(id, pct, label) {
-  const wrap = document.getElementById(id);
-  if (!wrap) return;
-  wrap.querySelector('.mini-bar-fill').style.width = `${Math.min(pct || 0, 100)}%`;
-  wrap.querySelector('.val').textContent = label;
-}

@@ -10,7 +10,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, UploadFile, File, Query, Body, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
@@ -111,7 +111,7 @@ async def _assign_external_port(requested: Optional[int], node_id: int, exclude_
     """Return requested port if free, else auto-pick the next free port in [8000, 8999]."""
     result = await db.execute(
         select(Application.external_port).where(
-            Application.node_id == node_id,
+            or_(Application.node_id == node_id, Application.node_id.is_(None)),
             Application.external_port.isnot(None),
             Application.id != exclude_app_id if exclude_app_id else True,
         )
@@ -120,7 +120,7 @@ async def _assign_external_port(requested: Optional[int], node_id: int, exclude_
 
     replica_result = await db.execute(
         select(ApplicationReplica.external_port).where(
-            ApplicationReplica.node_id == node_id,
+            or_(ApplicationReplica.node_id == node_id, ApplicationReplica.node_id.is_(None)),
             ApplicationReplica.external_port.isnot(None),
         )
     )
@@ -916,7 +916,7 @@ async def deploy_app(req: DeployRequest, background_tasks: BackgroundTasks, db: 
         docker_tmpfs_enabled=bool(req.docker_tmpfs_enabled) if req.docker_tmpfs_enabled is not None else False,
         docker_tmpfs_size_mb=req.docker_tmpfs_size_mb,
         status="deploying",
-        node_id=target_node.id,
+        node_id=target_node.id if not target_node.is_local else None,
     )
     db.add(app)
     await db.commit()
@@ -986,15 +986,6 @@ async def deploy_app(req: DeployRequest, background_tasks: BackgroundTasks, db: 
             app.nginx_enabled = ok
             if not ok:
                 raise HTTPException(500, f"Nginx config failed: {msg}")
-
-        # Create first instance row so the UI shows it in the Instances tab
-        first_replica = ApplicationReplica(
-            app_id=app.id,
-            node_id=local_node.id,
-            external_port=external_port,
-            status="stopped",
-        )
-        db.add(first_replica)
 
         await log_audit(db, "app.deploy", actor=actor, app_id=app.id, detail={"name": app.name})
         await db.commit()
@@ -1780,6 +1771,11 @@ async def start_app(app_id: int, db: AsyncSession = Depends(get_db), actor: str 
     replicas = replica_result.scalars().all()
 
     if replicas:
+        # Kill any orphan legacy container (cloudbase-app-{id}) that may still be running
+        # from before the instance-based model. It has no replica row and confuses status.
+        if await asyncio.to_thread(pm.is_docker_app_running, app_id):
+            await asyncio.to_thread(pm.stop_docker_app, app_id)
+
         env_vars = decrypt_env(app.env_vars or "")
         node_map = await _load_node_map(db)
 
@@ -2014,6 +2010,10 @@ async def stop_app(app_id: int, db: AsyncSession = Depends(get_db), actor: str =
     replicas = replica_result.scalars().all()
 
     if replicas:
+        # Also stop any orphan legacy container that may exist alongside instances
+        if await asyncio.to_thread(pm.is_docker_app_running, app_id):
+            await asyncio.to_thread(pm.stop_docker_app, app_id)
+
         node_map = await _load_node_map(db)
 
         for replica in replicas:
@@ -2602,7 +2602,7 @@ async def scale_app(app_id: int, req: ScaleRequest, db: AsyncSession = Depends(g
         if not target_node:
             raise HTTPException(400, "Target node not found or not enabled")
     else:
-        target_node = await _get_app_node(app, db, local_node)
+        target_node = local_node
 
     external_port = await _assign_external_port(None, target_node.id, None, db)
 
@@ -3585,9 +3585,6 @@ async def _get_app_node(app: Application, db: AsyncSession, local_node: Optional
         if node:
             return node
     if local_node is not None:
-        if app.node_id is None:
-            app.node_id = local_node.id
-            await db.commit()
         return local_node
     return await ensure_local_node(db)
 

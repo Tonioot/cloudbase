@@ -753,6 +753,37 @@ async def _sync_process_status(app, db) -> None:
     if not node.is_local:
         return
 
+    # Instance-based model: sync each local replica's container status
+    replica_result = await db.execute(
+        select(ApplicationReplica).where(ApplicationReplica.app_id == app.id)
+    )
+    replicas = replica_result.scalars().all()
+    if replicas:
+        changed = False
+        for replica in replicas:
+            # Skip non-local replicas (their status is managed by the remote node)
+            if replica.node_id:
+                rn_result = await db.execute(select(Node).where(Node.id == replica.node_id))
+                r_node = rn_result.scalar_one_or_none()
+                if r_node is not None and not r_node.is_local:
+                    continue
+            # Skip transient statuses
+            if replica.status in ("starting", "stopping", "deploying"):
+                continue
+            alive = await asyncio.to_thread(dm.is_replica_container_running, app.id, replica.id)
+            new_status = "running" if alive else "stopped"
+            if replica.status != new_status:
+                replica.status = new_status
+                changed = True
+        new_app_status = _derive_app_status_from_instances(replicas)
+        if app.status != new_app_status:
+            app.status = new_app_status
+            changed = True
+        if changed:
+            await db.commit()
+        return
+
+    # Legacy single-container model
     if app.use_docker:
         alive = await asyncio.to_thread(pm.is_docker_app_running, app.id)
         new_status = "running" if alive else "stopped"
@@ -786,9 +817,22 @@ async def list_apps(request: Request, db: AsyncSession = Depends(get_db)):
     apps = result.scalars().all()
     node_map = await _load_node_map(db)
 
+    # Batch-fetch all replica rows so we can derive statuses without N+1 Docker checks
+    rep_result = await db.execute(select(ApplicationReplica))
+    all_replicas = rep_result.scalars().all()
+    replica_map: dict[int, list] = {}
+    for r in all_replicas:
+        replica_map.setdefault(r.app_id, []).append(r)
+
     # Check all process statuses in parallel (each check runs blocking psutil calls in threads)
     async def _check(app):
         node = node_map.get(app.node_id) or local_node
+
+        # Instance-based model: derive status from stored replica statuses (no Docker call)
+        app_replicas = replica_map.get(app.id)
+        if app_replicas:
+            return app.id, _derive_app_status_from_instances(app_replicas), None
+
         if not node.is_local:
             return app.id, app.status, app.pid
 
@@ -819,20 +863,12 @@ async def list_apps(request: Request, db: AsyncSession = Depends(get_db)):
     if dirty:
         await db.commit()
 
-    # Load replica counts in one query
-    replica_counts_result = await db.execute(
-        select(ApplicationReplica.app_id, func.count(ApplicationReplica.id).label("cnt"))
-        .group_by(ApplicationReplica.app_id)
-    )
-    replica_count_map = {row[0]: row[1] for row in replica_counts_result.all()}
-
     include_sensitive = _request_is_admin(request)
     result_list = []
     for a in apps:
-        count = replica_count_map.get(a.id, 0)
-        # Pass a placeholder list of the right length so replica_count is populated
-        replica_stubs = [{}] * count
-        result_list.append(_app_to_dict(a, node_map.get(a.node_id) or local_node, include_sensitive=include_sensitive, replicas=replica_stubs))
+        app_replicas = replica_map.get(a.id, [])
+        replica_dicts = [_replica_to_dict(r, node_map.get(r.node_id)) for r in app_replicas]
+        result_list.append(_app_to_dict(a, node_map.get(a.node_id) or local_node, include_sensitive=include_sensitive, replicas=replica_dicts))
     return result_list
 
 
@@ -3652,9 +3688,10 @@ async def save_maintenance_pages(
 
     # Regenerate and reload nginx if configured, so changes take effect immediately
     if app.nginx_enabled and app.domain:
-        mode   = _get_nginx_mode(app)
+        mode    = _get_nginx_mode(app)
+        backends = await _get_nginx_backends(app, db, local_node)
         config = nm.generate_config(
-            app.name, app.domain, _nginx_proxy_port(app),
+            app.name, app.domain, backends,
             app.ssl_cert_path, app.ssl_key_path,
             app_id=app_id, mode=mode,
             extra_domains=json.loads(app.extra_domains or "[]"),
@@ -3711,14 +3748,15 @@ async def toggle_maintenance_mode(app_id: int, db: AsyncSession = Depends(get_db
         return _app_to_dict(app, node)
 
     mode = _get_nginx_mode(app)
-    log.info("[toggle-maintenance] app_id=%d new_mode=%r nginx_mode=%r domain=%r port=%r",
-             app_id, app.maintenance_mode, mode, app.domain, _nginx_proxy_port(app))
+    log.info("[toggle-maintenance] app_id=%d new_mode=%r nginx_mode=%r domain=%r",
+             app_id, app.maintenance_mode, mode, app.domain)
 
     maint_ok, maint_msg = _ensure_maintenance_files(app, app_id)
     if not maint_ok:
         raise HTTPException(500, f"Maintenance files failed: {maint_msg}")
+    backends = await _get_nginx_backends(app, db, local_node)
     config = nm.generate_config(
-        app.name, app.domain, _nginx_proxy_port(app),
+        app.name, app.domain, backends,
         app.ssl_cert_path, app.ssl_key_path,
         app_id=app_id, mode=mode,
         extra_domains=json.loads(app.extra_domains or "[]"),
@@ -3775,14 +3813,15 @@ async def toggle_update_mode(app_id: int, db: AsyncSession = Depends(get_db)):
         return _app_to_dict(app, node)
 
     mode = _get_nginx_mode(app)
-    log.info("[toggle-update] app_id=%d new_mode=%r nginx_mode=%r domain=%r port=%r",
-             app_id, app.update_mode, mode, app.domain, _nginx_proxy_port(app))
+    log.info("[toggle-update] app_id=%d new_mode=%r nginx_mode=%r domain=%r",
+             app_id, app.update_mode, mode, app.domain)
 
     maint_ok, maint_msg = _ensure_maintenance_files(app, app_id)
     if not maint_ok:
         raise HTTPException(500, f"Maintenance files failed: {maint_msg}")
+    backends = await _get_nginx_backends(app, db, local_node)
     config = nm.generate_config(
-        app.name, app.domain, _nginx_proxy_port(app),
+        app.name, app.domain, backends,
         app.ssl_cert_path, app.ssl_key_path,
         app_id=app_id, mode=mode,
         extra_domains=json.loads(app.extra_domains or "[]"),

@@ -384,7 +384,7 @@ function initLogs() {
     _logsInitDone = true;
     api.listInstances(APP_ID).then(instances => {
       if (!select) return;
-      select.innerHTML = '<option value="primary">Instance 0 (live)</option>';
+      select.innerHTML = '<option value="primary">Live Stream (build / deploy)</option>';
       instances.forEach(r => {
         const label = `Instance #${r.id} — ${r.node_name || 'local'} :${r.external_port || '?'}`;
         const opt = document.createElement('option');
@@ -1692,7 +1692,7 @@ async function initInstances() {
 
     wrap.querySelectorAll('.inst-logs-btn').forEach(btn => {
       btn.addEventListener('click', () => {
-        _showInstanceLogs(btn.dataset.id, btn.dataset.primary === 'true');
+        _showInstanceLogs(btn.dataset.id);
       });
     });
   }
@@ -1818,25 +1818,20 @@ async function initInstances() {
   }
 }
 
-async function _showInstanceLogs(instanceId, isPrimary) {
+async function _showInstanceLogs(instanceId) {
   let logLinesLocal = [];
   try {
-    if (isPrimary) {
-      const data = await api.getAppLogsTail(APP_ID, 200);
-      logLinesLocal = data.lines || [];
-    } else {
-      const data = await api.getInstanceLogs(APP_ID, instanceId, 200);
-      logLinesLocal = data.lines || [];
-    }
+    const data = await api.getInstanceLogs(APP_ID, instanceId, 200);
+    logLinesLocal = data.lines || [];
   } catch (e) {
     toast('Failed to load logs: ' + e.message, 'error');
     return;
   }
 
-  const label = isPrimary ? 'Instance 0' : `Instance #${instanceId}`;
+  const label = `Instance #${instanceId}`;
   const content = logLinesLocal.length
     ? logLinesLocal.map((line, i) => `<div class="log-line ${logClass(line)}"><span class="log-num">${String(i + 1).padStart(4)}</span><span class="log-text">${escHtml(line)}</span></div>`).join('')
-    : `<div class="log-empty">No log output available for ${isPrimary ? 'instance 0' : 'this instance'}.</div>`;
+    : `<div class="log-empty">No log output available for this instance.</div>`;
 
   const backdrop = document.createElement('div');
   backdrop.className = 'dialog-backdrop';

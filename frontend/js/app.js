@@ -1583,7 +1583,9 @@ async function initInstances() {
 
   async function renderInstances() {
     let instances = [];
-    try { instances = await api.listInstances(APP_ID); } catch (e) {
+    try {
+      instances = await api.listInstances(APP_ID);
+    } catch (e) {
       wrap.innerHTML = `<div style="color:var(--red);padding:12px;font-size:13px">Failed to load instances: ${e.message}</div>`;
       return;
     }
@@ -1594,10 +1596,13 @@ async function initInstances() {
     }
 
     const rows = instances.map((inst, idx) => {
-      const statusColor = inst.status === 'running' ? '#3fb950'
-        : inst.status === 'error' ? '#f85149'
-        : inst.status === 'starting' ? '#d29922'
-        : '#8b949e';
+      const statusColor = inst.status === 'running'
+        ? '#3fb950'
+        : inst.status === 'error'
+          ? '#f85149'
+          : inst.status === 'starting'
+            ? '#d29922'
+            : '#8b949e';
 
       const tunnelCell = inst.is_primary
         ? '<span style="color:#8b949e;font-size:11px">local</span>'
@@ -1611,7 +1616,7 @@ async function initInstances() {
         ? `${inst.node_name || 'Local'} <span style="background:#1f6feb;color:#e6edf3;font-size:10px;padding:1px 5px;border-radius:3px;margin-left:4px">primary</span>`
         : (inst.node_name || 'Local');
 
-      const removeBtn = inst.is_primary
+      const actionBtn = inst.is_primary
         ? `<button class="btn btn-secondary btn-sm inst-move-btn" data-id="${inst.id}" style="padding:4px 10px;font-size:12px">Move</button>`
         : `<button class="btn-danger btn-sm inst-remove-btn" data-id="${inst.id}" style="padding:4px 10px;font-size:12px">Remove</button>`;
 
@@ -1628,7 +1633,7 @@ async function initInstances() {
         </td>
         <td style="padding:8px 12px;text-align:right;white-space:nowrap">
           ${logsBtn}
-          ${removeBtn}
+          ${actionBtn}
         </td>
       </tr>`;
     }).join('');
@@ -1648,13 +1653,20 @@ async function initInstances() {
         <tbody>${rows}</tbody>
       </table>`;
 
-    // Wire up move buttons (primary instance)
     wrap.querySelectorAll('.inst-move-btn').forEach(moveBtn => {
       moveBtn.addEventListener('click', async () => {
         let nodes = [];
-        try { nodes = await api.listNodes(); } catch { toast('Failed to load nodes', 'error'); return; }
+        try {
+          nodes = await api.listNodes();
+        } catch {
+          toast('Failed to load nodes', 'error');
+          return;
+        }
         const others = nodes.filter(n => n.enabled && n.id !== (app.node?.id || app.node_id));
-        if (!others.length) { toast('No other nodes available', 'error'); return; }
+        if (!others.length) {
+          toast('No other nodes available', 'error');
+          return;
+        }
 
         const nodeId = await new Promise(resolve => {
           const backdrop = document.createElement('div');
@@ -1680,156 +1692,78 @@ async function initInstances() {
             resolve(val ? parseInt(val, 10) : null);
           };
           backdrop.querySelector('#move-inst-ok').onclick = ok;
-          backdrop.querySelector('#move-inst-cancel').onclick = () => { backdrop.remove(); resolve(undefined); };
-          backdrop.addEventListener('click', e => { if (e.target === backdrop) { backdrop.remove(); resolve(undefined); } });
-        });
-
-        if (nodeId === undefined) return;
-        moveBtn.disabled = true; moveBtn.textContent = 'Moving\u2026';
-        try {
-          await api.moveApp(APP_ID, nodeId, null);
-          toast(`Moving "${app.name}" to selected node\u2026`);
-          window.location.href = '/';
-        } catch (e) {
-          toast(e.message, 'error');
-          moveBtn.disabled = false; moveBtn.textContent = 'Move';
-        }
-      });
-    });
-
-    // Wire up move buttons (primary instance)
-    wrap.querySelectorAll('.inst-move-btn').forEach(moveBtn => {
-      moveBtn.addEventListener('click', async () => {
-        let nodes = [];
-        try { nodes = await api.listNodes(); } catch { toast('Failed to load nodes', 'error'); return; }
-        const others = nodes.filter(n => n.enabled && n.id !== (app.node?.id || app.node_id));
-        if (!others.length) { toast('No other nodes available', 'error'); return; }
-
-        const nodeId = await new Promise(resolve => {
-          const backdrop = document.createElement('div');
-          backdrop.className = 'dialog-backdrop';
-          backdrop.innerHTML = `
-            <div class="dialog">
-              <div class="dialog-title">Move Primary Instance</div>
-              <div class="dialog-body" style="color:var(--text-secondary);font-size:13px;line-height:1.5">
-                <div style="margin-bottom:12px">Move the primary instance to a different node.<br>The app will be stopped and redeployed on the target.</div>
-                <select id="move-inst-node-select" style="width:100%;padding:8px;background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px;font-size:14px">
-                  ${others.map(n => `<option value="${n.id}">${n.name} (${n.is_local ? 'local' : n.status})</option>`).join('')}
-                </select>
-              </div>
-              <div class="dialog-actions">
-                <button class="btn btn-secondary" id="move-inst-cancel">Cancel</button>
-                <button class="btn btn-primary" id="move-inst-ok">Move Instance</button>
-              </div>
-            </div>`;
-          document.body.appendChild(backdrop);
-          const ok = () => {
-            const val = backdrop.querySelector('#move-inst-node-select').value;
+          backdrop.querySelector('#move-inst-cancel').onclick = () => {
             backdrop.remove();
-            resolve(val ? parseInt(val, 10) : null);
+            resolve(undefined);
           };
-          backdrop.querySelector('#move-inst-ok').onclick = ok;
-          backdrop.querySelector('#move-inst-cancel').onclick = () => { backdrop.remove(); resolve(undefined); };
-          backdrop.addEventListener('click', e => { if (e.target === backdrop) { backdrop.remove(); resolve(undefined); } });
+          backdrop.addEventListener('click', e => {
+            if (e.target === backdrop) {
+              backdrop.remove();
+              resolve(undefined);
+            }
+          });
         });
 
         if (nodeId === undefined) return;
-        moveBtn.disabled = true; moveBtn.textContent = 'Moving…';
+        moveBtn.disabled = true;
+        moveBtn.textContent = 'Moving...';
         try {
           await api.moveApp(APP_ID, nodeId, null);
-          toast(`Moving "${app.name}" to selected node…`);
+          toast(`Moving "${app.name}" to selected node...`);
           window.location.href = '/';
         } catch (e) {
           toast(e.message, 'error');
-          moveBtn.disabled = false; moveBtn.textContent = 'Move';
+          moveBtn.disabled = false;
+          moveBtn.textContent = 'Move';
         }
       });
     });
 
-    // Wire up remove buttons
     wrap.querySelectorAll('.inst-remove-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
         const replicaId = parseInt(btn.dataset.id, 10);
         const ok = await confirm('Remove instance?', 'The instance container will be stopped and removed.');
         if (!ok) return;
-        btn.disabled = true; btn.textContent = 'Removing…';
+        btn.disabled = true;
+        btn.textContent = 'Removing...';
         try {
           await api.removeReplica(APP_ID, replicaId);
           toast('Instance removed');
           app = await api.getApp(APP_ID);
-          updateHeaderStatus(); renderHeader();
+          updateHeaderStatus();
+          renderHeader();
           await renderInstances();
         } catch (e) {
           toast(e.message, 'error');
-          btn.disabled = false; btn.textContent = 'Remove';
+          btn.disabled = false;
+          btn.textContent = 'Remove';
         }
       });
     });
 
-    // Wire up log buttons
     wrap.querySelectorAll('.inst-logs-btn').forEach(btn => {
-      btn.addEventListener('click', () => _showInstanceLogs(btn.dataset.id, btn.dataset.primary === 'true'));
+      btn.addEventListener('click', () => {
+        _showInstanceLogs(btn.dataset.id, btn.dataset.primary === 'true');
+      });
     });
   }
 
   await renderInstances();
-
-  // Auto-refresh every 5s while tab is active
   _instancesRefreshTimer = setInterval(renderInstances, 5000);
 
-  // Refresh button
   const refreshBtn = document.getElementById('btn-instances-refresh');
   if (refreshBtn) refreshBtn.onclick = renderInstances;
 
-  // Add Instance button
   const addBtn = document.getElementById('btn-add-instance');
   if (addBtn) {
     addBtn.onclick = async () => {
       let nodes = [];
-      try { nodes = await api.listNodes(); } catch { toast('Failed to load nodes', 'error'); return; }
-      const available = nodes.filter(n => n.enabled && n.status === 'online');
-
-      // Custom dialog — read value BEFORE backdrop is removed
-      const nodeId = await new Promise(resolve => {
-        const backdrop = document.createElement('div');
-        backdrop.className = 'dialog-backdrop';
-        backdrop.innerHTML = `
-          <div class="dialog">
-            <div class="dialog-title">Add Instance</div>
-            <div class="dialog-body" style="color:var(--text-secondary);font-size:13px;line-height:1.5">
-              <div style="margin-bottom:12px">Choose a node for the new instance:</div>
-              <select id="inst-node-select" style="width:100%;padding:8px;background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px;font-size:14px">
-                <option value="">— Same node as app —</option>
-                ${available.map(n => `<option value="${n.id}">${n.name} (${n.is_local ? 'local' : n.public_host || n.status})</option>`).join('')}
-              </select>
-            </div>
-            <div class="dialog-actions">
-              <button class="btn btn-secondary" id="inst-dlg-cancel">Cancel</button>
-              <button class="btn btn-primary" id="inst-dlg-ok">Start Instance</button>
-            </div>
-          </div>`;
-        document.body.appendChild(backdrop);
-        const ok = () => {
-          const val = backdrop.querySelector('#inst-node-select').value;
-          backdrop.remove();
-          resolve(val ? parseInt(val, 10) : null);
-        };
-        backdrop.querySelector('#inst-dlg-ok').onclick = ok;
-        backdrop.querySelector('#inst-dlg-cancel').onclick = () => { backdrop.remove(); resolve(undefined); };
-        backdrop.addEventListener('click', e => { if (e.target === backdrop) { backdrop.remove(); resolve(undefined); } });
-      });
-
-      if (nodeId === undefined) return; // cancelled
-
-      addBtn.disabled = true; addBtn.textContent = 'Starting…';
       try {
-        await api.scaleApp(APP_ID, { node_id: nodeId });
-        toast('Instance started');
-        app = await api.getApp(APP_ID);
-        updateHeaderStatus(); renderHeader();
-        await renderInstances();
-      let nodes = [];
-      try { nodes = await api.listNodes(); } catch { toast('Failed to load nodes', 'error'); return; }
+        nodes = await api.listNodes();
+      } catch {
+        toast('Failed to load nodes', 'error');
+        return;
+      }
       const available = nodes.filter(n => n.enabled && n.status === 'online');
 
       const _field = (id, label, type, placeholder, hint) =>
@@ -1878,30 +1812,39 @@ async function initInstances() {
           </div>`;
         document.body.appendChild(backdrop);
         const ok = () => {
-          const nodeVal  = backdrop.querySelector('#inst-node-select').value;
-          const cpu      = parseFloat(backdrop.querySelector('#inst-cpu').value);
-          const mem      = parseInt(backdrop.querySelector('#inst-mem').value, 10);
+          const nodeVal = backdrop.querySelector('#inst-node-select').value;
+          const cpu = parseFloat(backdrop.querySelector('#inst-cpu').value);
+          const mem = parseInt(backdrop.querySelector('#inst-mem').value, 10);
           const readonly = backdrop.querySelector('#inst-readonly').checked;
-          const tmpfs    = backdrop.querySelector('#inst-tmpfs').checked;
-          const tmpfsSz  = parseInt(backdrop.querySelector('#inst-tmpfs-size').value, 10);
+          const tmpfs = backdrop.querySelector('#inst-tmpfs').checked;
+          const tmpfsSz = parseInt(backdrop.querySelector('#inst-tmpfs-size').value, 10);
           backdrop.remove();
           resolve({
-            nodeId:   nodeVal ? parseInt(nodeVal, 10) : null,
-            cpu:      Number.isFinite(cpu) ? cpu : null,
-            mem:      Number.isInteger(mem) ? mem : null,
+            nodeId: nodeVal ? parseInt(nodeVal, 10) : null,
+            cpu: Number.isFinite(cpu) ? cpu : null,
+            mem: Number.isInteger(mem) ? mem : null,
             readonly,
             tmpfs,
-            tmpfsSz:  Number.isInteger(tmpfsSz) ? tmpfsSz : null,
+            tmpfsSz: Number.isInteger(tmpfsSz) ? tmpfsSz : null,
           });
         };
         backdrop.querySelector('#inst-dlg-ok').onclick = ok;
-        backdrop.querySelector('#inst-dlg-cancel').onclick = () => { backdrop.remove(); resolve(undefined); };
-        backdrop.addEventListener('click', e => { if (e.target === backdrop) { backdrop.remove(); resolve(undefined); } });
+        backdrop.querySelector('#inst-dlg-cancel').onclick = () => {
+          backdrop.remove();
+          resolve(undefined);
+        };
+        backdrop.addEventListener('click', e => {
+          if (e.target === backdrop) {
+            backdrop.remove();
+            resolve(undefined);
+          }
+        });
       });
 
-      if (result === undefined) return; // cancelled
+      if (result === undefined) return;
 
-      addBtn.disabled = true; addBtn.textContent = 'Starting…';
+      addBtn.disabled = true;
+      addBtn.textContent = 'Starting...';
       try {
         await api.scaleApp(APP_ID, {
           node_id: result.nodeId,
@@ -1911,12 +1854,58 @@ async function initInstances() {
           docker_tmpfs_enabled: result.tmpfs,
           docker_tmpfs_size_mb: result.tmpfsSz,
         });
+        toast('Instance started');
+        app = await api.getApp(APP_ID);
+        updateHeaderStatus();
+        renderHeader();
+        await renderInstances();
+      } catch (e) {
+        toast(e.message, 'error');
+      } finally {
+        addBtn.disabled = false;
+        addBtn.textContent = 'Add Instance';
+      }
+    };
+  }
+}
+
+async function _showInstanceLogs(instanceId, isPrimary) {
+  let logLinesLocal = [];
+  try {
+    if (isPrimary) {
+      const data = await api.getAppLogsTail(APP_ID, 200);
+      logLinesLocal = data.lines || [];
+    } else {
+      const data = await api.getInstanceLogs(APP_ID, instanceId, 200);
+      logLinesLocal = data.lines || [];
+    }
+  } catch (e) {
+    toast('Failed to load logs: ' + e.message, 'error');
+    return;
+  }
+
+  const label = isPrimary ? 'Primary Instance' : `Instance #${instanceId}`;
+  const content = logLinesLocal.length
+    ? logLinesLocal.map((line, i) => `<div class="log-line ${logClass(line)}"><span class="log-num">${String(i + 1).padStart(4)}</span><span class="log-text">${escHtml(line)}</span></div>`).join('')
+    : `<div class="log-empty">No log output available for ${isPrimary ? 'primary instance' : 'this instance'}.</div>`;
+
+  const backdrop = document.createElement('div');
+  backdrop.className = 'dialog-backdrop';
+  backdrop.innerHTML = `
+    <div class="dialog dialog-modern" style="max-width:860px;width:min(860px,95vw)">
+      <div class="dialog-title">Logs - ${label}</div>
+      <div class="dialog-body" style="padding:0">
+        <div id="inst-log-terminal" class="terminal" style="height:58vh;max-height:620px;min-height:280px">${content}</div>
+      </div>
+      <div class="dialog-actions">
         <button class="btn btn-primary" id="inst-log-close">Close</button>
       </div>
     </div>`;
   document.body.appendChild(backdrop);
   backdrop.querySelector('#inst-log-close').onclick = () => backdrop.remove();
-  backdrop.addEventListener('click', e => { if (e.target === backdrop) backdrop.remove(); });
+  backdrop.addEventListener('click', e => {
+    if (e.target === backdrop) backdrop.remove();
+  });
 }
 
 

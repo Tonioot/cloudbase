@@ -231,11 +231,19 @@ function _setChartsOfflineState(offline) {
         }
     });
 
+    const logsOverlay = document.getElementById('node-logs-empty');
     const logsContent = document.getElementById('node-logs-content');
-    if (logsContent && offline) {
-        logsContent.textContent = 'Node offline — logs unavailable.';
-        hasLoadedLogs = false;
-        lastLogsText = '';
+    if (logsOverlay) {
+        if (offline) {
+            logsOverlay.innerHTML = `${offlineSvg}<span>Node offline</span>`;
+            logsOverlay.style.display = 'flex';
+            if (logsContent) logsContent.style.opacity = '0';
+            hasLoadedLogs = false;
+            lastLogsText = '';
+        } else {
+            logsOverlay.style.display = 'none';
+            if (logsContent) logsContent.style.opacity = '1';
+        }
     }
 }
 
@@ -366,9 +374,7 @@ async function loadLogs() {
     const content = document.getElementById('node-logs-content');
     if (!content) return;
     if (node?.status === 'offline') {
-        content.textContent = 'Node offline — logs unavailable.';
-        hasLoadedLogs = false;
-        lastLogsText = '';
+        _setChartsOfflineState(true);
         return;
     }
     const requestId = ++latestLogsRequest;

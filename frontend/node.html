@@ -173,7 +173,10 @@
             <span style="font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase">Agent Logs</span>
             <button class="btn btn-secondary btn-sm" id="btn-refresh-logs">Refresh</button>
           </div>
-          <pre id="node-logs-content" class="node-log-view" style="flex:1;min-height:0"></pre>
+          <div style="position:relative;flex:1;min-height:0;display:flex;flex-direction:column">
+            <pre id="node-logs-content" class="node-log-view" style="flex:1;min-height:0"></pre>
+            <div id="node-logs-empty" class="chart-offline-overlay" style="display:none"></div>
+          </div>
         </div>
 
         <!-- Command history -->

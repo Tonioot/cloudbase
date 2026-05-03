@@ -1926,18 +1926,27 @@ class RunReplicaRequest(BaseModel):
     external_port: int
     env_vars: Optional[dict] = None
     docker_options: Optional[dict] = None
+    # app_name is supplied by the remote agent so this endpoint never needs a
+    # local DB lookup (the app only lives in the main node's database).
+    app_name: Optional[str] = None
 
 
 @router.post("/{app_id}/replicas/run-remote")
 async def run_replica_remote(app_id: int, req: RunReplicaRequest, db: AsyncSession = Depends(get_db)):
     """Internal endpoint called by the node agent to start a replica container locally.
     Does NOT create a DB row — the main server already has it."""
-    app = await _get_or_404(app_id, db)
+    # If app_name was provided directly (remote-node scenario) skip the DB
+    # lookup — the app only exists in the main node's database.
+    if req.app_name:
+        app_name = req.app_name
+    else:
+        app = await _get_or_404(app_id, db)
+        app_name = app.name
     try:
         env_vars = req.env_vars or {}
         container_id = await asyncio.to_thread(
             pm.start_docker_replica,
-            app_id, req.replica_id, app.name,
+            app_id, req.replica_id, app_name,
             req.internal_port, req.external_port,
             env_vars, req.docker_options,
         )
@@ -1947,9 +1956,8 @@ async def run_replica_remote(app_id: int, req: RunReplicaRequest, db: AsyncSessi
 
 
 @router.delete("/{app_id}/replicas/{replica_id}/stop-remote")
-async def stop_replica_remote(app_id: int, replica_id: int, db: AsyncSession = Depends(get_db)):
+async def stop_replica_remote(app_id: int, replica_id: int):
     """Internal endpoint called by the node agent to stop a replica container locally."""
-    await _get_or_404(app_id, db)
     ok = await asyncio.to_thread(pm.stop_docker_replica, app_id, replica_id)
     return {"ok": ok, "replica_id": replica_id}
 

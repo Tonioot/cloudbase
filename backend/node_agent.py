@@ -655,16 +655,18 @@ async def cmd_get_replica_logs(client, state, main_id, payload, headers):
 
 
 async def cmd_start_replica(client, state, main_id, payload, headers):
-    local_id = await _resolve_local_id(client, state, main_id, payload, headers)
+    # Use main_id directly — the app only exists in the main node's DB, not
+    # here.  Pass app_name so run-remote can skip its own DB lookup.
     body = {
         "replica_id": payload["replica_id"],
+        "app_name":   payload.get("app_name"),
         "internal_port": payload.get("internal_port", 8000),
         "external_port": payload["external_port"],
         "env_vars": payload.get("env_vars") or {},
         "docker_options": payload.get("docker_options"),
     }
     resp = await client.post(
-        f"{_LOCAL_API_BASE}/api/apps/{local_id}/replicas/run-remote",
+        f"{_LOCAL_API_BASE}/api/apps/{main_id}/replicas/run-remote",
         json=body, headers=headers, timeout=120,
     )
     resp.raise_for_status()
@@ -686,9 +688,9 @@ async def cmd_stop_replica(client, state, main_id, payload, headers):
     # container stops (prevents nginx from briefly routing to a dead port).
     await _stop_tunnel_task(replica_id)
 
-    local_id = await _resolve_local_id(client, state, main_id, payload, headers)
+    # Use main_id directly — no local DB lookup needed for stop.
     resp = await client.delete(
-        f"{_LOCAL_API_BASE}/api/apps/{local_id}/replicas/{replica_id}/stop-remote",
+        f"{_LOCAL_API_BASE}/api/apps/{main_id}/replicas/{replica_id}/stop-remote",
         headers=headers, timeout=60,
     )
     resp.raise_for_status()

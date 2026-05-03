@@ -485,6 +485,18 @@ class _AuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         if path in _PUBLIC:
             return await call_next(request)
+        # Remote node agents may fetch the image export endpoint using their node token
+        if path.endswith("/image/export"):
+            node_token = request.headers.get("X-Node-Token", "")
+            if node_token:
+                async with AsyncSessionLocal() as db:
+                    from sqlalchemy import select as _select
+                    from models import Node as _Node
+                    result = await db.execute(
+                        _select(_Node).where((_Node.auth_token == node_token) & (_Node.enabled == True))
+                    )
+                    if result.scalar_one_or_none():
+                        return await call_next(request)
         # Browser-facing node WebSocket endpoints — auth checked via cookie below
         # (BaseHTTPMiddleware can't block WS upgrades cleanly; the endpoints themselves are read-only)
         if path.startswith("/api/nodes/") and any(path.endswith(s) for s in ("/events", "/stats", "/commands/live")):

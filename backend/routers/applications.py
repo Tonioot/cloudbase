@@ -1922,7 +1922,8 @@ class ScaleRequest(BaseModel):
 
 @router.get("/{app_id}/image/export")
 async def export_app_image(app_id: int, db: AsyncSession = Depends(get_db)):
-    """Stream the app's Docker image tarball so remote node agents can import it."""
+    """Stream the app's Docker image tarball so remote node agents can import it.
+    Auth is handled by _AuthMiddleware (node token or session cookie)."""
     app = await _get_or_404(app_id, db)
     img = dm.image_name(app_id, app.name)
 

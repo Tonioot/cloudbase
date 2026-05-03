@@ -1727,11 +1727,17 @@ async def start_app(app_id: int, db: AsyncSession = Depends(get_db), actor: str 
 
         await log_audit(db, "app.start", actor=actor, app_id=app_id, detail={"name": app.name})
         await db.commit()
-        remote_payload = _remote_replica_command_payload(app, env_vars, external_port)
         return {"status": "running", "container_id": container_id[:12]}
 
     if app.status == "running" and app.pid and pm.is_process_running(app.pid, app.id):
-            payload={**remote_payload, "replica_id": replica.id},
+        raise HTTPException(400, "App is already running")
+
+    if not app.start_command:
+        raise HTTPException(400, "No start command configured")
+
+    start_started_at = asyncio.get_running_loop().time()
+
+    show_starting_page = (
         app.nginx_enabled and app.domain and (app.external_port or app.port)
         and not app.maintenance_mode and not app.update_mode
     )

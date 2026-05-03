@@ -389,40 +389,47 @@ async def _stop_tunnel_task(replica_id: int) -> None:
 
 # ─── Orphan cleanup ───────────────────────────────────────────────────────────
 
-async def _cleanup_orphaned_apps(client: httpx.AsyncClient, state: AgentState) -> None:
-    """Delete local apps that no longer exist on the main server for this node."""
-    agent_token = _load_agent_token()
-    local_headers = {"X-Agent-Token": agent_token}
+async def _cleanup_orphaned_replica_containers(client: httpx.AsyncClient, state: AgentState) -> None:
+    """Stop any local Docker containers whose replica_id no longer exists on the primary.
+
+    Container names follow the pattern  cloudbase-app-{app_id}-replica-{replica_id}.
+    We ask the primary for the set of live replica IDs on this node, then kill every
+    matching container whose replica_id is not in that set.
+    """
+    import re
     node_headers = {"X-Node-Token": state.auth_token}
     try:
-        local_resp = await client.get(f"{_LOCAL_API_BASE}/api/apps", headers=local_headers, timeout=10)
-        main_resp = await client.get(f"{state.main_url}/api/nodes/agent/my-apps", headers=node_headers, timeout=10)
-        if local_resp.status_code != 200 or main_resp.status_code != 200:
+        resp = await client.get(
+            f"{state.main_url}/api/nodes/agent/my-replicas",
+            headers=node_headers, timeout=10,
+        )
+        if resp.status_code != 200:
             return
-        local_apps = {a["name"]: a["id"] for a in local_resp.json()}
-        main_names = {a["name"] for a in main_resp.json().get("apps", [])}
+        live_ids: set[int] = {r["id"] for r in resp.json().get("replicas", [])}
 
-        # Safety: if main returned an empty list but we have local apps, the main
-        # server may have just restarted and not yet restored state — skip cleanup.
-        if not main_names and local_apps:
-            _agent_log("[cleanup] Main returned no apps but local apps exist — skipping orphan cleanup (main may be restarting)")
+        # Enumerate local Docker containers whose name matches the replica pattern
+        import subprocess, json as _json
+        result = subprocess.run(
+            ["docker", "ps", "-a", "--format", "{{.Names}}", "--filter", "name=cloudbase-app-"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode != 0:
             return
 
-        orphans = {name: lid for name, lid in local_apps.items() if name not in main_names}
-        if not orphans:
-            return
-        _agent_log(f"[cleanup] Found {len(orphans)} orphaned app(s): {list(orphans)}")
-        for name, local_id in orphans.items():
-            try:
-                del_resp = await client.delete(f"{_LOCAL_API_BASE}/api/apps/{local_id}", headers=local_headers, timeout=30)
-                if del_resp.status_code in (200, 204):
-                    _agent_log(f"[cleanup] Removed orphaned app '{name}' (local_id={local_id})")
-                else:
-                    _agent_log(f"[cleanup] Failed to remove '{name}': HTTP {del_resp.status_code}")
-            except Exception as e:
-                _agent_log(f"[cleanup] Error removing '{name}': {e}")
+        pattern = re.compile(r"^cloudbase-app-(\d+)-replica-(\d+)$")
+        for cname in result.stdout.splitlines():
+            m = pattern.match(cname.strip())
+            if not m:
+                continue
+            replica_id = int(m.group(2))
+            if replica_id not in live_ids:
+                _agent_log(f"[cleanup] Stopping orphan replica container '{cname}' (replica_id={replica_id} no longer exists)")
+                try:
+                    subprocess.run(["docker", "rm", "-f", cname], capture_output=True, timeout=15)
+                except Exception as e:
+                    _agent_log(f"[cleanup] Failed to remove '{cname}': {e}")
     except Exception as e:
-        _agent_log(f"[cleanup] Orphan check failed: {e}")
+        _agent_log(f"[cleanup] Replica container orphan check failed: {e}")
 
 
 # ─── Command Handlers ─────────────────────────────────────────────────────────
@@ -1088,7 +1095,7 @@ async def _run_websocket_loop(client: httpx.AsyncClient, state: AgentState):
 
                     # Initial check immediately on connect
                     await _check_and_report_statuses()
-                    await _cleanup_orphaned_apps(client, state)
+                    await _cleanup_orphaned_replica_containers(client, state)
 
                     while True:
                         await asyncio.sleep(state.heartbeat_interval)
@@ -1099,6 +1106,9 @@ async def _run_websocket_loop(client: httpx.AsyncClient, state: AgentState):
                             "capabilities": _build_capabilities()
                         }))
                         await _check_and_report_statuses()
+                        _heartbeat_task._cleanup_tick = getattr(_heartbeat_task, "_cleanup_tick", 0) + 1
+                        if _heartbeat_task._cleanup_tick % 5 == 0:
+                            await _cleanup_orphaned_replica_containers(client, state)
 
                 hb_task = asyncio.create_task(_heartbeat_task())
                 try:

@@ -1096,18 +1096,18 @@ function initSettings() {
     }
     zdBtn.onclick = async () => {
       const ok = await confirm(
-        'Zero-downtime Deploy',
-        'Builds a new image, starts it on a temp port, verifies health, then atomically swaps nginx. The old container stops only after the new one is live.'
+        'Zero-downtime Restart',
+        'Builds a new image for every running instance, starts each on a new port, verifies health, then atomically swaps nginx. Old containers stop only after the new ones are live.'
       );
       if (!ok) return;
       zdBtn.disabled = true;
       const orig = zdBtn.innerHTML;
-      zdBtn.textContent = 'Deploying…';
+      zdBtn.textContent = 'Restarting…';
       try {
         const res = await api.deployZeroDowntime(APP_ID);
-        toast(`Zero-downtime deploy complete — instance ${res.instance_id}`, 'success');
+        toast(`Zero-downtime restart complete — instance ${res.instance_id}`, 'success');
       } catch (e) {
-        toast(e.message || 'Zero-downtime deploy failed', 'error');
+        toast(e.message || 'Zero-downtime restart failed', 'error');
       } finally {
         zdBtn.disabled = false;
         zdBtn.innerHTML = orig;

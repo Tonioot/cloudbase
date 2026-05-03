@@ -757,6 +757,12 @@ def run_replica_container(
     docker_options = docker_options or {}
     try:
         old = client.containers.get(cname)
+        old.reload()
+        if old.status == "running":
+            # Container survived a node outage and is still healthy — reuse it
+            # instead of killing and immediately re-binding the same port.
+            push_line_fn(app_id, f"[Replica] Container {replica_id} already running, reusing (recovered from outage).")
+            return old.id
         old.remove(force=True)
         push_line_fn(app_id, f"[Replica] Removed old container for replica {replica_id}.")
     except Exception:
@@ -800,7 +806,19 @@ def run_replica_container(
         run_kwargs["tmpfs"] = {"/tmp": ",".join(tmpfs_opts)}
 
     _assert_image_local(client, img)
-    container = client.containers.run(img, **run_kwargs)
+    # Retry once on port-already-allocated errors: Docker's network stack
+    # sometimes holds a port briefly after force-removing the old container.
+    import time as _time
+    import docker as _docker_mod
+    for attempt in (1, 2):
+        try:
+            container = client.containers.run(img, **run_kwargs)
+            break
+        except _docker_mod.errors.APIError as exc:
+            if attempt == 2 or "port is already allocated" not in str(exc):
+                raise
+            push_line_fn(app_id, f"[Replica] Port {external_port} still releasing, retrying in 2 s…")
+            _time.sleep(2)
     push_line_fn(app_id, f"[Replica] Container {replica_id} started: {container.short_id} (:{external_port} → :{internal_port})")
     return container.id
 

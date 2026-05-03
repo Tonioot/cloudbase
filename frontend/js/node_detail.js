@@ -325,7 +325,8 @@ function _updateNodeChart(chart, data) {
 function renderApps() {
     const grid = document.getElementById('node-apps-grid');
     if (!apps.length) {
-        grid.innerHTML = `<div style="font-size:12px;color:var(--text-muted);padding:6px 0">No applications on this node.</div>`;
+        const appSvg = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>`;
+        grid.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;height:100%;color:var(--text-muted)">${appSvg}<span style="font-size:11px;font-weight:500;opacity:0.5">No applications</span></div>`;
         return;
     }
     const dotColor = { running:'var(--green)', stopped:'var(--text-muted)', error:'var(--red)', deploying:'var(--yellow)', starting:'var(--yellow)', stopping:'var(--yellow)' };
@@ -373,7 +374,7 @@ function renderCommands(cmds) {
 async function loadLogs() {
     const content = document.getElementById('node-logs-content');
     if (!content) return;
-    if (node?.status === 'offline') {
+    if (!node || node.status !== 'online') {
         _setChartsOfflineState(true);
         return;
     }

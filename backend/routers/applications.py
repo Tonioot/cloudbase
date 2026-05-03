@@ -1936,6 +1936,11 @@ async def restart_app(app_id: int, db: AsyncSession = Depends(get_db), actor: st
 
 class ScaleRequest(BaseModel):
     node_id: Optional[int] = None
+    docker_cpu_limit: Optional[float] = None
+    docker_memory_limit_mb: Optional[int] = None
+    docker_read_only_root: Optional[bool] = None
+    docker_tmpfs_enabled: Optional[bool] = None
+    docker_tmpfs_size_mb: Optional[int] = None
 
 
 class RunReplicaRequest(BaseModel):
@@ -1950,7 +1955,6 @@ class RunReplicaRequest(BaseModel):
     app_name: Optional[str] = None
 
 
-@router.post("/{app_id}/replicas/run-remote")
 def _image_arch_ok(image_name: str) -> bool:
     """Return True if the Docker image exists locally and matches the host CPU architecture."""
     import platform
@@ -1966,6 +1970,7 @@ def _image_arch_ok(image_name: str) -> bool:
         return False
 
 
+@router.post("/{app_id}/replicas/run-remote")
 async def run_replica_remote(app_id: int, req: RunReplicaRequest, db: AsyncSession = Depends(get_db)):
     """Internal endpoint called by the node agent to start a replica container locally.
     Does NOT create a DB row — the main server already has it."""
@@ -2165,13 +2170,28 @@ async def scale_app(app_id: int, req: ScaleRequest, db: AsyncSession = Depends(g
 
     env_vars = decrypt_env(app.env_vars or "")
 
+    # Per-instance docker options override app-level defaults
+    def _instance_docker_options() -> dict:
+        base = _docker_runtime_options(app)
+        if req.docker_cpu_limit is not None:
+            base["cpu_limit"] = req.docker_cpu_limit
+        if req.docker_memory_limit_mb is not None:
+            base["memory_limit_mb"] = req.docker_memory_limit_mb
+        if req.docker_read_only_root is not None:
+            base["read_only_root"] = req.docker_read_only_root
+        if req.docker_tmpfs_enabled is not None:
+            base["tmpfs_enabled"] = req.docker_tmpfs_enabled
+        if req.docker_tmpfs_size_mb is not None:
+            base["tmpfs_size_mb"] = req.docker_tmpfs_size_mb
+        return base
+
     if target_node.is_local:
         try:
             container_id = await asyncio.to_thread(
                 pm.start_docker_replica,
                 app_id, replica.id, app.name,
                 app.port or 8000, external_port,
-                env_vars, _docker_runtime_options(app),
+                env_vars, _instance_docker_options(),
             )
             replica.status = "running"
             replica.container_id = container_id
@@ -2197,6 +2217,13 @@ async def scale_app(app_id: int, req: ScaleRequest, db: AsyncSession = Depends(g
         if target_node.status != "online":
             raise HTTPException(400, f"Node '{target_node.name}' is not online")
         remote_payload = _remote_replica_command_payload(app, env_vars, external_port)
+        # Merge per-instance docker overrides into the payload
+        inst_opts = _instance_docker_options()
+        remote_payload["docker_cpu_limit"] = inst_opts.get("cpu_limit")
+        remote_payload["docker_memory_limit_mb"] = inst_opts.get("memory_limit_mb")
+        remote_payload["docker_read_only_root"] = inst_opts.get("read_only_root")
+        remote_payload["docker_tmpfs_enabled"] = inst_opts.get("tmpfs_enabled")
+        remote_payload["docker_tmpfs_size_mb"] = inst_opts.get("tmpfs_size_mb")
         await queue_node_command(
             db, node_id=target_node.id, app_id=app_id,
             command_type="start_replica",

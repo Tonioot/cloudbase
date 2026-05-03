@@ -39,6 +39,7 @@
   background: var(--red-bg);
   color: var(--red);
   border-color: var(--red-border);
+  border-radius: var(--radius-sm);
 }
 .btn-danger:hover:not(:disabled) { background: rgba(248,81,73,.22); }
 

@@ -1178,9 +1178,6 @@ function initSettings() {
     }
   };
 
-  // Move to node
-  _initMoveToNode();
-
   // Maintenance pages section
   initMaintenanceSettings();
   _initMaintModal();
@@ -1615,7 +1612,7 @@ async function initInstances() {
         : (inst.node_name || 'Local');
 
       const removeBtn = inst.is_primary
-        ? ''
+        ? `<button class="btn btn-secondary btn-sm inst-move-btn" data-id="${inst.id}" style="padding:4px 10px;font-size:12px">Move</button>`
         : `<button class="btn-danger btn-sm inst-remove-btn" data-id="${inst.id}" style="padding:4px 10px;font-size:12px">Remove</button>`;
 
       const logsBtn = `<button class="btn btn-secondary btn-sm inst-logs-btn" data-id="${inst.is_primary ? 'primary' : inst.id}" data-primary="${inst.is_primary}" style="padding:4px 10px;font-size:12px">Logs</button>`;
@@ -1650,6 +1647,104 @@ async function initInstances() {
         </thead>
         <tbody>${rows}</tbody>
       </table>`;
+
+    // Wire up move buttons (primary instance)
+    wrap.querySelectorAll('.inst-move-btn').forEach(moveBtn => {
+      moveBtn.addEventListener('click', async () => {
+        let nodes = [];
+        try { nodes = await api.listNodes(); } catch { toast('Failed to load nodes', 'error'); return; }
+        const others = nodes.filter(n => n.enabled && n.id !== (app.node?.id || app.node_id));
+        if (!others.length) { toast('No other nodes available', 'error'); return; }
+
+        const nodeId = await new Promise(resolve => {
+          const backdrop = document.createElement('div');
+          backdrop.className = 'dialog-backdrop';
+          backdrop.innerHTML = `
+            <div class="dialog">
+              <div class="dialog-title">Move Primary Instance</div>
+              <div class="dialog-body" style="color:var(--text-secondary);font-size:13px;line-height:1.5">
+                <div style="margin-bottom:12px">Move the primary instance to a different node.<br>The app will be stopped and redeployed on the target.</div>
+                <select id="move-inst-node-select" style="width:100%;padding:8px;background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px;font-size:14px">
+                  ${others.map(n => `<option value="${n.id}">${n.name} (${n.is_local ? 'local' : n.status})</option>`).join('')}
+                </select>
+              </div>
+              <div class="dialog-actions">
+                <button class="btn btn-secondary" id="move-inst-cancel">Cancel</button>
+                <button class="btn btn-primary" id="move-inst-ok">Move Instance</button>
+              </div>
+            </div>`;
+          document.body.appendChild(backdrop);
+          const ok = () => {
+            const val = backdrop.querySelector('#move-inst-node-select').value;
+            backdrop.remove();
+            resolve(val ? parseInt(val, 10) : null);
+          };
+          backdrop.querySelector('#move-inst-ok').onclick = ok;
+          backdrop.querySelector('#move-inst-cancel').onclick = () => { backdrop.remove(); resolve(undefined); };
+          backdrop.addEventListener('click', e => { if (e.target === backdrop) { backdrop.remove(); resolve(undefined); } });
+        });
+
+        if (nodeId === undefined) return;
+        moveBtn.disabled = true; moveBtn.textContent = 'Moving\u2026';
+        try {
+          await api.moveApp(APP_ID, nodeId, null);
+          toast(`Moving "${app.name}" to selected node\u2026`);
+          window.location.href = '/';
+        } catch (e) {
+          toast(e.message, 'error');
+          moveBtn.disabled = false; moveBtn.textContent = 'Move';
+        }
+      });
+    });
+
+    // Wire up move buttons (primary instance)
+    wrap.querySelectorAll('.inst-move-btn').forEach(moveBtn => {
+      moveBtn.addEventListener('click', async () => {
+        let nodes = [];
+        try { nodes = await api.listNodes(); } catch { toast('Failed to load nodes', 'error'); return; }
+        const others = nodes.filter(n => n.enabled && n.id !== (app.node?.id || app.node_id));
+        if (!others.length) { toast('No other nodes available', 'error'); return; }
+
+        const nodeId = await new Promise(resolve => {
+          const backdrop = document.createElement('div');
+          backdrop.className = 'dialog-backdrop';
+          backdrop.innerHTML = `
+            <div class="dialog">
+              <div class="dialog-title">Move Primary Instance</div>
+              <div class="dialog-body" style="color:var(--text-secondary);font-size:13px;line-height:1.5">
+                <div style="margin-bottom:12px">Move the primary instance to a different node.<br>The app will be stopped and redeployed on the target.</div>
+                <select id="move-inst-node-select" style="width:100%;padding:8px;background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px;font-size:14px">
+                  ${others.map(n => `<option value="${n.id}">${n.name} (${n.is_local ? 'local' : n.status})</option>`).join('')}
+                </select>
+              </div>
+              <div class="dialog-actions">
+                <button class="btn btn-secondary" id="move-inst-cancel">Cancel</button>
+                <button class="btn btn-primary" id="move-inst-ok">Move Instance</button>
+              </div>
+            </div>`;
+          document.body.appendChild(backdrop);
+          const ok = () => {
+            const val = backdrop.querySelector('#move-inst-node-select').value;
+            backdrop.remove();
+            resolve(val ? parseInt(val, 10) : null);
+          };
+          backdrop.querySelector('#move-inst-ok').onclick = ok;
+          backdrop.querySelector('#move-inst-cancel').onclick = () => { backdrop.remove(); resolve(undefined); };
+          backdrop.addEventListener('click', e => { if (e.target === backdrop) { backdrop.remove(); resolve(undefined); } });
+        });
+
+        if (nodeId === undefined) return;
+        moveBtn.disabled = true; moveBtn.textContent = 'Moving…';
+        try {
+          await api.moveApp(APP_ID, nodeId, null);
+          toast(`Moving "${app.name}" to selected node…`);
+          window.location.href = '/';
+        } catch (e) {
+          toast(e.message, 'error');
+          moveBtn.disabled = false; moveBtn.textContent = 'Move';
+        }
+      });
+    });
 
     // Wire up remove buttons
     wrap.querySelectorAll('.inst-remove-btn').forEach(btn => {
@@ -1733,45 +1828,89 @@ async function initInstances() {
         app = await api.getApp(APP_ID);
         updateHeaderStatus(); renderHeader();
         await renderInstances();
-      } catch (e) {
-        toast(e.message, 'error');
-      } finally {
-        addBtn.disabled = false; addBtn.textContent = 'Add Instance';
-      }
-    };
-  }
-}
+      let nodes = [];
+      try { nodes = await api.listNodes(); } catch { toast('Failed to load nodes', 'error'); return; }
+      const available = nodes.filter(n => n.enabled && n.status === 'online');
 
-async function _showInstanceLogs(instanceId, isPrimary) {
-  let logLines = [];
-  try {
-    if (isPrimary) {
-      const data = await api.getAppLogsTail(APP_ID, 200);
-      logLines = data.lines || [];
-    } else {
-      const data = await api.getInstanceLogs(APP_ID, instanceId, 200);
-      logLines = data.lines || [];
-    }
-  } catch (e) {
-    toast('Failed to load logs: ' + e.message, 'error');
-    return;
-  }
+      const _field = (id, label, type, placeholder, hint) =>
+        `<div style="margin-bottom:10px">
+          <div style="font-size:12px;font-weight:500;color:var(--text-secondary);margin-bottom:4px">${label}</div>
+          <input id="${id}" type="${type}" placeholder="${placeholder}"
+            style="width:100%;padding:7px 10px;background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px;font-size:13px;box-sizing:border-box" />
+          ${hint ? `<div style="font-size:11px;color:var(--text-muted);margin-top:3px">${hint}</div>` : ''}
+        </div>`;
 
-  const label = isPrimary ? 'Primary Instance' : `Instance #${instanceId}`;
-  const content = logLines.length
-    ? logLines.map(l => `<div style="font-size:12px;font-family:monospace;line-height:1.5;white-space:pre-wrap;word-break:break-all;color:#e6edf3">${escHtml(l)}</div>`).join('')
-    : '<div style="color:#8b949e;font-size:12px;font-family:monospace">No log output available.</div>';
+      const result = await new Promise(resolve => {
+        const backdrop = document.createElement('div');
+        backdrop.className = 'dialog-backdrop';
+        backdrop.innerHTML = `
+          <div class="dialog" style="max-width:440px">
+            <div class="dialog-title">Add Instance</div>
+            <div class="dialog-body" style="color:var(--text-secondary);font-size:13px;line-height:1.5">
+              <div style="margin-bottom:12px;font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em">Node</div>
+              <select id="inst-node-select" style="width:100%;padding:7px 10px;background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px;font-size:13px;margin-bottom:16px">
+                <option value="">— Same node as app —</option>
+                ${available.map(n => `<option value="${n.id}">${n.name} (${n.is_local ? 'local' : n.public_host || n.status})</option>`).join('')}
+              </select>
+              <div style="margin-bottom:8px;font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em">Docker Runtime <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional overrides)</span></div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+                ${_field('inst-cpu', 'CPU Limit', 'number', app.docker_cpu_limit || '1.0', 'Max CPUs')}
+                ${_field('inst-mem', 'Memory Limit (MB)', 'number', app.docker_memory_limit_mb || '512', 'Hard memory cap')}
+              </div>
+              <div style="display:flex;align-items:center;gap:16px;margin-top:4px">
+                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
+                  <input type="checkbox" id="inst-readonly" ${app.docker_read_only_root ? 'checked' : ''} style="accent-color:#3b82f6" />
+                  Read-only root fs
+                </label>
+                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
+                  <input type="checkbox" id="inst-tmpfs" ${app.docker_tmpfs_enabled ? 'checked' : ''} style="accent-color:#3b82f6" />
+                  Tmpfs /tmp
+                </label>
+                <input id="inst-tmpfs-size" type="number" placeholder="${app.docker_tmpfs_size_mb || 64}"
+                  style="width:70px;padding:5px 8px;background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px;font-size:12px" />
+                <span style="font-size:11px;color:var(--text-muted)">MB</span>
+              </div>
+            </div>
+            <div class="dialog-actions">
+              <button class="btn btn-secondary" id="inst-dlg-cancel">Cancel</button>
+              <button class="btn btn-primary" id="inst-dlg-ok">Start Instance</button>
+            </div>
+          </div>`;
+        document.body.appendChild(backdrop);
+        const ok = () => {
+          const nodeVal  = backdrop.querySelector('#inst-node-select').value;
+          const cpu      = parseFloat(backdrop.querySelector('#inst-cpu').value);
+          const mem      = parseInt(backdrop.querySelector('#inst-mem').value, 10);
+          const readonly = backdrop.querySelector('#inst-readonly').checked;
+          const tmpfs    = backdrop.querySelector('#inst-tmpfs').checked;
+          const tmpfsSz  = parseInt(backdrop.querySelector('#inst-tmpfs-size').value, 10);
+          backdrop.remove();
+          resolve({
+            nodeId:   nodeVal ? parseInt(nodeVal, 10) : null,
+            cpu:      Number.isFinite(cpu) ? cpu : null,
+            mem:      Number.isInteger(mem) ? mem : null,
+            readonly,
+            tmpfs,
+            tmpfsSz:  Number.isInteger(tmpfsSz) ? tmpfsSz : null,
+          });
+        };
+        backdrop.querySelector('#inst-dlg-ok').onclick = ok;
+        backdrop.querySelector('#inst-dlg-cancel').onclick = () => { backdrop.remove(); resolve(undefined); };
+        backdrop.addEventListener('click', e => { if (e.target === backdrop) { backdrop.remove(); resolve(undefined); } });
+      });
 
-  // Custom close-only dialog
-  const backdrop = document.createElement('div');
-  backdrop.className = 'dialog-backdrop';
-  backdrop.innerHTML = `
-    <div class="dialog" style="max-width:820px;width:min(820px,95vw)">
-      <div class="dialog-title">Logs — ${escHtml(label)}</div>
-      <div class="dialog-body" style="padding:0">
-        <div style="max-height:460px;overflow:auto;background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:12px">${content}</div>
-      </div>
-      <div class="dialog-actions">
+      if (result === undefined) return; // cancelled
+
+      addBtn.disabled = true; addBtn.textContent = 'Starting…';
+      try {
+        await api.scaleApp(APP_ID, {
+          node_id: result.nodeId,
+          docker_cpu_limit: result.cpu,
+          docker_memory_limit_mb: result.mem,
+          docker_read_only_root: result.readonly,
+          docker_tmpfs_enabled: result.tmpfs,
+          docker_tmpfs_size_mb: result.tmpfsSz,
+        });
         <button class="btn btn-primary" id="inst-log-close">Close</button>
       </div>
     </div>`;

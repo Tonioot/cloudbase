@@ -133,6 +133,10 @@
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="4,17 10,11 4,5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
           Logs
         </button>
+        <button class="tab-btn" id="tab-instances">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/><line x1="12" y1="12" x2="12" y2="16"/><line x1="10" y1="14" x2="14" y2="14"/></svg>
+          Instances
+        </button>
         <button class="tab-btn" id="tab-stats">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="22,12 18,12 15,21 9,3 6,12 2,12"/></svg>
           Stats
@@ -140,10 +144,6 @@
         <button class="tab-btn" id="tab-files">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
           Files
-        </button>
-        <button class="tab-btn" id="tab-instances">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/><line x1="12" y1="12" x2="12" y2="16"/><line x1="10" y1="14" x2="14" y2="14"/></svg>
-          Instances
         </button>
         <button class="tab-btn" id="tab-settings">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
@@ -368,8 +368,8 @@
 
             <div class="settings-group" id="docker-runtime-section">
               <div class="settings-group-hd">
-                <div class="settings-group-title">Docker Runtime</div>
-                <div class="settings-group-sub">Container resources and filesystem restrictions</div>
+                <div class="settings-group-title">Docker Runtime <span style="font-size:11px;font-weight:400;color:var(--text-muted);margin-left:6px">— Primary Instance</span></div>
+                <div class="settings-group-sub">Default resource limits and filesystem restrictions. Can be overridden per instance when adding a new instance.</div>
               </div>
               <div class="settings-group-bd">
                 <div class="grid-3-1">
@@ -576,25 +576,6 @@
                     <span id="maint-starting-badge" class="maint-row-badge maint-badge--off">Auto</span>
                   </button>
                 </div>
-              </div>
-            </div>
-
-            <!-- Move to Node (hidden until multi-node) -->
-            <div class="settings-group" id="move-node-section" style="display:none">
-              <div class="settings-group-hd">
-                <div class="settings-group-title">Move to Node</div>
-                <div class="settings-group-sub">Transfer this application to a different node. The app will be stopped, removed from the current node, and redeployed on the target.</div>
-              </div>
-              <div class="settings-group-bd">
-                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-                  <select class="input" id="move-node-select" style="flex:1;min-width:180px;max-width:300px"></select>
-                  <input class="input input-mono" id="move-node-port" type="number" min="1" max="65535" placeholder="Internal port (keep current)" style="width:180px" />
-                  <button class="btn btn-secondary" id="btn-move-node" data-admin>
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="5 9 2 12 5 15"/><polyline points="19 9 22 12 19 15"/><line x1="2" y1="12" x2="22" y2="12"/></svg>
-                    Move App
-                  </button>
-                </div>
-                <div style="margin-top:8px;font-size:12px;color:var(--text-muted)">This changes the app's internal runtime port on the target node. Docker host ports are managed separately.</div>
               </div>
             </div>
 

@@ -452,13 +452,16 @@ def start_docker_replica(
     external_port: int,
     env_vars: dict,
     docker_options: dict | None = None,
+    image_app_id: int | None = None,
 ) -> str:
-    """Start a replica container using the existing image (no rebuild). Returns container ID."""
+    """Start a replica container using the existing image (no rebuild). Returns container ID.
+    image_app_id: if provided, use this app id for the Docker image name instead of app_id.
+    Useful when the image was built under a different (local) app id on remote nodes."""
     def _push(aid, line):
         log_buffers.setdefault(aid, deque(maxlen=5000)).append(str(line))
         _push_line(aid, line)
 
-    img = dm.image_name(app_id, app_name)
+    img = dm.image_name(image_app_id if image_app_id is not None else app_id, app_name)
     try:
         container_id = dm.run_replica_container(
             app_id, replica_id, app_name, img,

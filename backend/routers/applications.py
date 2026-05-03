@@ -1969,19 +1969,23 @@ async def run_replica_remote(app_id: int, req: RunReplicaRequest, db: AsyncSessi
 
     try:
         env_vars = req.env_vars or {}
+        # Use local_app_id for the image name when provided: the image was built
+        # on this node under the local app id, not the main node's app id.
         container_id = await asyncio.to_thread(
             pm.start_docker_replica,
             app_id, req.replica_id, app_name,
             req.internal_port, req.external_port,
             env_vars, req.docker_options,
+            req.local_app_id,
         )
         return {"container_id": container_id, "replica_id": req.replica_id}
     except Exception as e:
         if local_app and local_app.working_dir:
             try:
+                build_app_id = req.local_app_id if req.local_app_id is not None else app_id
                 await asyncio.to_thread(
                     dm.build_image,
-                    app_id,
+                    build_app_id,
                     app_name,
                     local_app.working_dir,
                     _push,
@@ -1998,6 +2002,7 @@ async def run_replica_remote(app_id: int, req: RunReplicaRequest, db: AsyncSessi
                     req.external_port,
                     env_vars,
                     req.docker_options,
+                    build_app_id,
                 )
                 return {"container_id": container_id, "replica_id": req.replica_id, "rebuilt": True}
             except Exception as rebuild_error:

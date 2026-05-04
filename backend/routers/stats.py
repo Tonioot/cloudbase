@@ -159,11 +159,18 @@ async def stream_stats(app_id: int, websocket: WebSocket):
         remote_nodes = [n for n in all_nodes.values() if not n.is_local]
         has_local = any(r.node_id is None or all_nodes.get(r.node_id, local_node).is_local for r in replicas)
 
+        # Map node_id → list of replica IDs (for feeding per-replica stats on remote frames)
+        replicas_per_node: dict[int | None, list[int]] = {}
+        for r in replicas:
+            key = r.node_id if r.node_id and not all_nodes.get(r.node_id, local_node).is_local else None
+            replicas_per_node.setdefault(key, []).append(r.id)
+
     app_id_val = app.id
     app_name_val = app.name
     instance_count = len(replicas) if replicas else 1
 
     # ── Pure local case (fast path) ──────────────────────────────────────────
+    local_replica_ids = replicas_per_node.get(None, [])
     if not remote_nodes and has_local:
         q = pm.subscribe_stats(app_id_val)
         for point in pm.get_recent_stats(app_id_val):
@@ -179,6 +186,9 @@ async def stream_stats(app_id: int, websocket: WebSocket):
                 data = await q.get()
                 if "cpu_percent" in data:
                     data.setdefault("_instance_count", instance_count)
+                    # Keep per-replica stats fresh for single-replica local apps
+                    if len(local_replica_ids) == 1:
+                        pm.set_replica_stats(local_replica_ids[0], {**data, "replica_id": local_replica_ids[0]})
                 await websocket.send_json(data)
         except (WebSocketDisconnect, Exception):
             pass
@@ -245,6 +255,9 @@ async def stream_stats(app_id: int, websocket: WebSocket):
                 continue
 
             latest[node_id] = frame
+            # Store per-replica so the instances/stats endpoint can serve live data
+            for rid in replicas_per_node.get(node_id, []):
+                pm.set_replica_stats(rid, {**frame, "replica_id": rid})
             merged = _aggregate_frames(list(latest.values()))
             merged["_instance_count"] = instance_count
             # Buffer for history writer

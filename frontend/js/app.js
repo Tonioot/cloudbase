@@ -1574,117 +1574,139 @@ async function initInstances() {
       return;
     }
 
-    const rows = instances.map((inst, idx) => {
-      const statusColor = inst.status === 'running'
-        ? 'var(--green)'
-        : inst.status === 'error'
-          ? 'var(--red)'
-          : inst.status === 'starting'
-            ? 'var(--yellow)'
-            : 'var(--text-muted)';
-      const statusBg = inst.status === 'running'
-        ? 'var(--green-bg)'
-        : inst.status === 'error'
-          ? 'var(--red-bg)'
-          : inst.status === 'starting'
-            ? 'var(--yellow-bg)'
-            : 'var(--bg-muted)';
+    const cards = instances.map((inst, idx) => {
+      const isRunning  = inst.status === 'running';
+      const isStarting = inst.status === 'starting';
+      const isError    = inst.status === 'error';
 
-      const tunnelCell = inst.node_is_local
-          ? '<span style="color:var(--text-muted);font-size:11px">local</span>'
-          : inst.tunnel_connected
-            ? '<span style="color:var(--green);font-size:11px">&#x25cf; connected</span>'
-            : '<span style="color:var(--red);font-size:11px">&#x25cb; disconnected</span>';
+      const statusColor = isRunning ? 'var(--green)' : isError ? 'var(--red)' : isStarting ? 'var(--yellow)' : 'var(--text-muted)';
+      const statusBg    = isRunning ? 'var(--green-bg)' : isError ? 'var(--red-bg)' : isStarting ? 'var(--yellow-bg)' : 'var(--bg-muted)';
+      const statusDot   = isRunning ? 'var(--green)' : isError ? 'var(--red)' : isStarting ? 'var(--yellow)' : 'var(--text-muted)';
 
-      const nodeName = inst.node_name || 'Local';
+      const nodeName = inst.node_name || 'Primary Node';
 
-      // Uptime: time since updated_at when running, or created_at as fallback
+      // Uptime
       let uptimeStr = '—';
-      const uptimeSrc = inst.status === 'running' ? (inst.updated_at || inst.created_at) : inst.created_at;
+      const uptimeSrc = isRunning ? (inst.updated_at || inst.created_at) : inst.created_at;
       if (uptimeSrc) {
         const diffMs = Date.now() - new Date(uptimeSrc).getTime();
-        uptimeStr = diffMs > 0 ? fmtUptime(Math.floor(diffMs / 1000)) : '—';
+        if (diffMs > 0) uptimeStr = fmtUptime(Math.floor(diffMs / 1000));
       }
 
-      // Docker resource limits (from config)
+      // Tunnel status
+      const tunnelHtml = inst.node_is_local
+        ? `<span style="color:var(--text-muted);font-size:11px">local</span>`
+        : inst.tunnel_connected
+          ? `<span style="color:var(--green);font-size:11px;display:flex;align-items:center;gap:4px"><svg width="8" height="8" viewBox="0 0 8 8"><circle cx="4" cy="4" r="4" fill="currentColor"/></svg>Tunnel</span>`
+          : `<span style="color:var(--red);font-size:11px;display:flex;align-items:center;gap:4px"><svg width="8" height="8" viewBox="0 0 8 8"><circle cx="4" cy="4" r="4" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>No tunnel</span>`;
+
+      // Live metrics
+      const snap = instStats[String(inst.id)];
+      let metricsHtml = '';
+      if (snap && isRunning) {
+        const cpu = snap.cpu_percent != null ? snap.cpu_percent : null;
+        const mem = snap.memory_mb   != null ? Math.round(snap.memory_mb) : null;
+        const net = snap.net_rx_mb != null ? `↓${fmtMb(snap.net_rx_mb)} ↑${fmtMb(snap.net_tx_mb)}` : null;
+        const cpuColor = cpu > 80 ? 'var(--red)' : cpu > 60 ? 'var(--yellow)' : 'var(--green)';
+        const memPct = inst.docker_memory_limit_mb ? Math.min((mem / inst.docker_memory_limit_mb) * 100, 100) : null;
+        const memColor = memPct > 80 ? 'var(--red)' : memPct > 60 ? 'var(--yellow)' : 'var(--accent)';
+
+        metricsHtml = `
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border-muted)">
+            ${cpu != null ? `
+            <div>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+                <span style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted)">CPU</span>
+                <span style="font-size:13px;font-weight:700;color:${cpuColor}">${cpu.toFixed(1)}%</span>
+              </div>
+              <div style="height:4px;background:var(--border);border-radius:2px;overflow:hidden">
+                <div style="height:100%;width:${Math.min(cpu, 100)}%;background:${cpuColor};border-radius:2px;transition:width .5s"></div>
+              </div>
+            </div>` : ''}
+            ${mem != null ? `
+            <div>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+                <span style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted)">Memory</span>
+                <span style="font-size:13px;font-weight:700;color:var(--text-primary)">${mem >= 1024 ? (mem/1024).toFixed(1)+'GB' : mem+'MB'}</span>
+              </div>
+              ${memPct != null ? `
+              <div style="height:4px;background:var(--border);border-radius:2px;overflow:hidden">
+                <div style="height:100%;width:${memPct}%;background:${memColor};border-radius:2px;transition:width .5s"></div>
+              </div>` : `<div style="height:4px;background:var(--border);border-radius:2px"></div>`}
+            </div>` : ''}
+          </div>
+          ${net ? `<div style="margin-top:8px;font-size:11px;color:var(--text-muted)">${net}</div>` : ''}`;
+      } else if (isRunning) {
+        metricsHtml = `<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border-muted);font-size:11px;color:var(--text-muted)">Collecting metrics…</div>`;
+      }
+
+      // Resource limits badge
       const cpuLimit = inst.docker_cpu_limit != null ? `${inst.docker_cpu_limit} CPU` : null;
       const memLimit = inst.docker_memory_limit_mb != null ? `${inst.docker_memory_limit_mb}MB` : null;
-      const limitStr = [cpuLimit, memLimit].filter(Boolean).join(' · ') || '—';
+      const limitsText = [cpuLimit, memLimit].filter(Boolean).join(' · ');
 
-      const containerShort = inst.container_id ? inst.container_id.slice(0, 12) : '—';
+      const containerShort = inst.container_id ? inst.container_id.slice(0, 12) : null;
 
-      // Live metrics from latest snapshot
-      const snap = instStats[String(inst.id)];
-      let liveMetrics = '';
-      if (snap && inst.status === 'running') {
-        const cpu = snap.cpu_percent != null ? snap.cpu_percent.toFixed(1) : null;
-        const mem = snap.memory_mb   != null ? Math.round(snap.memory_mb) : null;
-        const cpuColor = snap.cpu_percent > 80 ? 'var(--red)' : snap.cpu_percent > 60 ? 'var(--yellow)' : 'var(--green)';
-        liveMetrics = `
-          <div style="display:flex;flex-direction:column;gap:3px;min-width:100px">
-            ${cpu != null ? `
-              <div>
-                <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted);margin-bottom:2px">
-                  <span>CPU</span><span style="color:${cpuColor};font-weight:600">${cpu}%</span>
-                </div>
-                <div style="height:2px;background:var(--border);border-radius:1px">
-                  <div style="height:100%;width:${Math.min(snap.cpu_percent, 100)}%;background:${cpuColor};border-radius:1px;transition:width .4s"></div>
-                </div>
-              </div>` : ''}
-            ${mem != null ? `
-              <div>
-                <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted);margin-bottom:2px">
-                  <span>MEM</span><span style="font-weight:500">${mem >= 1024 ? (mem/1024).toFixed(1)+'GB' : mem+'MB'}</span>
-                </div>
-              </div>` : ''}
-          </div>`;
-      } else if (inst.status === 'running') {
-        liveMetrics = `<span style="font-size:11px;color:var(--text-muted)">—</span>`;
-      }
+      return `
+      <div class="card" style="padding:0;overflow:hidden">
+        <!-- Card header -->
+        <div style="padding:14px 16px;display:flex;align-items:center;justify-content:space-between;gap:12px;border-bottom:1px solid var(--border-muted)">
+          <div style="display:flex;align-items:center;gap:10px;min-width:0">
+            <div style="width:8px;height:8px;border-radius:50%;background:${statusDot};flex-shrink:0"></div>
+            <div style="min-width:0">
+              <div style="font-size:13px;font-weight:600;color:var(--text-primary)">Instance ${idx + 1}</div>
+              <div style="font-size:11px;color:var(--text-muted);margin-top:1px">${nodeName}</div>
+            </div>
+          </div>
+          <span style="padding:3px 10px;border-radius:999px;font-size:11px;font-weight:600;background:${statusBg};color:${statusColor};white-space:nowrap;flex-shrink:0">${inst.status}</span>
+        </div>
 
-      const actionBtn = `<button class="btn btn-danger btn-sm inst-remove-btn" data-id="${inst.id}" style="padding:3px 10px;font-size:11px">Remove</button>`;
-      const restartBtn = `<button class="btn btn-secondary btn-sm inst-restart-btn" data-id="${inst.id}" style="padding:3px 10px;font-size:11px">Restart</button>`;
+        <!-- Card body -->
+        <div style="padding:14px 16px">
+          <!-- Info grid -->
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
+            <div>
+              <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);margin-bottom:3px">Port</div>
+              <div style="font-size:13px;font-weight:600;font-family:var(--font-mono);color:var(--text-primary)">:${inst.external_port || '—'}</div>
+            </div>
+            <div>
+              <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);margin-bottom:3px">Uptime</div>
+              <div style="font-size:13px;font-weight:600;color:var(--text-primary)">${uptimeStr}</div>
+            </div>
+            <div>
+              <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);margin-bottom:3px">Connection</div>
+              <div style="font-size:13px">${tunnelHtml}</div>
+            </div>
+          </div>
 
-      return `<tr style="border-bottom:1px solid var(--border)">
-        <td style="padding:10px 12px;color:var(--text-muted);font-size:12px;width:28px">${idx + 1}</td>
-        <td style="padding:10px 12px;font-size:13px">
-          <span style="font-weight:500;color:var(--text-primary)">${nodeName}</span>
-        </td>
-        <td style="padding:10px 12px;font-size:12px;font-family:var(--font-mono);color:var(--text-secondary)">:${inst.external_port || '—'}</td>
-        <td style="padding:10px 12px;font-size:12px">${tunnelCell}</td>
-        <td style="padding:10px 12px;font-size:12px">
-          <span style="display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600;background:${statusBg};color:${statusColor}">${inst.status || '—'}</span>
-          ${inst.last_error ? `<div style="color:var(--red);font-size:11px;margin-top:3px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(inst.last_error)}">${escHtml(inst.last_error)}</div>` : ''}
-        </td>
-        <td style="padding:10px 12px;font-size:12px;color:var(--text-muted)">${uptimeStr}</td>
-        <td style="padding:10px 12px">${liveMetrics}</td>
-        <td style="padding:10px 12px;font-size:12px;color:var(--text-muted)">${limitStr}</td>
-        <td style="padding:10px 12px;font-size:11px;font-family:var(--font-mono);color:var(--text-muted)" title="${inst.container_id || ''}">${containerShort}</td>
-        <td style="padding:10px 12px;text-align:right;white-space:nowrap;display:flex;gap:6px;justify-content:flex-end">
-          ${restartBtn}
-          ${actionBtn}
-        </td>
-      </tr>`;
+          ${metricsHtml}
+
+          <!-- Error -->
+          ${inst.last_error ? `
+          <div style="margin-top:10px;padding:8px 10px;background:var(--red-bg);border:1px solid var(--red-border);border-radius:6px;font-size:11px;color:var(--red);font-family:var(--font-mono);word-break:break-all">${escHtml(inst.last_error)}</div>` : ''}
+
+          <!-- Footer: limits + container + actions -->
+          <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border-muted);display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
+            <div style="display:flex;align-items:center;gap:12px;font-size:11px;color:var(--text-muted)">
+              ${limitsText ? `<span title="Resource limits">${limitsText}</span>` : ''}
+              ${containerShort ? `<span style="font-family:var(--font-mono)" title="${escHtml(inst.container_id || '')}">${containerShort}</span>` : ''}
+            </div>
+            <div style="display:flex;gap:6px;flex-shrink:0">
+              <button class="btn btn-secondary btn-sm inst-restart-btn" data-id="${inst.id}" style="font-size:11px;padding:4px 12px">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                Restart
+              </button>
+              <button class="btn btn-danger btn-sm inst-remove-btn" data-id="${inst.id}" style="font-size:11px;padding:4px 12px">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+                Remove
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>`;
     }).join('');
 
-    wrap.innerHTML = `
-      <table style="width:100%;border-collapse:collapse">
-        <thead>
-          <tr style="border-bottom:1px solid var(--border)">
-            <th style="padding:6px 12px;text-align:left;font-size:11px;color:var(--text-muted);font-weight:500">#</th>
-            <th style="padding:6px 12px;text-align:left;font-size:11px;color:var(--text-muted);font-weight:500">Node</th>
-            <th style="padding:6px 12px;text-align:left;font-size:11px;color:var(--text-muted);font-weight:500">Port</th>
-            <th style="padding:6px 12px;text-align:left;font-size:11px;color:var(--text-muted);font-weight:500">Tunnel</th>
-            <th style="padding:6px 12px;text-align:left;font-size:11px;color:var(--text-muted);font-weight:500">Status</th>
-            <th style="padding:6px 12px;text-align:left;font-size:11px;color:var(--text-muted);font-weight:500">Uptime</th>
-            <th style="padding:6px 12px;text-align:left;font-size:11px;color:var(--text-muted);font-weight:500">Live</th>
-            <th style="padding:6px 12px;text-align:left;font-size:11px;color:var(--text-muted);font-weight:500">Limits</th>
-            <th style="padding:6px 12px;text-align:left;font-size:11px;color:var(--text-muted);font-weight:500">Container</th>
-            <th style="padding:6px 12px;text-align:right;font-size:11px;color:var(--text-muted);font-weight:500"></th>
-          </tr>
-        </thead>
-        <tbody>${rows}</tbody>
-      </table>`;
+    wrap.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;padding:4px 0">${cards}</div>`;
 
     wrap.querySelectorAll('.inst-restart-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
@@ -1692,7 +1714,7 @@ async function initInstances() {
         const ok = await confirm('Restart instance?', 'The instance container will be stopped and restarted.');
         if (!ok) return;
         btn.disabled = true;
-        btn.textContent = 'Restarting...';
+        btn.innerHTML = `${spinner} Restarting…`;
         try {
           await api.restartInstance(APP_ID, instanceId);
           toast('Instance restarting…');
@@ -1700,7 +1722,7 @@ async function initInstances() {
         } catch (e) {
           toast(e.message, 'error');
           btn.disabled = false;
-          btn.textContent = 'Restart';
+          btn.innerHTML = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg> Restart`;
         }
       });
     });
@@ -1711,7 +1733,7 @@ async function initInstances() {
         const ok = await confirm('Remove instance?', 'The instance container will be stopped and removed.');
         if (!ok) return;
         btn.disabled = true;
-        btn.textContent = 'Removing...';
+        btn.innerHTML = `${spinner} Removing…`;
         try {
           await api.deleteInstance(APP_ID, instanceId);
           toast('Instance removed');
@@ -1722,7 +1744,7 @@ async function initInstances() {
         } catch (e) {
           toast(e.message, 'error');
           btn.disabled = false;
-          btn.textContent = 'Remove';
+          btn.innerHTML = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg> Remove`;
         }
       });
     });

@@ -2074,6 +2074,57 @@ async def stop_replica_remote(app_id: int, replica_id: int):
     return {"ok": ok, "replica_id": replica_id}
 
 
+@router.get("/{app_id}/replicas/aggregate-stats")
+async def get_replica_aggregate_stats(app_id: int):
+    """Internal endpoint called by the node agent to collect stats across all local
+    replica containers for app_id.  Returns aggregated cpu/memory/net/disk numbers
+    plus status=running when at least one container is up."""
+    import re as _re
+    client = dm._get_client()
+    pattern = _re.compile(rf"^cloudbase-app-{app_id}-replica-(\d+)$")
+    try:
+        containers = client.containers.list(filters={"name": f"cloudbase-app-{app_id}-replica-"})
+    except Exception:
+        return {"status": "stopped", "docker": True}
+
+    running = [c for c in containers if pattern.match(c.name) and c.status == "running"]
+    if not running:
+        return {"status": "stopped", "docker": True}
+
+    frames = []
+    for c in running:
+        s = await asyncio.to_thread(dm.get_container_stats_by_name, c.name)
+        if s:
+            frames.append(s)
+
+    if not frames:
+        return {"status": "stopped", "docker": True}
+
+    def _sum(k):
+        return round(sum(f.get(k) or 0 for f in frames), 2)
+
+    def _avg(k):
+        vals = [f[k] for f in frames if f.get(k) is not None]
+        return round(sum(vals) / len(vals), 2) if vals else 0.0
+
+    def _max(k):
+        vals = [f[k] for f in frames if f.get(k) is not None]
+        return max(vals) if vals else None
+
+    return {
+        "status": "running",
+        "docker": True,
+        "cpu_percent":    _avg("cpu_percent"),
+        "memory_mb":      _sum("memory_mb"),
+        "memory_vms_mb":  _sum("memory_vms_mb"),
+        "net_rx_mb":      _sum("net_rx_mb"),
+        "net_tx_mb":      _sum("net_tx_mb"),
+        "disk_read_mb":   _sum("disk_read_mb"),
+        "disk_write_mb":  _sum("disk_write_mb"),
+        "uptime_seconds": _max("uptime_seconds"),
+    }
+
+
 @router.get("/{app_id}/replicas")
 async def list_replicas(app_id: int, db: AsyncSession = Depends(get_db)):
     await _get_or_404(app_id, db)

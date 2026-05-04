@@ -598,8 +598,13 @@ async def cmd_get_logs_tail(client, state, main_id, payload, headers):
     return resp.json()
 
 async def cmd_get_stats(client, state, main_id, payload, headers):
-    local_id = await _resolve_local_id(client, state, main_id, payload, headers)
-    resp = await client.get(f"{_LOCAL_API_BASE}/api/apps/{local_id}/stats", headers=headers, timeout=20)
+    # On remote nodes the app runs as replica containers (cloudbase-app-{main_id}-replica-{n}),
+    # not as a standalone app container.  Use the aggregate-stats endpoint so we get real
+    # CPU/memory numbers instead of {"status":"stopped"}.
+    resp = await client.get(
+        f"{_LOCAL_API_BASE}/api/apps/{main_id}/replicas/aggregate-stats",
+        headers=headers, timeout=20,
+    )
     resp.raise_for_status()
     return resp.json()
 

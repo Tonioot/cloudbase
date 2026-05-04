@@ -1951,38 +1951,6 @@ async function openNginxModal() {
     }
   };
 
-  const refreshBtn = document.getElementById('nginx-refresh');
-  if (refreshBtn) {
-    refreshBtn.onclick = async () => {
-      refreshBtn.disabled = true;
-      msgEl.style.display = 'none';
-      const orig = refreshBtn.innerHTML;
-      refreshBtn.innerHTML = `${spinner} Refreshing…`;
-      try {
-        const res = await api.nginxRefresh(APP_ID);
-        msgEl.textContent = res.ok
-          ? `Nginx refreshed — ${res.backends?.length ?? 0} backend(s): ${(res.backends || []).join(', ')}`
-          : `Error: ${res.message}`;
-        msgEl.style.display = 'block';
-        msgEl.style.color = res.ok ? 'var(--green)' : 'var(--red)';
-        if (res.ok) {
-          badge.textContent = '● Active';
-          badge.style.color = 'var(--green)';
-          // Reload config text so user sees the new upstream
-          const fresh = await api.getNginxConfig(APP_ID);
-          textarea.value = fresh.content || '';
-        }
-      } catch (e) {
-        msgEl.textContent = e.message;
-        msgEl.style.display = 'block';
-        msgEl.style.color = 'var(--red)';
-      } finally {
-        refreshBtn.disabled = false;
-        refreshBtn.innerHTML = orig;
-      }
-    };
-  }
-
   document.getElementById('nginx-close').onclick = () => { modal.style.display = 'none'; };
   modal.addEventListener('click', e => { if (e.target === modal) modal.style.display = 'none'; });
 }

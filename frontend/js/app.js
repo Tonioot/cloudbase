@@ -20,7 +20,7 @@ let diskData = [];
 let statsTabActive = false;
 let lastStatStatus = null; // 'running' | 'stopped' | null (unknown/loading)
 
-/* â”€â”€â”€ Init â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ─── Init ──────────────────────────────────────────────────────────────── */
 export async function initApp() {
   if (!APP_ID || isNaN(APP_ID)) {
     window.location.href = '/';
@@ -34,7 +34,7 @@ export async function initApp() {
       <div style="display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px;color:#8b949e">
         <div style="font-size:18px;color:#f85149">Failed to load application</div>
         <div style="font-size:13px">${err.message}</div>
-        <a href="/" style="color:#58a6ff;font-size:13px;margin-top:8px">â† Back to dashboard</a>
+        <a href="/" style="color:#58a6ff;font-size:13px;margin-top:8px">← Back to dashboard</a>
       </div>`;
     return;
   }
@@ -69,7 +69,7 @@ function _syncStatsViewFromAppStatus() {
   }
 }
 
-/* â”€â”€â”€ Header â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ─── Header ────────────────────────────────────────────────────────────── */
 function formatPortSummary(app) {
   const replicas = app.replicas || [];
   const running = replicas.filter(r => r.status === 'running');
@@ -85,9 +85,9 @@ function formatPortSummary(app) {
 function renderHeader() {
   document.getElementById('app-name').textContent = app.name;
   document.getElementById('app-name-crumb').textContent = app.name;
-  document.title = `${app.name} â€” Cloudbase`;
+  document.title = `${app.name} — Cloudbase`;
   document.getElementById('app-meta').textContent =
-    `${app.app_type || 'unknown'} Â· ${formatPortSummary(app)}`;
+    `${app.app_type || 'unknown'} · ${formatPortSummary(app)}`;
 
   const typeIconEl = document.getElementById('app-type-icon');
   if (typeIconEl) typeIconEl.innerHTML = typeIcon[app.app_type] || typeIcon.unknown;
@@ -127,9 +127,9 @@ function _updateHeaderStatus_legacy() {
     const hasNginx = !!app.nginx_enabled;
     btnMaint.disabled  = !hasNginx;
     btnUpdate.disabled = !hasNginx;
-    btnMaint.title  = hasNginx ? 'Toggle maintenance mode â€” serves the custom downtime page via nginx'
+    btnMaint.title  = hasNginx ? 'Toggle maintenance mode — serves the custom downtime page via nginx'
                                : 'Requires a configured nginx domain';
-    btnUpdate.title = hasNginx ? 'Toggle update mode â€” serves the custom update page via nginx'
+    btnUpdate.title = hasNginx ? 'Toggle update mode — serves the custom update page via nginx'
                                : 'Requires a configured nginx domain';
     btnMaint.classList.toggle('active-maintenance', !!app.maintenance_mode);
     btnUpdate.classList.toggle('active-update',      !!app.update_mode);
@@ -141,7 +141,7 @@ async function _toggleMode_legacy(type) {
   const btn = document.getElementById(btnId);
   const prev = btn.innerHTML;
   btn.disabled = true;
-  btn.innerHTML = `${spinner} â€¦`;
+  btn.innerHTML = `${spinner} …`;
 
   try {
     const fn = type === 'maintenance' ? api.toggleMaintenanceMode : api.toggleUpdateMode;
@@ -225,7 +225,7 @@ async function quickAction(action) {
   const btn = document.getElementById(`btn-${action}`);
   const prev = btn.innerHTML;
   const transitional = action === 'start' ? 'starting' : action === 'stop' ? 'stopping' : 'restarting';
-  const labels = { start: 'Startingâ€¦', stop: 'Stoppingâ€¦', restart: 'Restartingâ€¦' };
+  const labels = { start: 'Starting…', stop: 'Stopping…', restart: 'Restarting…' };
 
   // Lock all three buttons and show transitional badge
   ['start','stop','restart'].forEach(a => {
@@ -246,7 +246,7 @@ async function quickAction(action) {
     // Remote node: subscribe to events and wait for command completion
     const remoteNodeId = result?.node_id || (app.replicas || []).find(r => r.node_id && !r.node_is_local)?.node_id;
     if (result?.command_id && remoteNodeId) {
-      btn.innerHTML = `${spinner} Pending on nodeâ€¦`;
+      btn.innerHTML = `${spinner} Pending on node…`;
       document.getElementById('app-badge').innerHTML = badge('pending');
       await _waitForRemoteCommand(result.command_id, remoteNodeId);
     } else {
@@ -322,7 +322,7 @@ function _waitForRemoteCommand(commandId, nodeId) {
   });
 }
 
-/* â”€â”€â”€ Tabs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ─── Tabs ──────────────────────────────────────────────────────────────── */
 function initTabs() {
   const tabs = ['logs', 'stats', 'files', 'instances', 'settings', 'activity'];
   tabs.forEach(t => {
@@ -353,7 +353,7 @@ function switchTab(t) {
 
 function teardownTab(t) {
   if (t === 'logs')  { if (logWs) { logWs.close(); logWs = null; } _logsInitDone = false; }
-  if (t === 'stats') { statsTabActive = false; } // Keep statWs alive â€” data keeps accumulating
+  if (t === 'stats') { statsTabActive = false; } // Keep statWs alive — data keeps accumulating
   if (t === 'instances' && _instancesRefreshTimer) { clearInterval(_instancesRefreshTimer); _instancesRefreshTimer = null; }
 }
 
@@ -366,7 +366,7 @@ function setupTab(t) {
   if (t === 'activity')  initActivity();
 }
 
-/* â”€â”€â”€ LOGS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ─── LOGS ──────────────────────────────────────────────────────────────── */
 let _logsInitDone = false;
 
 function initLogs() {
@@ -382,7 +382,7 @@ function initLogs() {
       if (!select) return;
       select.innerHTML = '<option value="primary">Live Stream (build / deploy)</option>';
       instances.forEach(r => {
-        const label = `Instance #${r.id} â€” ${r.node_name || 'local'} :${r.external_port || '?'}`;
+        const label = `Instance #${r.id} — ${r.node_name || 'local'} :${r.external_port || '?'}`;
         const opt = document.createElement('option');
         opt.value = String(r.id);
         opt.textContent = label;
@@ -411,7 +411,7 @@ function _switchLogInstance() {
     // Stop live stream if active
     if (logWs) { logWs.close(); logWs = null; }
     if (refreshBtn) refreshBtn.style.display = '';
-    if (hint) hint.textContent = 'Snapshot â€” last 200 lines';
+    if (hint) hint.textContent = 'Snapshot — last 200 lines';
     _loadReplicaLogs(parseInt(val, 10));
   }
 }
@@ -420,7 +420,7 @@ function _startPrimaryLogs() {
   const terminal = document.getElementById('log-terminal');
   if (logWs) { logWs.close(); logWs = null; }
 
-  terminal.innerHTML = `<div class="log-empty">Waiting for log outputâ€¦</div>`;
+  terminal.innerHTML = `<div class="log-empty">Waiting for log output…</div>`;
   logLines = [];
 
   logWs = wsLogs(APP_ID, line => {
@@ -441,7 +441,7 @@ function _startPrimaryLogs() {
 
 async function _loadReplicaLogs(replicaId) {
   const terminal = document.getElementById('log-terminal');
-  terminal.innerHTML = `<div class="log-empty">Loading logsâ€¦</div>`;
+  terminal.innerHTML = `<div class="log-empty">Loading logs…</div>`;
   logLines = [];
   try {
     const data = await api.getInstanceLogs(APP_ID, replicaId, 200);
@@ -474,15 +474,15 @@ function _logAction(action, phase) {
   const color  = colors[action] || 'var(--accent)';
 
   const labels = {
-    start:   { begin: 'â–¶  Starting appâ€¦',              done: 'â–¶  App started',              fail: 'â–¶  Start failed' },
-    stop:    { begin: 'â–   Stopping appâ€¦',               done: 'â–   App stopped',               fail: 'â–   Stop failed' },
-    restart: { begin: 'â†º  Restarting appâ€¦',             done: 'â†º  App restarted',             fail: 'â†º  Restart failed' },
+    start:   { begin: '▶  Starting app…',              done: '▶  App started',              fail: '▶  Start failed' },
+    stop:    { begin: '■  Stopping app…',               done: '■  App stopped',               fail: '■  Stop failed' },
+    restart: { begin: '↺  Restarting app…',             done: '↺  App restarted',             fail: '↺  Restart failed' },
   };
   const text = labels[action]?.[phase] ?? `${action} ${phase}`;
 
   const sep = document.createElement('div');
   sep.className = 'log-line log-action';
-  sep.innerHTML = `<span class="log-num">    </span><span class="log-text" style="color:${color};font-weight:600;letter-spacing:.02em">â”€â”€ ${text} â”€â”€ ${ts} â”€â”€</span>`;
+  sep.innerHTML = `<span class="log-num">    </span><span class="log-text" style="color:${color};font-weight:600;letter-spacing:.02em">── ${text} ── ${ts} ──</span>`;
   terminal.appendChild(sep);
   terminal.scrollTop = terminal.scrollHeight;
 }
@@ -491,13 +491,13 @@ function escHtml(s) {
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
-/* â”€â”€â”€ STATS â€” background collection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ─── STATS — background collection ─────────────────────────────────────── */
 function startBgStats() {
   statWs = wsStats(APP_ID, handleStatData);
 }
 
 function fmtMb(mb) {
-  if (mb === null || mb === undefined) return 'â€”';
+  if (mb === null || mb === undefined) return '—';
   if (mb >= 1024) return `${(mb / 1024).toFixed(2)} GB`;
   return `${mb.toFixed(1)} MB`;
 }
@@ -509,11 +509,11 @@ function _updateStatsContextBar(instanceCount) {
   if (!bar) return;
   if (!instanceCount || instanceCount <= 0) { bar.style.display = 'none'; return; }
   _lastInstanceCount = instanceCount;
-  const cpuNote = instanceCount > 1 ? 'CPU avg Â· memory/network/disk sum' : '';
+  const cpuNote = instanceCount > 1 ? 'CPU avg · memory/network/disk sum' : '';
   bar.innerHTML = `
     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>
-    <span>${instanceCount} instance${instanceCount !== 1 ? 's' : ''}${instanceCount > 1 ? ' Â· aggregated' : ''}</span>
-    ${cpuNote ? `<span style="color:var(--border);margin:0 2px">Â·</span><span style="font-style:italic">${cpuNote}</span>` : ''}`;
+    <span>${instanceCount} instance${instanceCount !== 1 ? 's' : ''}${instanceCount > 1 ? ' · aggregated' : ''}</span>
+    ${cpuNote ? `<span style="color:var(--border);margin:0 2px">·</span><span style="font-style:italic">${cpuNote}</span>` : ''}`;
   bar.style.display = 'flex';
 }
 
@@ -529,13 +529,13 @@ function handleStatData(data) {
     }
     return;
   }
-  // Per-replica frame â€” not an aggregated app-level frame, skip for charts
+  // Per-replica frame — not an aggregated app-level frame, skip for charts
   if (data.replica_id != null && data.cpu_percent == null) return;
   lastStatStatus = 'running';
 
   if (data._instance_count) _updateStatsContextBar(data._instance_count);
 
-  // Always accumulate â€” even while on a different tab
+  // Always accumulate — even while on a different tab
   const now = new Date().toLocaleTimeString('nl', { hour:'2-digit', minute:'2-digit' });
   const timestamp = data.timestamp || Date.now();
   cpuData.push({ t: now, v: data.cpu_percent || 0, ts: timestamp });
@@ -562,16 +562,16 @@ function handleStatData(data) {
     document.getElementById('sl-r6').textContent = 'Status';
     document.getElementById('sl-r7').textContent = 'Net RX';
     document.getElementById('sl-r8').textContent = 'Net TX';
-    document.getElementById('s-r6').textContent  = data.status || 'â€”';
+    document.getElementById('s-r6').textContent  = data.status || '—';
     document.getElementById('s-r7').textContent  = fmtMb(data.net_rx_mb);
     document.getElementById('s-r8').textContent  = fmtMb(data.net_tx_mb);
   } else {
     document.getElementById('sl-r6').textContent = 'PID';
     document.getElementById('sl-r7').textContent = 'Threads';
     document.getElementById('sl-r8').textContent = 'Connections';
-    document.getElementById('s-r6').textContent  = data.pid ?? 'â€”';
-    document.getElementById('s-r7').textContent  = data.num_threads ?? 'â€”';
-    document.getElementById('s-r8').textContent  = data.num_connections ?? 'â€”';
+    document.getElementById('s-r6').textContent  = data.pid ?? '—';
+    document.getElementById('s-r7').textContent  = data.num_threads ?? '—';
+    document.getElementById('s-r8').textContent  = data.num_connections ?? '—';
   }
   document.getElementById('s-disk-read').textContent  = fmtMb(data.disk_read_mb);
   document.getElementById('s-disk-write').textContent = fmtMb(data.disk_write_mb);
@@ -605,12 +605,12 @@ function initStats() {
 
   const histSection = document.getElementById('stats-history-section');
   if (lastStatStatus === 'stopped') {
-    // App is known stopped â€” show stopped state immediately
+    // App is known stopped — show stopped state immediately
     document.getElementById('stats-stopped').style.display = 'flex';
     document.getElementById('stats-content').style.display = 'none';
     if (histSection) histSection.style.display = 'none';
   } else if (cpuData.length > 0) {
-    // We have buffered data â€” show it immediately
+    // We have buffered data — show it immediately
     document.getElementById('stats-stopped').style.display = 'none';
     document.getElementById('stats-content').style.display = 'block';
     if (histSection) histSection.style.display = '';
@@ -620,12 +620,12 @@ function initStats() {
     updateChart(chartNet,  netData);
     updateChart(chartDisk, diskData);
   } else if (app.status === 'running') {
-    // App is running but WebSocket hasn't sent data yet â€” show content skeleton, not spinner
+    // App is running but WebSocket hasn't sent data yet — show content skeleton, not spinner
     document.getElementById('stats-stopped').style.display = 'none';
     document.getElementById('stats-content').style.display = 'block';
     if (histSection) histSection.style.display = '';
   } else {
-    // Status unknown â€” show stopped state rather than an indefinite spinner
+    // Status unknown — show stopped state rather than an indefinite spinner
     document.getElementById('stats-stopped').style.display = 'flex';
     document.getElementById('stats-content').style.display = 'none';
     if (histSection) histSection.style.display = 'none';
@@ -714,7 +714,7 @@ function drawSparkline(ctx, canvas, data, color, unit, opts = {}) {
 
   const vals  = data.map(d => d.v);
   const rawMax = Math.max(...vals);
-  // Nice round ceiling: % â†’ nearest 5, MB â†’ nearest 50
+  // Nice round ceiling: % → nearest 5, MB → nearest 50
   const yMax = rawMax === 0 ? 10
     : unit === ' MB' ? Math.max(Math.ceil(rawMax / 50) * 50, 50)
     : Math.max(Math.ceil(rawMax / 5) * 5, 5);
@@ -722,8 +722,8 @@ function drawSparkline(ctx, canvas, data, color, unit, opts = {}) {
   // Dynamic left padding: MB labels are wider
   const pL = unit === ' MB' ? 46 * dpr : 38 * dpr;
   const pR = 10 * dpr;   // right
-  const pT = 24 * dpr;   // top   â€” current-value label
-  const pB = 22 * dpr;   // bottom â€” time labels
+  const pT = 24 * dpr;   // top   — current-value label
+  const pB = 22 * dpr;   // bottom — time labels
 
   const cW = W - pL - pR;
   const cH = H - pT - pB;
@@ -750,7 +750,7 @@ function drawSparkline(ctx, canvas, data, color, unit, opts = {}) {
     ctx.fillText(lbl, pL - 5 * dpr, y);
   }
 
-  // X-axis time labels â€” calculate max labels that fit without overlap
+  // X-axis time labels — calculate max labels that fit without overlap
   const approxCharPx = 6.5 * dpr;
   const sampleLbl = data[0].t || '';
   const lblPx = sampleLbl.length * approxCharPx + 20 * dpr; // label width + generous gap
@@ -804,7 +804,7 @@ function drawSparkline(ctx, canvas, data, color, unit, opts = {}) {
   ctx.lineCap     = 'round';
   ctx.stroke();
 
-  // Current value â€” top right, coloured
+  // Current value — top right, coloured
   const cur = vals[vals.length - 1];
   const curLbl = unit === ' MB'
     ? (cur >= 100 ? `${cur.toFixed(0)} MB` : `${cur.toFixed(1)} MB`)
@@ -816,7 +816,7 @@ function drawSparkline(ctx, canvas, data, color, unit, opts = {}) {
   ctx.fillText(curLbl, W - pR, 4 * dpr);
 }
 
-/* â”€â”€â”€ FILES â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ─── FILES ─────────────────────────────────────────────────────────────── */
 let currentFilePath = '';
 
 async function initFiles() {
@@ -828,7 +828,7 @@ async function loadDir(path) {
   const list = document.getElementById('files-list');
   const bcrumb = document.getElementById('files-breadcrumb');
   const isRemote = (app.replicas || []).some(r => r.node_id && !r.node_is_local);
-  list.innerHTML = `<div style="padding:16px;color:var(--text-muted);font-size:12px">${isRemote && path === '' ? 'Fetching from nodeâ€¦' : 'Loadingâ€¦'}</div>`;
+  list.innerHTML = `<div style="padding:16px;color:var(--text-muted);font-size:12px">${isRemote && path === '' ? 'Fetching from node…' : 'Loading…'}</div>`;
 
   try {
     const data = await api.listFiles(APP_ID, path);
@@ -903,7 +903,7 @@ async function openFile(entry, el) {
   header.innerHTML = `
     ${icon.file}
     <span class="file-path">${entry.path}</span>
-    <span class="file-mime">Loadingâ€¦</span>`;
+    <span class="file-mime">Loading…</span>`;
 
   hint.style.display    = 'none';
   content.style.display = 'block';
@@ -914,7 +914,7 @@ async function openFile(entry, el) {
     header.querySelector('.file-mime').textContent = data.mime || '';
 
     if (data.binary) {
-      content.textContent = '[Binary file â€” cannot display]';
+      content.textContent = '[Binary file — cannot display]';
     } else {
       content.textContent = data.content || '';
     }
@@ -923,7 +923,7 @@ async function openFile(entry, el) {
   }
 }
 
-/* â”€â”€â”€ SETTINGS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */function showCertPicker(inputEl, items, label, displayEl) {
+/* ─── SETTINGS ──────────────────────────────────────────────────────────── */function showCertPicker(inputEl, items, label, displayEl) {
   document.querySelectorAll('.cert-picker').forEach(p => p.remove());
   if (!items.length) { toast(`No ${label} found in app folder`, 'warn'); return; }
 
@@ -980,7 +980,7 @@ async function initActivity() {
     };
     const rows = entries.map(e => {
       const color = badgeColor[e.action] || 'var(--text-muted)';
-      const detail = e.detail ? Object.entries(e.detail).filter(([k]) => k !== 'name').map(([k,v]) => `${k}: ${v}`).join(' Â· ') : '';
+      const detail = e.detail ? Object.entries(e.detail).filter(([k]) => k !== 'name').map(([k,v]) => `${k}: ${v}`).join(' · ') : '';
       return `<tr>
         <td style="white-space:nowrap;font-size:11px;color:var(--text-muted);padding:6px 10px">${new Date(e.timestamp).toLocaleString()}</td>
         <td style="padding:6px 10px"><span style="font-size:11px;font-weight:600;color:${color};font-family:monospace">${e.action}</span></td>
@@ -1008,7 +1008,7 @@ function initSettings() {
   // Info rows
   document.getElementById('si-name').textContent  = app.name;
   document.getElementById('si-repo').textContent  = app.repo_url;
-  document.getElementById('si-type').textContent  = app.app_type || 'â€”';
+  document.getElementById('si-type').textContent  = app.app_type || '—';
   document.getElementById('si-date').textContent  = fmtDate(app.created_at);
 
   // Form fields
@@ -1067,7 +1067,6 @@ function initSettings() {
   // Action tiles
   document.getElementById('tile-pull').onclick = () => tileAction('pull', 'Pull');
   document.getElementById('tile-nginx').onclick = openNginxModal;
-  document.getElementById('tile-dns-setup').onclick = openDnsModal;
 
   const zdBtn = document.getElementById('btn-zero-downtime');
   if (zdBtn) {
@@ -1082,10 +1081,10 @@ function initSettings() {
       if (!ok) return;
       zdBtn.disabled = true;
       const orig = zdBtn.innerHTML;
-      zdBtn.textContent = 'Restartingâ€¦';
+      zdBtn.textContent = 'Restarting…';
       try {
         const res = await api.deployZeroDowntime(APP_ID);
-        toast(`Zero-downtime restart complete â€” instance ${res.instance_id}`, 'success');
+        toast(`Zero-downtime restart complete — instance ${res.instance_id}`, 'success');
       } catch (e) {
         toast(e.message || 'Zero-downtime restart failed', 'error');
       } finally {
@@ -1103,7 +1102,7 @@ function initSettings() {
   // Cert scan buttons (search within app folder only)
   document.getElementById('cfg-scan-cert').onclick = async () => {
     const btn = document.getElementById('cfg-scan-cert');
-    btn.disabled = true; btn.textContent = 'Scanningâ€¦';
+    btn.disabled = true; btn.textContent = 'Scanning…';
     try {
       const { certs } = await api.discoverAppCerts(APP_ID);
       showCertPicker(document.getElementById('cfg-cert'), certs, 'certificates', document.getElementById('cfg-cert-name'));
@@ -1112,7 +1111,7 @@ function initSettings() {
   };
   document.getElementById('cfg-scan-key').onclick = async () => {
     const btn = document.getElementById('cfg-scan-key');
-    btn.disabled = true; btn.textContent = 'Scanningâ€¦';
+    btn.disabled = true; btn.textContent = 'Scanning…';
     try {
       const { keys } = await api.discoverAppCerts(APP_ID);
       showCertPicker(document.getElementById('cfg-key'), keys, 'private keys', document.getElementById('cfg-key-name'));
@@ -1181,7 +1180,7 @@ function _disableSettingsForViewer() {
   }
 }
 
-/* â”€â”€â”€ Maintenance pages settings â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ─── Maintenance pages settings ────────────────────────────────────────── */
 let _maintModalType = 'downtime'; // currently open card type
 let _maintLogoData  = null;       // base64 data-URL or null (no logo)
 
@@ -1253,8 +1252,8 @@ function _openMaintModal_legacy(type) {
   document.getElementById('maint-modal-sub').textContent   = isDown
     ? 'Shown automatically on 502/503 (crash or stop) and when Maintenance mode is on'
     : isRestart
-    ? 'Shown automatically whenever the Restart button is pressed â€” clears when the app is back up'
-    : 'Shown when Update Mode is manually enabled â€” ideal for planned deployments';
+    ? 'Shown automatically whenever the Restart button is pressed — clears when the app is back up'
+    : 'Shown when Update Mode is manually enabled — ideal for planned deployments';
 
   const color = cfg.color || (isDown ? '#f85149' : isRestart ? '#388bfd' : '#f0883e');
   document.getElementById('maint-modal-title-input').value  = cfg.title   || '';
@@ -1341,7 +1340,7 @@ function _initMaintModal() {
   document.getElementById('maint-modal-close').addEventListener('click', close);
   document.getElementById('maint-modal-cancel').addEventListener('click', close);
 
-  // Color picker â†” hex sync
+  // Color picker ↔ hex sync
   const picker = document.getElementById('maint-modal-color-picker');
   const hex    = document.getElementById('maint-modal-color');
   picker.addEventListener('input', () => { hex.value = picker.value; });
@@ -1434,7 +1433,7 @@ async function saveMaintenancePage(type) {
   const btn  = document.getElementById('maint-modal-save');
   const prev = btn.innerHTML;
   btn.disabled = true;
-  btn.innerHTML = `${spinner} Savingâ€¦`;
+  btn.innerHTML = `${spinner} Saving…`;
 
   const getVal = id => document.getElementById(id)?.value ?? '';
 
@@ -1538,7 +1537,7 @@ async function _initMoveToNode() {
       'The app will be stopped and redeployed. This may take a moment.');
     if (!ok) return;
     btn.disabled = true;
-    btn.textContent = 'Movingâ€¦';
+    btn.textContent = 'Moving…';
     try {
       await api.moveApp(APP_ID, targetId, port);
       toast(`"${app.name}" is being moved to ${targetName}`);
@@ -1551,7 +1550,7 @@ async function _initMoveToNode() {
   });
 }
 
-/* â”€â”€â”€ INSTANCES TAB â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ─── INSTANCES TAB ─────────────────────────────────────────────────────── */
 let _instancesRefreshTimer = null;
 
 async function initInstances() {
@@ -1586,8 +1585,8 @@ async function initInstances() {
 
       const nodeName = inst.node_name || 'Primary Node';
 
-      // Uptime â€” DB timestamps are UTC without Z suffix; append Z so browser parses as UTC
-      let uptimeStr = 'â€”';
+      // Uptime — DB timestamps are UTC without Z suffix; append Z so browser parses as UTC
+      let uptimeStr = '—';
       const uptimeSrc = isRunning ? (inst.updated_at || inst.created_at) : inst.created_at;
       if (uptimeSrc) {
         const ts = uptimeSrc.endsWith('Z') || uptimeSrc.includes('+') ? uptimeSrc : uptimeSrc + 'Z';
@@ -1640,12 +1639,12 @@ async function initInstances() {
             </div>` : ''}
           </div>`;
       } else if (isRunning) {
-        metricsHtml = `<div style="margin-top:8px;padding-top:7px;border-top:1px solid var(--border-muted);font-size:10px;color:var(--text-muted)">Collecting metricsâ€¦</div>`;
+        metricsHtml = `<div style="margin-top:8px;padding-top:7px;border-top:1px solid var(--border-muted);font-size:10px;color:var(--text-muted)">Collecting metrics…</div>`;
       }
 
       const cpuLimit = inst.docker_cpu_limit != null ? `${inst.docker_cpu_limit} CPU` : null;
       const memLimit = inst.docker_memory_limit_mb != null ? `${inst.docker_memory_limit_mb}MB` : null;
-      const limitsText = [cpuLimit, memLimit].filter(Boolean).join(' Â· ');
+      const limitsText = [cpuLimit, memLimit].filter(Boolean).join(' · ');
       const containerShort = inst.container_id ? inst.container_id.slice(0, 12) : null;
 
       return `
@@ -1662,7 +1661,7 @@ async function initInstances() {
           <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px">
             <div>
               <div style="font-size:9px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);margin-bottom:2px">Port</div>
-              <div style="font-size:12px;font-weight:600;font-family:var(--font-mono);color:var(--text-primary)">:${inst.external_port || 'â€”'}</div>
+              <div style="font-size:12px;font-weight:600;font-family:var(--font-mono);color:var(--text-primary)">:${inst.external_port || '—'}</div>
             </div>
             <div>
               <div style="font-size:9px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);margin-bottom:2px">Uptime</div>
@@ -1692,7 +1691,7 @@ async function initInstances() {
       </div>`;
     }).join('');
 
-    wrap.innerHTML = `<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px">${cards}</div>`;
+    wrap.innerHTML = `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">${cards}</div>`;
 
     wrap.querySelectorAll('.inst-restart-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
@@ -1700,10 +1699,10 @@ async function initInstances() {
         const ok = await confirm('Restart instance?', 'The instance container will be stopped and restarted.');
         if (!ok) return;
         btn.disabled = true;
-        btn.innerHTML = `${spinner} Restartingâ€¦`;
+        btn.innerHTML = `${spinner} Restarting…`;
         try {
           await api.restartInstance(APP_ID, instanceId);
-          toast('Instance restartingâ€¦');
+          toast('Instance restarting…');
           await renderInstances();
         } catch (e) {
           toast(e.message, 'error');
@@ -1719,7 +1718,7 @@ async function initInstances() {
         const ok = await confirm('Remove instance?', 'The instance container will be stopped and removed.');
         if (!ok) return;
         btn.disabled = true;
-        btn.innerHTML = `${spinner} Removingâ€¦`;
+        btn.innerHTML = `${spinner} Removing…`;
         try {
           await api.deleteInstance(APP_ID, instanceId);
           toast('Instance removed');
@@ -1742,6 +1741,33 @@ async function initInstances() {
 
   const refreshBtn = document.getElementById('btn-instances-refresh');
   if (refreshBtn) refreshBtn.onclick = renderInstances;
+
+  // DNS Setup modal
+  const dnsBtn = document.getElementById('btn-dns-setup');
+  const dnsModal = document.getElementById('dns-setup-modal');
+  const dnsModalClose = document.getElementById('dns-modal-close');
+  if (dnsBtn && dnsModal) {
+    dnsBtn.onclick = () => {
+      // Populate server IP from current hostname (where nginx/panel runs)
+      const serverIp = window.location.hostname;
+      const ipEl = document.getElementById('dns-server-ip');
+      const domainEl = document.getElementById('dns-app-domain');
+      if (ipEl) {
+        ipEl.textContent = serverIp;
+        ipEl.onclick = () => {
+          navigator.clipboard.writeText(serverIp).then(() => toast('IP copied', 'success')).catch(() => {});
+        };
+      }
+      if (domainEl) {
+        const domain = app && app.domain ? app.domain : '(no domain configured)';
+        domainEl.textContent = domain;
+        domainEl.style.color = app && app.domain ? 'var(--text-primary)' : 'var(--text-muted)';
+      }
+      dnsModal.style.display = 'flex';
+    };
+    if (dnsModalClose) dnsModalClose.onclick = () => { dnsModal.style.display = 'none'; };
+    dnsModal.addEventListener('click', e => { if (e.target === dnsModal) dnsModal.style.display = 'none'; });
+  }
 
   const addBtn = document.getElementById('btn-add-instance');
   if (addBtn) {
@@ -1858,80 +1884,12 @@ async function initInstances() {
   }
 }
 
-async function openDnsModal() {
-  const modal = document.getElementById('dns-modal');
-  const body  = document.getElementById('dns-modal-body');
-  if (!modal || !body) return;
-  modal.style.display = 'flex';
 
-  document.getElementById('dns-modal-close').onclick = () => { modal.style.display = 'none'; };
-  modal.addEventListener('click', e => { if (e.target === modal) modal.style.display = 'none'; });
-
-  let serverIp = null;
-  try {
-    const nodes = await api.listNodes();
-    const primary = nodes.find(n => n.is_local);
-    serverIp = primary?.public_host || null;
-  } catch { /* not critical */ }
-
-  const domain     = app?.domain || null;
-  const extras     = (() => { try { return JSON.parse(app?.extra_domains || '[]'); } catch { return []; } })();
-  const allDomains = [domain, ...extras].filter(Boolean);
-
-  const ipBlock = serverIp
-    ? `<div style="display:flex;align-items:center;gap:8px;background:var(--bg-muted);border:1px solid var(--border);border-radius:6px;padding:9px 12px;margin-bottom:6px">
-        <code style="font-family:var(--font-mono);font-size:14px;font-weight:600;color:var(--text-primary);flex:1">${escHtml(serverIp)}</code>
-        <button onclick="navigator.clipboard.writeText('${escHtml(serverIp)}').then(()=>toast('Copied!'))"
-          style="background:none;border:none;cursor:pointer;color:var(--text-muted);padding:2px;line-height:0" title="Copy">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-        </button>
-      </div>`
-    : `<div style="background:var(--yellow-bg,#fff8e1);border:1px solid var(--yellow-border,#ffe082);border-radius:6px;padding:9px 12px;font-size:12px;color:var(--text-secondary);margin-bottom:6px">
-        No public IP configured for primary node. Set <strong>Public Host</strong> in the node settings.
-      </div>`;
-
-  const domainsBlock = allDomains.length
-    ? allDomains.map(d => `<div style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-secondary);padding:3px 0">
-        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-        <code style="font-family:var(--font-mono)">${escHtml(d)}</code>
-      </div>`).join('')
-    : `<div style="font-size:12px;color:var(--text-muted);padding:3px 0">No domain configured for this app yet.</div>`;
-
-  body.innerHTML = `
-    <div style="margin-bottom:18px">
-      <div style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Stap 1 &mdash; Zet je A-record naar</div>
-      ${ipBlock}
-      <div style="font-size:11px;color:var(--text-muted)">Maak een <strong>A record</strong> bij je DNS-provider aan en wijs het naar dit IP-adres.</div>
-    </div>
-
-    <div style="margin-bottom:18px">
-      <div style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Geconfigureerde domeinen</div>
-      ${domainsBlock}
-    </div>
-
-    <div style="background:var(--bg-muted);border:1px solid var(--border-muted);border-radius:8px;padding:12px 14px">
-      <div style="display:flex;gap:10px;align-items:flex-start">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:1px"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-        <div style="font-size:12px;color:var(--text-secondary);line-height:1.6">
-          <strong style="color:var(--text-primary)">Automatisch load balancing</strong><br>
-          Alle traffic gaat via nginx op de primary node. Nginx verdeelt requests automatisch
-          over <strong>alle actieve instances</strong> &mdash; ongeacht op welke node ze draaien.
-          Remote instances worden via een versleutelde tunnel bereikt.
-          Voeg gewoon meer instances toe en nginx pakt ze direct mee.
-        </div>
-      </div>
-    </div>
-
-    <div style="margin-top:14px;font-size:11px;color:var(--text-muted);line-height:1.5">
-      <strong>TTL tip:</strong> Gebruik een lage TTL (bijv. 60s) zolang je nog aanpassingen maakt.
-      Voor productie is 300&ndash;3600s gangbaar.
-    </div>`;
-}
 
 async function saveSettings() {
   const btn = document.getElementById('btn-save');
   btn.disabled = true;
-  btn.innerHTML = `${spinner} Savingâ€¦`;
+  btn.innerHTML = `${spinner} Saving…`;
 
   const env_vars = {};
   document.querySelectorAll('#cfg-env-rows .env-row').forEach(row => {
@@ -1990,15 +1948,15 @@ async function openNginxModal() {
   const badge    = document.getElementById('nginx-status-badge');
   const msgEl    = document.getElementById('nginx-save-msg');
   msgEl.style.display = 'none';
-  textarea.value = 'Loadingâ€¦';
+  textarea.value = 'Loading…';
   modal.style.display = 'flex';
 
   try {
     const data = await api.getNginxConfig(APP_ID);
     pathEl.textContent = data.path;
-    badge.textContent  = data.active ? 'â— Active' : data.exists ? 'â—‹ Inactive' : 'â—‹ Not created';
+    badge.textContent  = data.active ? '● Active' : data.exists ? '○ Inactive' : '○ Not created';
     badge.style.color  = data.active ? 'var(--green)' : 'var(--text-muted)';
-    textarea.value = data.content || '# No config yet â€” fill in domain/port in Settings and save to generate one';
+    textarea.value = data.content || '# No config yet — fill in domain/port in Settings and save to generate one';
   } catch (e) {
     textarea.value = `Error: ${e.message}`;
   }
@@ -2012,7 +1970,7 @@ async function openNginxModal() {
       msgEl.textContent = res.ok ? 'Saved & nginx reloaded successfully.' : `Error: ${res.message}`;
       msgEl.style.display = 'block';
       msgEl.style.color = res.ok ? 'var(--green)' : 'var(--red)';
-      if (res.ok) { badge.textContent = 'â— Active'; badge.style.color = 'var(--green)'; }
+      if (res.ok) { badge.textContent = '● Active'; badge.style.color = 'var(--green)'; }
     } catch (e) {
       msgEl.textContent = e.message; msgEl.style.display = 'block'; msgEl.style.color = 'var(--red)';
     } finally {
@@ -2070,7 +2028,7 @@ function openActionLogsDialog(title) {
         <pre class="action-log-pre" id="action-log-pre"></pre>
       </div>
       <div class="dialog-actions action-log-actions">
-        <div class="action-log-status" id="action-log-status">Runningâ€¦</div>
+        <div class="action-log-status" id="action-log-status">Running…</div>
         <button class="btn btn-primary" id="action-log-close">Close</button>
       </div>
     </div>`;
@@ -2107,7 +2065,7 @@ async function openCommitPicker() {
           <button class="btn btn-secondary btn-sm" id="commit-latest">Latest on current branch</button>
         </div>
         <div class="commit-picker-list" id="commit-picker-list">
-          <div class="commit-picker-loading">Loading commitsâ€¦</div>
+          <div class="commit-picker-loading">Loading commits…</div>
         </div>
       </div>
       <div class="dialog-actions">

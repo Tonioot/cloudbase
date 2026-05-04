@@ -2422,8 +2422,9 @@ async def scale_app(app_id: int, req: ScaleRequest, db: AsyncSession = Depends(g
             await db.commit()
             raise HTTPException(500, f"Failed to start replica: {e}") from e
 
-        # Regenerate nginx with new backend
+        # Regenerate nginx with new backend — flush first so the new running replica is visible
         if app.nginx_enabled and app.domain:
+            await db.flush()
             backends = await _get_nginx_backends(app, db, local_node)
             _ensure_maintenance_files(app, app_id)
             _ssl_cert, _ssl_key = _resolve_ssl_paths(app.ssl_cert_path, app.ssl_key_path)

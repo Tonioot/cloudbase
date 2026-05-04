@@ -1301,30 +1301,19 @@ async def _regen_nginx_for_app(app_id: int) -> None:
         )
         running_replicas = rep_result.all()
 
-        app_node_result = await db.execute(select(Node).where(Node.id == app.node_id))
-        app_node = app_node_result.scalar_one_or_none() or local_node
-        main_port = app.external_port or app.port
-
         if not running_replicas:
-            backends: "int | list" = main_port
-        else:
-            def _addr(node: Optional[Node], external_port: Optional[int], tunnel_port: Optional[int]) -> Optional[str]:
-                if node is None or node.is_local:
-                    return f"127.0.0.1:{external_port}" if external_port else None
-                # Remote node: use the reverse tunnel port on the main node
-                return f"127.0.0.1:{tunnel_port}" if tunnel_port else None
+            return
 
-            blist: list[str] = []
-            if main_port:
-                if app_node.is_local:
-                    blist.append(f"127.0.0.1:{main_port}")
-                elif app_node.public_host:
-                    blist.append(f"{app_node.public_host}:{main_port}")
-            for replica, r_node in running_replicas:
-                addr = _addr(r_node, replica.external_port, replica.tunnel_port)
-                if addr:
-                    blist.append(addr)
-            backends = blist if len(blist) > 1 else main_port
+        blist: list[str] = []
+        for replica, r_node in running_replicas:
+            is_remote = r_node is not None and not r_node.is_local
+            if is_remote:
+                if replica.tunnel_port:
+                    blist.append(f"127.0.0.1:{replica.tunnel_port}")
+            else:
+                if replica.external_port:
+                    blist.append(f"127.0.0.1:{replica.external_port}")
+        backends: "list[str]" = blist
 
         if not backends:
             return

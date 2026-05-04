@@ -336,6 +336,26 @@ async def _remote_replica_stats_poller():
                             _rlog.info("poll stored stats for %d replicas on node=%d", len(replicas), node_id)
                         elif s.get("status") == "stopped":
                             _rlog.info("poll node=%d app=%d temporarily stopped during restart", node_id, app_id)
+                            # Fallback to per-replica stats to avoid losing metrics when
+                            # app-level aggregate briefly reports stopped.
+                            for replica in replicas:
+                                try:
+                                    async with AsyncSessionLocal() as rdb:
+                                        rcmd = await queue_node_command(
+                                            rdb,
+                                            node_id=node_id,
+                                            app_id=app_id,
+                                            command_type="get_replica_stats",
+                                            payload={"app_id": app_id, "app_name": app_name, "replica_id": replica.id},
+                                            allow_existing_inflight=True,
+                                        )
+                                        rdone = await wait_for_node_command(rdb, rcmd.id, timeout_seconds=12)
+                                    if rdone.status == "done" and rdone.result:
+                                        rs = json.loads(rdone.result)
+                                        if rs.get("cpu_percent") is not None:
+                                            pm.set_replica_stats(replica.id, {"replica_id": replica.id, **rs})
+                                except Exception:
+                                    continue
                 except Exception as _e:
                     logging.getLogger("cloudbase.remote_stats").warning(
                         "remote stats poll failed node=%d app=%d: %s", node_id, app_id, _e)

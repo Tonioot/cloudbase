@@ -608,6 +608,19 @@ async def cmd_get_stats(client, state, main_id, payload, headers):
     resp.raise_for_status()
     return resp.json()
 
+
+async def cmd_get_replica_stats(client, state, main_id, payload, headers):
+    replica_id = payload.get("replica_id")
+    if replica_id is None:
+        return {"status": "stopped", "docker": True, "error": "missing replica_id"}
+    resp = await client.get(
+        f"{_LOCAL_API_BASE}/api/apps/{main_id}/replicas/{int(replica_id)}/stats-remote",
+        headers=headers,
+        timeout=20,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
 async def cmd_deploy_app(client, state, main_id, payload, headers):
     resp = await client.post(f"{_LOCAL_API_BASE}/api/apps", json=payload, headers=headers, timeout=300)
     if resp.status_code == 400 and "already exists" in resp.text:
@@ -959,6 +972,7 @@ COMMAND_HANDLERS: Dict[str, Callable] = {
     "get_logs_tail": cmd_get_logs_tail,
     "get_replica_logs": cmd_get_replica_logs,
     "get_stats": cmd_get_stats,
+    "get_replica_stats": cmd_get_replica_stats,
     "deploy_app": cmd_deploy_app,
     "upload_cert": cmd_upload_cert,
     "get_agent_logs": cmd_get_agent_logs,

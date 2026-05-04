@@ -2125,6 +2125,22 @@ async def get_replica_aggregate_stats(app_id: int):
     }
 
 
+@router.get("/{app_id}/replicas/{replica_id}/stats-remote")
+async def get_replica_stats_remote(app_id: int, replica_id: int):
+    """Internal endpoint called by node-agent to get one replica container's stats.
+
+    This avoids app-level aggregate ambiguity when replica mapping is in transition.
+    """
+    import time as _time
+    cname = dm.replica_container_name(app_id, replica_id)
+    stats = await asyncio.to_thread(dm.get_container_stats_by_name, cname)
+    if not stats or stats.get("status") != "running":
+        return {"status": "stopped", "docker": True}
+    stats["timestamp"] = int(_time.time() * 1000)
+    stats["replica_id"] = replica_id
+    return stats
+
+
 @router.get("/{app_id}/replicas")
 async def list_replicas(app_id: int, db: AsyncSession = Depends(get_db)):
     await _get_or_404(app_id, db)
@@ -2181,8 +2197,9 @@ async def debug_instance_stats(app_id: int, db: AsyncSession = Depends(get_db)):
             async with _ASL() as cmd_db:
                 cmd = await queue_node_command(
                     cmd_db, node_id=r.node_id, app_id=r.app_id,
-                    command_type="get_stats",
-                    payload={"app_id": r.app_id, "app_name": app_obj.name if app_obj else ""},
+                    command_type="get_replica_stats",
+                    payload={"app_id": r.app_id, "app_name": app_obj.name if app_obj else "", "replica_id": r.id},
+                    allow_existing_inflight=True,
                 )
             async with _ASL() as wait_db:
                 done = await wait_for_node_command(wait_db, cmd.id, timeout_seconds=12)
@@ -2206,6 +2223,37 @@ async def get_instance_stats(app_id: int, db: AsyncSession = Depends(get_db)):
     replicas = rep_result.scalars().all()
     replica_ids = [r.id for r in replicas]
     snapshots = pm.get_all_replica_stats(app_id, replica_ids)
+
+    # On-demand fallback: if a remote running replica has no cached snapshot,
+    # fetch its stats directly from the node agent once.
+    missing_remote_running = [
+        r for r in replicas
+        if r.id not in snapshots and r.status in ("running", "starting") and r.node_id is not None
+    ]
+    if missing_remote_running:
+        node_map = await _load_node_map(db)
+        for r in missing_remote_running:
+            node = node_map.get(r.node_id)
+            if not node or node.is_local or node.status != "online":
+                continue
+            try:
+                cmd = await queue_node_command(
+                    db,
+                    node_id=node.id,
+                    app_id=r.app_id,
+                    command_type="get_replica_stats",
+                    payload={"app_id": r.app_id, "app_name": "", "replica_id": r.id},
+                    allow_existing_inflight=True,
+                )
+                done = await wait_for_node_command(db, cmd.id, timeout_seconds=8)
+                if done.status == "done" and done.result:
+                    payload = json.loads(done.result or "{}")
+                    if payload.get("cpu_percent") is not None:
+                        pm.set_replica_stats(r.id, {"replica_id": r.id, **payload})
+                        snapshots[r.id] = {"replica_id": r.id, **payload}
+            except Exception:
+                pass
+
     return {
         str(rid): {
             "cpu_percent":  round(s.get("cpu_percent", 0), 1),

@@ -1691,7 +1691,7 @@ async function initInstances() {
       </div>`;
     }).join('');
 
-    wrap.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px">${cards}</div>`;
+    wrap.innerHTML = `<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px">${cards}</div>`;
 
     wrap.querySelectorAll('.inst-restart-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
@@ -1741,6 +1741,9 @@ async function initInstances() {
 
   const refreshBtn = document.getElementById('btn-instances-refresh');
   if (refreshBtn) refreshBtn.onclick = renderInstances;
+
+  const dnsBtn = document.getElementById('btn-dns-setup');
+  if (dnsBtn) dnsBtn.onclick = () => openDnsModal();
 
   const addBtn = document.getElementById('btn-add-instance');
   if (addBtn) {
@@ -1856,6 +1859,79 @@ async function initInstances() {
     };
   }
 }
+
+async function openDnsModal() {
+  const backdrop = document.getElementById('dns-modal-backdrop');
+  const body     = document.getElementById('dns-modal-body');
+  if (!backdrop || !body) return;
+  backdrop.style.display = 'flex';
+  body.innerHTML = '<div style="color:var(--text-muted);font-size:13px">Loading…</div>';
+
+  // Close handlers
+  document.getElementById('dns-modal-close').onclick = () => { backdrop.style.display = 'none'; };
+  backdrop.onclick = e => { if (e.target === backdrop) backdrop.style.display = 'none'; };
+
+  let serverIp = null;
+  try {
+    const nodes = await api.listNodes();
+    const primary = nodes.find(n => n.is_local);
+    serverIp = primary?.public_host || null;
+  } catch { /* not critical */ }
+
+  const domain   = app?.domain || null;
+  const extras   = (() => { try { return JSON.parse(app?.extra_domains || '[]'); } catch { return []; } })();
+  const allDomains = [domain, ...extras].filter(Boolean);
+
+  const ipBlock = serverIp
+    ? `<div style="display:flex;align-items:center;gap:8px;background:var(--bg-input,var(--bg-muted));border:1px solid var(--border);border-radius:6px;padding:9px 12px;margin-bottom:6px">
+        <code style="font-family:var(--font-mono);font-size:14px;font-weight:600;color:var(--text-primary);flex:1">${escHtml(serverIp)}</code>
+        <button onclick="navigator.clipboard.writeText('${escHtml(serverIp)}').then(()=>toast('Copied!'))"
+          style="background:none;border:none;cursor:pointer;color:var(--text-muted);padding:2px;line-height:0" title="Copy">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+        </button>
+      </div>`
+    : `<div style="background:var(--yellow-bg,#fff8e1);border:1px solid var(--yellow-border,#ffe082);border-radius:6px;padding:9px 12px;font-size:12px;color:var(--text-secondary);margin-bottom:6px">
+        No public IP configured for primary node. Set <strong>Public Host</strong> in the node settings.
+      </div>`;
+
+  const domainsBlock = allDomains.length
+    ? allDomains.map(d => `<div style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-secondary);padding:3px 0">
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        <code style="font-family:var(--font-mono)">${escHtml(d)}</code>
+      </div>`).join('')
+    : `<div style="font-size:12px;color:var(--text-muted);padding:3px 0">No domain configured for this app yet.</div>`;
+
+  body.innerHTML = `
+    <div style="margin-bottom:18px">
+      <div style="font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Step 1 — Point your A record to</div>
+      ${ipBlock}
+      <div style="font-size:11px;color:var(--text-muted)">Create an <strong>A record</strong> at your DNS provider pointing your domain to this IP address.</div>
+    </div>
+
+    <div style="margin-bottom:18px">
+      <div style="font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Configured domains for this app</div>
+      ${domainsBlock}
+    </div>
+
+    <div style="background:var(--bg-muted);border:1px solid var(--border-muted);border-radius:8px;padding:14px 16px">
+      <div style="display:flex;gap:10px;align-items:flex-start">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:1px"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <div style="font-size:12px;color:var(--text-secondary);line-height:1.6">
+          <strong style="color:var(--text-primary)">Automatisch load balancing</strong><br>
+          Alle traffic gaat via nginx op de primary node. Nginx verdeelt requests automatisch
+          over <strong>alle actieve instances</strong> — ongeacht op welke node ze draaien.
+          Remote instances worden via een versleutelde tunnel bereikt.
+          Voeg gewoon meer instances toe en nginx pakt ze direct mee.
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border-muted);font-size:11px;color:var(--text-muted);line-height:1.5">
+      <strong>TTL tip:</strong> Gebruik een lage TTL (bijv. 60s) zolang je nog aanpassingen maakt.
+      Voor productie is 300–3600s gangbaar.
+    </div>`;
+}
+
 
 
 

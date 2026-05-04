@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import logging.handlers
 import os
@@ -226,7 +227,7 @@ async def _stats_collector():
             # Collect all apps concurrently — cpu_percent(interval=0.5) runs in threads
             await asyncio.gather(*[_one(a) for a in apps])
 
-            # Per-replica stats: store latest snapshot and push to subscribers
+            # Per-replica stats: store latest snapshot for local replicas
             async def _one_replica(replica):
                 try:
                     cname = dm.replica_container_name(replica.app_id, replica.id)
@@ -251,6 +252,86 @@ async def _stats_collector():
         except Exception:
             pass
         await asyncio.sleep(2)
+
+
+# ── Remote replica stats poller ───────────────────────────────────────────────
+async def _remote_replica_stats_poller():
+    """Poll remote nodes every 15s to keep per-replica stats fresh for the instances tab.
+
+    Only fires when no stats WebSocket relay is already streaming for a given app
+    (the relay in stats.py feeds _replica_stats in real-time when the stats tab is open).
+    Uses one get_stats command per (node, app) pair — not per replica — to keep load low.
+    """
+    await asyncio.sleep(20)
+    while True:
+        try:
+            from routers.nodes import queue_node_command, wait_for_node_command, _node_ws_connections
+            from models import ApplicationReplica as _AR, Application as _App, Node as _Node
+
+            async with AsyncSessionLocal() as db:
+                local_node_result = await db.execute(select(_Node).where(_Node.is_local == True))
+                local_node_obj = local_node_result.scalar_one_or_none()
+                local_node_id = local_node_obj.id if local_node_obj else None
+
+                rep_result = await db.execute(
+                    select(_AR).where(
+                        _AR.status == "running",
+                        _AR.node_id.isnot(None),
+                        _AR.node_id != local_node_id,
+                    )
+                )
+                remote_replicas = rep_result.scalars().all()
+
+            if not remote_replicas:
+                await asyncio.sleep(15)
+                continue
+
+            # Group by (node_id, app_id) — one command per pair
+            from collections import defaultdict
+            groups: dict[tuple[int, int], list] = defaultdict(list)
+            for r in remote_replicas:
+                groups[(r.node_id, r.app_id)].append(r)
+
+            async def _poll_group(node_id: int, app_id: int, replicas: list):
+                try:
+                    # Skip if no agent WS — command would just timeout
+                    if node_id not in _node_ws_connections:
+                        return
+                    async with AsyncSessionLocal() as db:
+                        app_r = await db.execute(select(_App).where(_App.id == app_id))
+                        app_obj = app_r.scalar_one_or_none()
+                        if not app_obj:
+                            return
+                        cmd = await queue_node_command(
+                            db,
+                            node_id=node_id,
+                            app_id=app_id,
+                            command_type="get_stats",
+                            payload={"app_id": app_id, "app_name": app_obj.name},
+                        )
+                        done = await wait_for_node_command(db, cmd.id, timeout_seconds=10)
+                    if done.status == "done" and done.result:
+                        s = json.loads(done.result)
+                        if s.get("status") == "running":
+                            snap = {
+                                k: v for k, v in s.items()
+                                if k not in ("status", "docker", "system_cpu_percent",
+                                             "system_memory_total_mb", "system_memory_used_mb",
+                                             "system_memory_percent")
+                            }
+                            snap["timestamp"] = int(_time.time() * 1000)
+                            for replica in replicas:
+                                pm.set_replica_stats(replica.id, {"replica_id": replica.id, **snap})
+                except Exception:
+                    pass
+
+            await asyncio.gather(*[_poll_group(nid, aid, reps) for (nid, aid), reps in groups.items()])
+
+        except asyncio.CancelledError:
+            return
+        except Exception:
+            pass
+        await asyncio.sleep(15)
 
 
 # ── Historical stats writer ───────────────────────────────────────────────────
@@ -517,10 +598,11 @@ async def lifespan(app: FastAPI):
             except Exception as exc:
                 pm._debug(f"STARTUP nginx regen failed for app {a.id}: {exc}")
 
-    monitor_task  = asyncio.create_task(_crash_monitor())
-    stats_task    = asyncio.create_task(_stats_collector())
-    node_task     = asyncio.create_task(_node_health_monitor())
-    history_task  = asyncio.create_task(_stats_history_writer())
+    monitor_task       = asyncio.create_task(_crash_monitor())
+    stats_task         = asyncio.create_task(_stats_collector())
+    node_task          = asyncio.create_task(_node_health_monitor())
+    history_task       = asyncio.create_task(_stats_history_writer())
+    remote_stats_task  = asyncio.create_task(_remote_replica_stats_poller())
 
     # Start node agent if configured (as an integrated background task)
     agent_task = None
@@ -529,7 +611,7 @@ async def lifespan(app: FastAPI):
         agent_task = asyncio.create_task(node_agent.start_agent())
 
     yield
-    for task in (monitor_task, stats_task, node_task, history_task, agent_task):
+    for task in (monitor_task, stats_task, node_task, history_task, remote_stats_task, agent_task):
         if not task: continue
         task.cancel()
         try:

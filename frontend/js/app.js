@@ -1593,12 +1593,20 @@ async function initInstances() {
         if (diffMs > 0) uptimeStr = fmtUptime(Math.floor(diffMs / 1000));
       }
 
-      // Tunnel status
-      const tunnelHtml = inst.node_is_local
-        ? `<span style="color:var(--text-muted);font-size:11px">local</span>`
-        : inst.tunnel_connected
-          ? `<span style="color:var(--green);font-size:11px;display:flex;align-items:center;gap:4px"><svg width="8" height="8" viewBox="0 0 8 8"><circle cx="4" cy="4" r="4" fill="currentColor"/></svg>Tunnel</span>`
-          : `<span style="color:var(--red);font-size:11px;display:flex;align-items:center;gap:4px"><svg width="8" height="8" viewBox="0 0 8 8"><circle cx="4" cy="4" r="4" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>No tunnel</span>`;
+      // Connection info: local / tunnel with port / no tunnel
+      let connHtml;
+      if (inst.node_is_local) {
+        connHtml = `<span style="font-size:12px;color:var(--text-muted)">local</span>`;
+      } else if (inst.tunnel_connected && inst.tunnel_port) {
+        connHtml = `<span style="font-size:12px;color:var(--green);display:flex;align-items:center;gap:4px">
+          <svg width="7" height="7" viewBox="0 0 7 7"><circle cx="3.5" cy="3.5" r="3.5" fill="currentColor"/></svg>
+          tunnel :${inst.tunnel_port}
+        </span>`;
+      } else if (inst.tunnel_connected) {
+        connHtml = `<span style="font-size:12px;color:var(--green)">tunnel</span>`;
+      } else {
+        connHtml = `<span style="font-size:12px;color:var(--red)">no tunnel</span>`;
+      }
 
       // Live metrics
       const snap = instStats[String(inst.id)];
@@ -1606,107 +1614,83 @@ async function initInstances() {
       if (snap && isRunning) {
         const cpu = snap.cpu_percent != null ? snap.cpu_percent : null;
         const mem = snap.memory_mb   != null ? Math.round(snap.memory_mb) : null;
-        const net = snap.net_rx_mb != null ? `↓${fmtMb(snap.net_rx_mb)} ↑${fmtMb(snap.net_tx_mb)}` : null;
         const cpuColor = cpu > 80 ? 'var(--red)' : cpu > 60 ? 'var(--yellow)' : 'var(--green)';
-        const memPct = inst.docker_memory_limit_mb ? Math.min((mem / inst.docker_memory_limit_mb) * 100, 100) : null;
+        const memPct = inst.docker_memory_limit_mb && mem ? Math.min((mem / inst.docker_memory_limit_mb) * 100, 100) : null;
         const memColor = memPct > 80 ? 'var(--red)' : memPct > 60 ? 'var(--yellow)' : 'var(--accent)';
 
         metricsHtml = `
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border-muted)">
-            ${cpu != null ? `
-            <div>
-              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-                <span style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted)">CPU</span>
-                <span style="font-size:13px;font-weight:700;color:${cpuColor}">${cpu.toFixed(1)}%</span>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border-muted)">
+            ${cpu != null ? `<div>
+              <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted);margin-bottom:3px">
+                <span>CPU</span><span style="color:${cpuColor};font-weight:600">${cpu.toFixed(1)}%</span>
               </div>
-              <div style="height:4px;background:var(--border);border-radius:2px;overflow:hidden">
-                <div style="height:100%;width:${Math.min(cpu, 100)}%;background:${cpuColor};border-radius:2px;transition:width .5s"></div>
+              <div style="height:3px;background:var(--border);border-radius:2px;overflow:hidden">
+                <div style="height:100%;width:${Math.min(cpu,100)}%;background:${cpuColor};border-radius:2px;transition:width .5s"></div>
               </div>
             </div>` : ''}
-            ${mem != null ? `
-            <div>
-              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-                <span style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted)">Memory</span>
-                <span style="font-size:13px;font-weight:700;color:var(--text-primary)">${mem >= 1024 ? (mem/1024).toFixed(1)+'GB' : mem+'MB'}</span>
+            ${mem != null ? `<div>
+              <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted);margin-bottom:3px">
+                <span>Mem</span><span style="font-weight:600;color:var(--text-secondary)">${mem >= 1024 ? (mem/1024).toFixed(1)+'GB' : mem+'MB'}</span>
               </div>
-              ${memPct != null ? `
-              <div style="height:4px;background:var(--border);border-radius:2px;overflow:hidden">
-                <div style="height:100%;width:${memPct}%;background:${memColor};border-radius:2px;transition:width .5s"></div>
-              </div>` : `<div style="height:4px;background:var(--border);border-radius:2px"></div>`}
+              <div style="height:3px;background:var(--border);border-radius:2px;overflow:hidden">
+                <div style="height:100%;width:${memPct ?? 0}%;background:${memColor};border-radius:2px;transition:width .5s"></div>
+              </div>
             </div>` : ''}
-          </div>
-          ${net ? `<div style="margin-top:8px;font-size:11px;color:var(--text-muted)">${net}</div>` : ''}`;
+          </div>`;
       } else if (isRunning) {
-        metricsHtml = `<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border-muted);font-size:11px;color:var(--text-muted)">Collecting metrics…</div>`;
+        metricsHtml = `<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border-muted);font-size:11px;color:var(--text-muted)">Collecting metrics…</div>`;
       }
 
-      // Resource limits badge
       const cpuLimit = inst.docker_cpu_limit != null ? `${inst.docker_cpu_limit} CPU` : null;
       const memLimit = inst.docker_memory_limit_mb != null ? `${inst.docker_memory_limit_mb}MB` : null;
       const limitsText = [cpuLimit, memLimit].filter(Boolean).join(' · ');
-
       const containerShort = inst.container_id ? inst.container_id.slice(0, 12) : null;
 
       return `
       <div class="card" style="padding:0;overflow:hidden">
-        <!-- Card header -->
-        <div style="padding:14px 16px;display:flex;align-items:center;justify-content:space-between;gap:12px;border-bottom:1px solid var(--border-muted)">
-          <div style="display:flex;align-items:center;gap:10px;min-width:0">
-            <div style="width:8px;height:8px;border-radius:50%;background:${statusDot};flex-shrink:0"></div>
-            <div style="min-width:0">
-              <div style="font-size:13px;font-weight:600;color:var(--text-primary)">Instance ${idx + 1}</div>
-              <div style="font-size:11px;color:var(--text-muted);margin-top:1px">${nodeName}</div>
-            </div>
+        <div style="padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px;border-bottom:1px solid var(--border-muted)">
+          <div style="display:flex;align-items:center;gap:8px;min-width:0">
+            <div style="width:7px;height:7px;border-radius:50%;background:${statusDot};flex-shrink:0"></div>
+            <span style="font-size:12px;font-weight:600;color:var(--text-primary)">Instance ${idx + 1}</span>
+            <span style="font-size:11px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${nodeName}</span>
           </div>
-          <span style="padding:3px 10px;border-radius:999px;font-size:11px;font-weight:600;background:${statusBg};color:${statusColor};white-space:nowrap;flex-shrink:0">${inst.status}</span>
+          <span style="padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600;background:${statusBg};color:${statusColor};white-space:nowrap;flex-shrink:0">${inst.status}</span>
         </div>
-
-        <!-- Card body -->
-        <div style="padding:14px 16px">
-          <!-- Info grid -->
-          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
+        <div style="padding:10px 14px">
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
             <div>
-              <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);margin-bottom:3px">Port</div>
-              <div style="font-size:13px;font-weight:600;font-family:var(--font-mono);color:var(--text-primary)">:${inst.external_port || '—'}</div>
+              <div style="font-size:10px;color:var(--text-muted);margin-bottom:2px">Port</div>
+              <div style="font-size:12px;font-weight:600;font-family:var(--font-mono);color:var(--text-primary)">:${inst.external_port || '—'}</div>
             </div>
             <div>
-              <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);margin-bottom:3px">Uptime</div>
-              <div style="font-size:13px;font-weight:600;color:var(--text-primary)">${uptimeStr}</div>
+              <div style="font-size:10px;color:var(--text-muted);margin-bottom:2px">Uptime</div>
+              <div style="font-size:12px;font-weight:600;color:var(--text-primary)">${uptimeStr}</div>
             </div>
             <div>
-              <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);margin-bottom:3px">Connection</div>
-              <div style="font-size:13px">${tunnelHtml}</div>
+              <div style="font-size:10px;color:var(--text-muted);margin-bottom:2px">Connection</div>
+              <div>${connHtml}</div>
             </div>
           </div>
 
           ${metricsHtml}
 
-          <!-- Error -->
-          ${inst.last_error ? `
-          <div style="margin-top:10px;padding:8px 10px;background:var(--red-bg);border:1px solid var(--red-border);border-radius:6px;font-size:11px;color:var(--red);font-family:var(--font-mono);word-break:break-all">${escHtml(inst.last_error)}</div>` : ''}
+          ${inst.last_error ? `<div style="margin-top:8px;padding:6px 8px;background:var(--red-bg);border:1px solid var(--red-border);border-radius:5px;font-size:11px;color:var(--red);font-family:var(--font-mono);word-break:break-all">${escHtml(inst.last_error)}</div>` : ''}
 
-          <!-- Footer: limits + container + actions -->
-          <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border-muted);display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
-            <div style="display:flex;align-items:center;gap:12px;font-size:11px;color:var(--text-muted)">
-              ${limitsText ? `<span title="Resource limits">${limitsText}</span>` : ''}
-              ${containerShort ? `<span style="font-family:var(--font-mono)" title="${escHtml(inst.container_id || '')}">${containerShort}</span>` : ''}
+          <div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--border-muted);display:flex;align-items:center;justify-content:space-between;gap:6px">
+            <div style="font-size:10px;color:var(--text-muted);display:flex;gap:8px;align-items:center;min-width:0;overflow:hidden">
+              ${limitsText ? `<span>${limitsText}</span>` : ''}
+              ${containerShort ? `<span style="font-family:var(--font-mono);overflow:hidden;text-overflow:ellipsis" title="${escHtml(inst.container_id || '')}">${containerShort}</span>` : ''}
             </div>
-            <div style="display:flex;gap:6px;flex-shrink:0">
-              <button class="btn btn-secondary btn-sm inst-restart-btn" data-id="${inst.id}" style="font-size:11px;padding:4px 12px">
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
-                Restart
-              </button>
-              <button class="btn btn-danger btn-sm inst-remove-btn" data-id="${inst.id}" style="font-size:11px;padding:4px 12px">
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
-                Remove
-              </button>
+            <div style="display:flex;gap:5px;flex-shrink:0">
+              <button class="btn btn-secondary btn-sm inst-restart-btn" data-id="${inst.id}" style="font-size:11px;padding:3px 10px">Restart</button>
+              <button class="btn btn-danger btn-sm inst-remove-btn" data-id="${inst.id}" style="font-size:11px;padding:3px 10px">Remove</button>
             </div>
           </div>
         </div>
       </div>`;
     }).join('');
 
-    wrap.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;padding:4px 0">${cards}</div>`;
+    wrap.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:12px">${cards}</div>`;
 
     wrap.querySelectorAll('.inst-restart-btn').forEach(btn => {
       btn.addEventListener('click', async () => {

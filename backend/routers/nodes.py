@@ -463,7 +463,34 @@ async def queue_node_command(
     command_type: str,
     payload: dict,
     app_id: Optional[int] = None,
+    allow_existing_inflight: bool = False,
 ) -> NodeCommand:
+    if allow_existing_inflight:
+        existing_res = await db.execute(
+            select(NodeCommand)
+            .where(
+                and_(
+                    NodeCommand.node_id == node_id,
+                    NodeCommand.command_type == command_type,
+                    NodeCommand.status.in_(["queued", "in_progress"]),
+                    NodeCommand.app_id == app_id,
+                )
+            )
+            .order_by(NodeCommand.created_at.desc())
+            .limit(1)
+        )
+        existing = existing_res.scalar_one_or_none()
+        if existing is not None:
+            log.info(
+                "queue_command dedupe: using existing id=%d type=%s node_id=%d app_id=%s status=%s",
+                existing.id,
+                command_type,
+                node_id,
+                app_id,
+                existing.status,
+            )
+            return existing
+
     cmd = NodeCommand(
         node_id=node_id,
         app_id=app_id,

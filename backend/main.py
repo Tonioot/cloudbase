@@ -309,11 +309,12 @@ async def _remote_replica_stats_poller():
                             app_id=app_id,
                             command_type="get_stats",
                             payload={"app_id": app_id, "app_name": app_name},
+                            allow_existing_inflight=True,
                         )
                         cmd_id = cmd.id
                     # wait_for_node_command uses its own sessions internally
                     async with AsyncSessionLocal() as wait_db:
-                        done = await wait_for_node_command(wait_db, cmd_id, timeout_seconds=10)
+                        done = await wait_for_node_command(wait_db, cmd_id, timeout_seconds=20)
                     _rlog = logging.getLogger("cloudbase.remote_stats")
                     _rlog.info("poll node=%d app=%d cmd=%d status=%s result_len=%s",
                                node_id, app_id, cmd_id, done.status,

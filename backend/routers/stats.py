@@ -123,6 +123,7 @@ async def _open_remote_stream(node: Node, app_id: int, app_name: str, out_q: asy
                         app_id=app_id,
                         command_type="get_stats",
                         payload={"app_id": app_id, "app_name": app_name},
+                        allow_existing_inflight=True,
                     )
                     done = await wait_for_node_command(poll_db, cmd.id, timeout_seconds=20)
                 if done.status == "done":

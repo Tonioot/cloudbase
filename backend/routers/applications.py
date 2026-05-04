@@ -3335,6 +3335,7 @@ async def get_stats(app_id: int, db: AsyncSession = Depends(get_db)):
             app_id=app.id,
             command_type="get_stats",
             payload={"app_id": app.id, "app_name": app.name},
+            allow_existing_inflight=True,
         )
         done = await wait_for_node_command(db, cmd.id, timeout_seconds=20)
         if done.status != "done":

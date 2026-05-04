@@ -314,9 +314,15 @@ async def _remote_replica_stats_poller():
                     # wait_for_node_command uses its own sessions internally
                     async with AsyncSessionLocal() as wait_db:
                         done = await wait_for_node_command(wait_db, cmd_id, timeout_seconds=10)
+                    _rlog = logging.getLogger("cloudbase.remote_stats")
+                    _rlog.info("poll node=%d app=%d cmd=%d status=%s result_len=%s",
+                               node_id, app_id, cmd_id, done.status,
+                               len(done.result) if done.result else 0)
                     if done.status == "done" and done.result:
                         s = json.loads(done.result)
-                        if s.get("cpu_percent") is not None or s.get("status") == "running":
+                        _rlog.info("poll node=%d app=%d result keys=%s cpu=%s",
+                                   node_id, app_id, list(s.keys()), s.get("cpu_percent"))
+                        if s.get("cpu_percent") is not None:
                             snap = {
                                 k: v for k, v in s.items()
                                 if k not in ("status", "remote", "docker",
@@ -326,9 +332,10 @@ async def _remote_replica_stats_poller():
                             snap["timestamp"] = int(_time.time() * 1000)
                             for replica in replicas:
                                 pm.set_replica_stats(replica.id, {"replica_id": replica.id, **snap})
+                            _rlog.info("poll stored stats for %d replicas on node=%d", len(replicas), node_id)
                 except Exception as _e:
-                    import logging as _log
-                    _log.getLogger("cloudbase.remote_stats").debug("remote stats poll failed node=%d app=%d: %s", node_id, app_id, _e)
+                    logging.getLogger("cloudbase.remote_stats").warning(
+                        "remote stats poll failed node=%d app=%d: %s", node_id, app_id, _e)
 
             await asyncio.gather(*[_poll_group(nid, aid, reps) for (nid, aid), reps in groups.items()])
 

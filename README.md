@@ -1,72 +1,58 @@
 # Cloudbase
 
-Cloudbase is een self-hosted deployment panel waarmee je applicaties kunt deployen, beheren en monitoren vanaf een webinterface.
+Cloudbase is a self-hosted deployment and operations panel for running applications across one or more servers.
 
-Het platform is gemaakt voor teams die snel willen kunnen schalen over meerdere servers, met Docker-first deployments, nginx reverse proxying, node clustering, live logs/stats en ingebouwde operationele tooling.
+It gives you one place to deploy from Git, scale with instances, manage networking and SSL, monitor runtime metrics, and operate a multi-node setup.
 
-## 1. Wat is Cloudbase?
+## Overview
 
-Cloudbase draait standaard op poort 7823 en biedt:
+Cloudbase runs on port 7823 by default and includes:
 
-- Centrale dashboard voor al je apps en nodes
-- Deployments vanuit Git repositories
-- Docker containers en optioneel native process mode
-- Multi-node cluster beheer vanuit 1 hoofdpanel
-- Instance-based scaling per app
-- Zero-Downtime restart flow (ZD Restart)
-- Nginx per app met domains, redirects en SSL
-- Maintenance/update/restarting/starting pagina's
-- Audit logs, role-based access en user management
+- App deployments from Git repositories
+- Docker-first runtime with optional native process mode
+- Instance-based scaling and load balancing
+- Multi-node orchestration from one primary panel
+- Nginx config management per app (domains, redirects, SSL)
+- Zero-downtime restart flow
+- Live logs, stats, and audit events
+- User roles and access control
 
-## 2. Belangrijke begrippen
+## Core model: App, Instance, Node
 
-### App
-Een applicatie in Cloudbase. Een app bevat onder andere:
+This is the most important concept in Cloudbase:
 
-- Repo URL
-- Start command
-- Internal port
-- Domeinen/SSL instellingen
-- Environment variabelen
-- Runtime settings (CPU/memory/read-only/tmpfs)
+- An App is a logical service definition. It stores configuration like repository, start command, internal port, domains, environment variables, and runtime limits.
+- An Instance is a running replica of an app. Each instance has its own runtime process/container and its own external host port.
+- A Node is a server that runs instances.
 
-### Node
-Een server die opdrachten uitvoert. Je hebt:
+Key rule:
 
-- Primary/Main node: centrale coordinator
-- Remote node(s): gekoppelde workers in de cluster
+- Apps do not run on nodes directly.
+- Instances run on nodes.
 
-Nodes communiceren met de primary via WebSocket + agent commands.
+So an app can have multiple instances, and those instances can be distributed across different nodes.
 
-### Instance
-Een draaiende replica van een app.
+Example:
 
-- Elke instance heeft een eigen external host port
-- Instances kunnen lokaal of op remote nodes draaien
-- Bij remote nodes loopt verkeer via reverse tunnel naar de primary
-- Nginx load-balanced over alle gezonde instances
+- App `web-api`
+- Instance `web-api-1` on node A
+- Instance `web-api-2` on node B
+- Instance `web-api-3` on node B
 
-## 3. Architectuur in het kort
+Nginx routes traffic to healthy instances, not to the app object itself.
 
-- Backend: FastAPI (Python 3.10+)
-- Frontend: Vanilla JS/HTML/CSS
-- Database: SQLite
-- Runtime: Docker (standaard) + native fallback
-- Proxy: nginx per app
-- Realtime: WebSockets voor logs, stats en node events
+## Setup
 
-Data staat onder `~/.cloudbase/`.
-
-## 4. Systeemvereisten
+Requirements:
 
 - Linux (Ubuntu, Debian, RHEL, Arch, openSUSE)
 - Python 3.10+
 - Git
-- Nginx
 - Docker
-- systemd (aanbevolen voor autostart/servicebeheer)
+- Nginx
+- systemd recommended
 
-## 5. Installatie en eerste setup
+Install:
 
 ```bash
 git clone https://github.com/Tonioot/Cloudbase
@@ -74,128 +60,44 @@ cd cloudbase
 sudo bash install.sh
 ```
 
-De installer regelt automatisch:
+The installer configures dependencies, Python environment, Docker, nginx, systemd service, and Cloudbase CLI commands.
 
-- Systeempakketten
-- Python venv + dependencies
-- Docker Engine setup
-- Nginx setup
-- Systemd service
-- Cloudbase CLI commando's
+After install:
 
-Na installatie:
-
-1. Noteer het admin wachtwoord (wordt eenmalig getoond)
+1. Save the generated admin password
 2. Open `http://<server-ip>:7823`
-3. Log in als admin
+3. Sign in
 
-Belangrijk: op systemen waar cgroup memory nog niet aan staat, activeert de installer dit automatisch. Een reboot kan nodig zijn.
+## Daily workflow
 
-## 6. Snelle operationele workflow
+1. Create an app from a repository
+2. Configure network settings (domain, SSL, DNS target)
+3. Start with one instance
+4. Scale by adding more instances
+5. Optionally place instances on remote nodes
+6. Monitor logs/stats and use zero-downtime restart for updates
 
-1. Deploy app via repository
-2. Configureer domain/SSL in Settings > Network
-3. Voeg instances toe (lokaal of op remote nodes)
-4. Controleer logs/stats
-5. Gebruik ZD Restart voor updates zonder zichtbare downtime
+## Nodes and clustering
 
-## 7. App lifecycle en schaalbaarheid
+Cloudbase supports a primary node with connected remote nodes.
 
-### Deploy en run
+- Primary node: control plane and central UI
+- Remote nodes: workers that execute instance commands
 
-- Docker-first deployment
-- Auto detectie van app type (Node, Python, Ruby, Go, PHP, Java, .NET)
-- Build en run met detectie/default start command
-
-### Scaling met instances
-
-- Scale per app via extra instances
-- Per instance eigen external port
-- Instances verspreid over nodes mogelijk
-- Runtime metrics per instance (CPU, geheugen, netwerk)
-
-### Zero-Downtime Restart
-
-ZD Restart doet in grote lijnen:
-
-1. Nieuwe image/build voorbereiden
-2. Nieuwe instances starten en health-checken
-3. Nginx atomisch omzetten naar gezonde nieuwe backends
-4. Oude instances netjes afbouwen
-
-### Restart policies
-
-- `no`: geen automatische restart
-- `always`: altijd herstarten
-- `on-failure`: alleen bij failure, met backoff
-
-## 8. Nginx, domains, DNS en SSL
-
-Per app kun je instellen:
-
-- Primary domain
-- Extra domains
-- Redirect domains (301 naar primary)
-- SSL cert + key
-
-Cloudbase genereert nginx config inclusief:
-
-- Reverse proxy headers
-- WebSocket upgrade headers
-- Load balancing over actieve instances
-
-Er is ook een DNS Setup flow in de app pagina die uitlegt welk public IP je moet gebruiken en hoe traffic daarna automatisch over instances verdeeld wordt.
-
-## 9. Multi-node cluster
-
-Cluster opzetten:
-
-1. Maak invite code op de primary
-2. Run op remote server:
+Connect a remote node:
 
 ```bash
 cloudbase connect --main-url <url> --invite-code <code>
 ```
 
-3. Node verschijnt in het panel
-4. Deploy of scale instances naar die node
+Node modes:
 
-Beschikbare node modes:
+- `panel+node`: full panel and node agent on same server
+- `node-only`: worker mode for running instances only
 
-- `panel+node` (default): panel + agent op dezelfde machine
-- `node-only`: alleen agent/local API voor worker nodes
+## Operations and CLI
 
-## 10. Monitoring, logs en audit
-
-### Logs
-
-- Live app logs
-- Replica logs
-- Node agent logs
-
-### Stats
-
-- App-level stats
-- Instance-level stats
-- Node-level health metrics (CPU/memory/disk)
-
-### Audit
-
-- Centrale audit events voor app, auth, users, nodes en operations
-- Filterbaar op actor/action
-
-## 11. Gebruikers en rechten
-
-Rollen:
-
-- `admin`: volledige toegang
-- `viewer`: read-only toegang
-
-Admin kan users beheren via de UI.
-
-## 12. CLI overzicht
-
-### Core
+Core commands:
 
 ```bash
 cloudbase start
@@ -203,19 +105,11 @@ cloudbase stop
 cloudbase restart
 cloudbase status
 cloudbase logs
-cloudbase enable
-cloudbase disable
 cloudbase update
 cloudbase uninstall
 ```
 
-### Account
-
-```bash
-cloudbase password
-```
-
-### Nodes
+Node commands:
 
 ```bash
 cloudbase connect --main-url <url> --invite-code <code> --node-name <name> --mode <mode>
@@ -223,73 +117,29 @@ cloudbase disconnect
 cloudbase node-status
 ```
 
-### Nginx
+Nginx and cert commands:
 
 ```bash
 cloudbase nginx <domain>
 cloudbase nginx show
 cloudbase nginx disable
 cloudbase nginx permissions [user]
-```
-
-### Certificaten
-
-```bash
 cloudbase cert add <path> [name]
 cloudbase cert list
 cloudbase cert path
 ```
 
-### Backup/restore
+Backup and restore:
 
 ```bash
 cloudbase export [file]
 cloudbase import <file>
 ```
 
-## 13. Data en opslag
+Cloudbase data is stored in `~/.cloudbase/`.
 
-Cloudbase gebruikt `~/.cloudbase/`:
+## Troubleshooting
 
-| Pad | Inhoud |
-|---|---|
-| `cloudbase.db` | Apps, instances, nodes, instellingen |
-| `credentials` | Gehashte credentials |
-| `secret_key` | Signing key |
-| `certs/` | SSL certificaten |
-| `apps/` | App broncode/checkouts |
-| `logs/` | App logs, service logs, agent logs |
-
-## 14. Updaten
-
-Aanbevolen:
-
-```bash
-cloudbase update
-```
-
-Of handmatig:
-
-```bash
-cd /path/to/cloudbase
-git pull
-cloudbase restart
-```
-
-## 15. Troubleshooting
-
-### App draait maar is niet bereikbaar
-
-Controleer of je service in container op `0.0.0.0` bindt (niet op `127.0.0.1`).
-
-### Node lijkt online/offline te flippen
-
-Check:
-
-- `cloudbase logs`
-- netwerkstabiliteit tussen node en primary
-- node agent process status
-
-### Stats ontbreken tijdelijk
-
-Cloudbase gebruikt zowel stream- als poll-fallbacks. Tijdens restarts of reconnects kan er kort een gat zitten, maar metrics vullen weer aan zodra node/replica command flow stabiel is.
+- App reachable internally but not externally: verify the service binds to `0.0.0.0` inside its runtime.
+- Node flaps online/offline: check network stability between node and primary and inspect `cloudbase logs`.
+- Temporary missing stats during restarts: short gaps can occur during reconnect and recover automatically when the command pipeline stabilizes.

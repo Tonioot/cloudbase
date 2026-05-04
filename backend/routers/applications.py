@@ -2099,7 +2099,8 @@ async def list_instances(app_id: int, db: AsyncSession = Depends(get_db)):
 
 @router.get("/{app_id}/instances/stats-debug")
 async def debug_instance_stats(app_id: int, db: AsyncSession = Depends(get_db)):
-    """Debug endpoint: run one poll cycle and return the raw results."""
+    """Debug endpoint: run one poll cycle for remote replicas and return raw results."""
+    from database import AsyncSessionLocal as _ASL
     from routers.nodes import queue_node_command, wait_for_node_command, _node_ws_connections
     await _get_or_404(app_id, db)
     local_node = await ensure_local_node(db)
@@ -2126,13 +2127,13 @@ async def debug_instance_stats(app_id: int, db: AsyncSession = Depends(get_db)):
         try:
             app_r = await db.execute(select(Application).where(Application.id == r.app_id))
             app_obj = app_r.scalar_one_or_none()
-            async with AsyncSessionLocal() as cmd_db:
+            async with _ASL() as cmd_db:
                 cmd = await queue_node_command(
                     cmd_db, node_id=r.node_id, app_id=r.app_id,
                     command_type="get_stats",
                     payload={"app_id": r.app_id, "app_name": app_obj.name if app_obj else ""},
                 )
-            async with AsyncSessionLocal() as wait_db:
+            async with _ASL() as wait_db:
                 done = await wait_for_node_command(wait_db, cmd.id, timeout_seconds=12)
             entry["cmd_id"] = cmd.id
             entry["cmd_status"] = done.status
@@ -3778,6 +3779,25 @@ async def preview_maintenance_page(
             logo_data=cfg.get("logo_data"),
         )
     return HTMLResponse(content=html)
+
+
+@router.post("/{app_id}/nginx-refresh")
+async def nginx_refresh(app_id: int, db: AsyncSession = Depends(get_db), _actor: str = Depends(_auth.get_current_actor)):
+    """Regenerate the nginx config from the current set of running replicas."""
+    app = await _get_or_404(app_id, db)
+    if not app.nginx_enabled or not app.domain:
+        return {"ok": False, "message": "Nginx not configured for this app"}
+    _ensure_maintenance_files(app, app_id)
+    ssl_cert, ssl_key = _resolve_ssl_paths(app.ssl_cert_path, app.ssl_key_path)
+    backends = await _get_nginx_backends(app, db)
+    config = nm.generate_config(
+        app.name, app.domain, backends, ssl_cert, ssl_key,
+        app_id=app_id, mode=_get_nginx_mode(app),
+        extra_domains=json.loads(app.extra_domains or "[]"),
+        redirect_domains=json.loads(app.redirect_domains or "[]"),
+    )
+    ok, msg = nm.write_nginx_config(app.name, config)
+    return {"ok": ok, "message": msg, "backends": backends}
 
 
 @router.get("/{app_id}/nginx-debug")

@@ -1585,11 +1585,12 @@ async function initInstances() {
 
       const nodeName = inst.node_name || 'Primary Node';
 
-      // Uptime
+      // Uptime — DB timestamps are UTC without Z suffix; append Z so browser parses as UTC
       let uptimeStr = '—';
       const uptimeSrc = isRunning ? (inst.updated_at || inst.created_at) : inst.created_at;
       if (uptimeSrc) {
-        const diffMs = Date.now() - new Date(uptimeSrc).getTime();
+        const ts = uptimeSrc.endsWith('Z') || uptimeSrc.includes('+') ? uptimeSrc : uptimeSrc + 'Z';
+        const diffMs = Date.now() - new Date(ts).getTime();
         if (diffMs > 0) uptimeStr = fmtUptime(Math.floor(diffMs / 1000));
       }
 
@@ -1619,9 +1620,9 @@ async function initInstances() {
         const memColor = memPct > 80 ? 'var(--red)' : memPct > 60 ? 'var(--yellow)' : 'var(--accent)';
 
         metricsHtml = `
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border-muted)">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:8px;padding-top:8px;border-top:1px solid var(--border-muted)">
             ${cpu != null ? `<div>
-              <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted);margin-bottom:3px">
+              <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted);margin-bottom:2px">
                 <span>CPU</span><span style="color:${cpuColor};font-weight:600">${cpu.toFixed(1)}%</span>
               </div>
               <div style="height:3px;background:var(--border);border-radius:2px;overflow:hidden">
@@ -1629,7 +1630,7 @@ async function initInstances() {
               </div>
             </div>` : ''}
             ${mem != null ? `<div>
-              <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted);margin-bottom:3px">
+              <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted);margin-bottom:2px">
                 <span>Mem</span><span style="font-weight:600;color:var(--text-secondary)">${mem >= 1024 ? (mem/1024).toFixed(1)+'GB' : mem+'MB'}</span>
               </div>
               <div style="height:3px;background:var(--border);border-radius:2px;overflow:hidden">
@@ -1638,7 +1639,7 @@ async function initInstances() {
             </div>` : ''}
           </div>`;
       } else if (isRunning) {
-        metricsHtml = `<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border-muted);font-size:11px;color:var(--text-muted)">Collecting metrics…</div>`;
+        metricsHtml = `<div style="margin-top:8px;padding-top:7px;border-top:1px solid var(--border-muted);font-size:10px;color:var(--text-muted)">Collecting metrics…</div>`;
       }
 
       const cpuLimit = inst.docker_cpu_limit != null ? `${inst.docker_cpu_limit} CPU` : null;
@@ -1648,49 +1649,49 @@ async function initInstances() {
 
       return `
       <div class="card" style="padding:0;overflow:hidden">
-        <div style="padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px;border-bottom:1px solid var(--border-muted)">
-          <div style="display:flex;align-items:center;gap:8px;min-width:0">
-            <div style="width:7px;height:7px;border-radius:50%;background:${statusDot};flex-shrink:0"></div>
+        <div style="padding:8px 12px;display:flex;align-items:center;justify-content:space-between;gap:8px;border-bottom:1px solid var(--border-muted)">
+          <div style="display:flex;align-items:center;gap:7px;min-width:0">
+            <div style="width:6px;height:6px;border-radius:50%;background:${statusDot};flex-shrink:0"></div>
             <span style="font-size:12px;font-weight:600;color:var(--text-primary)">Instance ${idx + 1}</span>
             <span style="font-size:11px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${nodeName}</span>
           </div>
-          <span style="padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600;background:${statusBg};color:${statusColor};white-space:nowrap;flex-shrink:0">${inst.status}</span>
+          <span style="padding:1px 7px;border-radius:999px;font-size:10px;font-weight:600;background:${statusBg};color:${statusColor};white-space:nowrap;flex-shrink:0">${inst.status}</span>
         </div>
-        <div style="padding:10px 14px">
-          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
+        <div style="padding:9px 12px">
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px">
             <div>
-              <div style="font-size:10px;color:var(--text-muted);margin-bottom:2px">Port</div>
+              <div style="font-size:9px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);margin-bottom:2px">Port</div>
               <div style="font-size:12px;font-weight:600;font-family:var(--font-mono);color:var(--text-primary)">:${inst.external_port || '—'}</div>
             </div>
             <div>
-              <div style="font-size:10px;color:var(--text-muted);margin-bottom:2px">Uptime</div>
+              <div style="font-size:9px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);margin-bottom:2px">Uptime</div>
               <div style="font-size:12px;font-weight:600;color:var(--text-primary)">${uptimeStr}</div>
             </div>
             <div>
-              <div style="font-size:10px;color:var(--text-muted);margin-bottom:2px">Connection</div>
+              <div style="font-size:9px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);margin-bottom:2px">Connection</div>
               <div>${connHtml}</div>
             </div>
           </div>
 
           ${metricsHtml}
 
-          ${inst.last_error ? `<div style="margin-top:8px;padding:6px 8px;background:var(--red-bg);border:1px solid var(--red-border);border-radius:5px;font-size:11px;color:var(--red);font-family:var(--font-mono);word-break:break-all">${escHtml(inst.last_error)}</div>` : ''}
+          ${inst.last_error ? `<div style="margin-top:7px;padding:5px 7px;background:var(--red-bg);border:1px solid var(--red-border);border-radius:4px;font-size:10px;color:var(--red);font-family:var(--font-mono);word-break:break-all">${escHtml(inst.last_error)}</div>` : ''}
 
-          <div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--border-muted);display:flex;align-items:center;justify-content:space-between;gap:6px">
-            <div style="font-size:10px;color:var(--text-muted);display:flex;gap:8px;align-items:center;min-width:0;overflow:hidden">
+          <div style="margin-top:8px;padding-top:7px;border-top:1px solid var(--border-muted);display:flex;align-items:center;justify-content:space-between;gap:6px">
+            <div style="font-size:10px;color:var(--text-muted);display:flex;gap:7px;align-items:center;min-width:0;overflow:hidden">
               ${limitsText ? `<span>${limitsText}</span>` : ''}
-              ${containerShort ? `<span style="font-family:var(--font-mono);overflow:hidden;text-overflow:ellipsis" title="${escHtml(inst.container_id || '')}">${containerShort}</span>` : ''}
+              ${containerShort ? `<span style="font-family:var(--font-mono)" title="${escHtml(inst.container_id || '')}">${containerShort}</span>` : ''}
             </div>
-            <div style="display:flex;gap:5px;flex-shrink:0">
-              <button class="btn btn-secondary btn-sm inst-restart-btn" data-id="${inst.id}" style="font-size:11px;padding:3px 10px">Restart</button>
-              <button class="btn btn-danger btn-sm inst-remove-btn" data-id="${inst.id}" style="font-size:11px;padding:3px 10px">Remove</button>
+            <div style="display:flex;gap:4px;flex-shrink:0">
+              <button class="btn btn-secondary btn-sm inst-restart-btn" data-id="${inst.id}" style="font-size:10px;padding:2px 8px">Restart</button>
+              <button class="btn btn-danger btn-sm inst-remove-btn" data-id="${inst.id}" style="font-size:10px;padding:2px 8px">Remove</button>
             </div>
           </div>
         </div>
       </div>`;
     }).join('');
 
-    wrap.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:12px">${cards}</div>`;
+    wrap.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px">${cards}</div>`;
 
     wrap.querySelectorAll('.inst-restart-btn').forEach(btn => {
       btn.addEventListener('click', async () => {

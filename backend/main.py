@@ -293,37 +293,42 @@ async def _remote_replica_stats_poller():
                 groups[(r.node_id, r.app_id)].append(r)
 
             async def _poll_group(node_id: int, app_id: int, replicas: list):
+                # Skip if no agent WS — command would just queue forever
+                if node_id not in _node_ws_connections:
+                    return
                 try:
-                    # Skip if no agent WS — command would just timeout
-                    if node_id not in _node_ws_connections:
-                        return
                     async with AsyncSessionLocal() as db:
                         app_r = await db.execute(select(_App).where(_App.id == app_id))
                         app_obj = app_r.scalar_one_or_none()
                         if not app_obj:
                             return
+                        app_name = app_obj.name
                         cmd = await queue_node_command(
                             db,
                             node_id=node_id,
                             app_id=app_id,
                             command_type="get_stats",
-                            payload={"app_id": app_id, "app_name": app_obj.name},
+                            payload={"app_id": app_id, "app_name": app_name},
                         )
-                        done = await wait_for_node_command(db, cmd.id, timeout_seconds=10)
+                        cmd_id = cmd.id
+                    # wait_for_node_command uses its own sessions internally
+                    async with AsyncSessionLocal() as wait_db:
+                        done = await wait_for_node_command(wait_db, cmd_id, timeout_seconds=10)
                     if done.status == "done" and done.result:
                         s = json.loads(done.result)
-                        if s.get("status") == "running":
+                        if s.get("cpu_percent") is not None or s.get("status") == "running":
                             snap = {
                                 k: v for k, v in s.items()
-                                if k not in ("status", "docker", "system_cpu_percent",
-                                             "system_memory_total_mb", "system_memory_used_mb",
-                                             "system_memory_percent")
+                                if k not in ("status", "remote", "docker",
+                                             "system_cpu_percent", "system_memory_total_mb",
+                                             "system_memory_used_mb", "system_memory_percent")
                             }
                             snap["timestamp"] = int(_time.time() * 1000)
                             for replica in replicas:
                                 pm.set_replica_stats(replica.id, {"replica_id": replica.id, **snap})
-                except Exception:
-                    pass
+                except Exception as _e:
+                    import logging as _log
+                    _log.getLogger("cloudbase.remote_stats").debug("remote stats poll failed node=%d app=%d: %s", node_id, app_id, _e)
 
             await asyncio.gather(*[_poll_group(nid, aid, reps) for (nid, aid), reps in groups.items()])
 

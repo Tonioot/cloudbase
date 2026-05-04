@@ -875,19 +875,12 @@
 </div><!-- /maint-modal-backdrop -->
 
 <!-- DNS Setup modal -->
-<div id=\"dns-modal-backdrop\" style=\"display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1000;align-items:center;justify-content:center\">
-  <div style="background:var(--bg-panel);border:1px solid var(--border);border-radius:10px;width:100%;max-width:520px;margin:24px;box-shadow:0 12px 40px rgba(0,0,0,.35)">
-    <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
-      <div style="display:flex;align-items:center;gap:10px">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-        <span style="font-size:14px;font-weight:600;color:var(--text-primary)">DNS Setup</span>
-      </div>
-      <button id="dns-modal-close" style="background:none;border:none;cursor:pointer;color:var(--text-muted);padding:4px;line-height:0">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-      </button>
-    </div>
-    <div style="padding:20px" id="dns-modal-body">
-      <div style="color:var(--text-muted);font-size:13px">Loading…</div>
+<div id="dns-modal" style="display:none" class="dialog-backdrop">
+  <div class="dialog" style="max-width:500px;width:90%">
+    <div class="dialog-title">DNS Setup</div>
+    <div class="dialog-body" id="dns-modal-body" style="padding:20px"></div>
+    <div class="dialog-actions">
+      <button class="btn btn-secondary" id="dns-modal-close">Close</button>
     </div>
   </div>
 </div>

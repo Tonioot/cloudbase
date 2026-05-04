@@ -2097,6 +2097,53 @@ async def list_instances(app_id: int, db: AsyncSession = Depends(get_db)):
     return [_replica_to_dict(r, node_map.get(r.node_id)) for r in rep_result.scalars().all()]
 
 
+@router.get("/{app_id}/instances/stats-debug")
+async def debug_instance_stats(app_id: int, db: AsyncSession = Depends(get_db)):
+    """Debug endpoint: run one poll cycle and return the raw results."""
+    from routers.nodes import queue_node_command, wait_for_node_command, _node_ws_connections
+    await _get_or_404(app_id, db)
+    local_node = await ensure_local_node(db)
+    rep_result = await db.execute(
+        select(ApplicationReplica).where(
+            ApplicationReplica.app_id == app_id,
+            ApplicationReplica.status == "running",
+            ApplicationReplica.node_id.isnot(None),
+            ApplicationReplica.node_id != local_node.id,
+        )
+    )
+    remote_replicas = rep_result.scalars().all()
+    if not remote_replicas:
+        return {"error": "no remote running replicas found", "local_node_id": local_node.id}
+
+    results = []
+    for r in remote_replicas:
+        entry = {"replica_id": r.id, "node_id": r.node_id, "app_id": r.app_id,
+                 "ws_connected": r.node_id in _node_ws_connections}
+        if r.node_id not in _node_ws_connections:
+            entry["skip_reason"] = "no agent websocket"
+            results.append(entry)
+            continue
+        try:
+            app_r = await db.execute(select(Application).where(Application.id == r.app_id))
+            app_obj = app_r.scalar_one_or_none()
+            async with AsyncSessionLocal() as cmd_db:
+                cmd = await queue_node_command(
+                    cmd_db, node_id=r.node_id, app_id=r.app_id,
+                    command_type="get_stats",
+                    payload={"app_id": r.app_id, "app_name": app_obj.name if app_obj else ""},
+                )
+            async with AsyncSessionLocal() as wait_db:
+                done = await wait_for_node_command(wait_db, cmd.id, timeout_seconds=12)
+            entry["cmd_id"] = cmd.id
+            entry["cmd_status"] = done.status
+            entry["cmd_error"] = done.error_message
+            entry["raw_result"] = json.loads(done.result) if done.result else None
+        except Exception as e:
+            entry["exception"] = str(e)
+        results.append(entry)
+    return results
+
+
 @router.get("/{app_id}/instances/stats")
 async def get_instance_stats(app_id: int, db: AsyncSession = Depends(get_db)):
     """Return the latest stats snapshot for each replica of this app."""
@@ -3388,12 +3435,15 @@ async def _get_nginx_backends(app: Application, db: AsyncSession, local_node: "N
     )
     backends: list[str] = []
     for replica, r_node in result.all():
-        if r_node is None or r_node.is_local:
-            if replica.external_port:
-                backends.append(f"127.0.0.1:{replica.external_port}")
-        else:
+        is_remote = r_node is not None and not r_node.is_local
+        if is_remote:
+            # Remote replica: traffic reaches it via the reverse tunnel on the main node
             if replica.tunnel_port:
                 backends.append(f"127.0.0.1:{replica.tunnel_port}")
+        else:
+            # Local replica (node_id is None, or node is local): direct port on this machine
+            if replica.external_port:
+                backends.append(f"127.0.0.1:{replica.external_port}")
     return backends
 
 

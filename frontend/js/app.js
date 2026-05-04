@@ -1067,6 +1067,7 @@ function initSettings() {
   // Action tiles
   document.getElementById('tile-pull').onclick = () => tileAction('pull', 'Pull');
   document.getElementById('tile-nginx').onclick = openNginxModal;
+  document.getElementById('tile-dns-setup').onclick = openDnsModal;
 
   const zdBtn = document.getElementById('btn-zero-downtime');
   if (zdBtn) {
@@ -1741,9 +1742,6 @@ async function initInstances() {
 
   const refreshBtn = document.getElementById('btn-instances-refresh');
   if (refreshBtn) refreshBtn.onclick = renderInstances;
-
-  const dnsBtn = document.getElementById('btn-dns-setup');
-  if (dnsBtn) dnsBtn.onclick = () => openDnsModal();
 
   const addBtn = document.getElementById('btn-add-instance');
   if (addBtn) {

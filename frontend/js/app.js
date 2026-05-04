@@ -1593,34 +1593,61 @@ async function initInstances() {
 
     const rows = instances.map((inst, idx) => {
       const statusColor = inst.status === 'running'
-        ? '#3fb950'
+        ? 'var(--green)'
         : inst.status === 'error'
-          ? '#f85149'
+          ? 'var(--red)'
           : inst.status === 'starting'
-            ? '#d29922'
-            : '#8b949e';
+            ? 'var(--yellow)'
+            : 'var(--text-muted)';
+      const statusBg = inst.status === 'running'
+        ? 'var(--green-bg)'
+        : inst.status === 'error'
+          ? 'var(--red-bg)'
+          : inst.status === 'starting'
+            ? 'var(--yellow-bg)'
+            : 'var(--bg-muted)';
 
       const tunnelCell = inst.node_is_local
-          ? '<span style="color:#8b949e;font-size:11px">local</span>'
+          ? '<span style="color:var(--text-muted);font-size:11px">local</span>'
           : inst.tunnel_connected
-            ? '<span style="color:#3fb950;font-size:11px">&#x25cf; connected</span>'
-            : '<span style="color:#f85149;font-size:11px">&#x25cb; disconnected</span>';
+            ? '<span style="color:var(--green);font-size:11px">&#x25cf; connected</span>'
+            : '<span style="color:var(--red);font-size:11px">&#x25cb; disconnected</span>';
 
       const nodeName = inst.node_name || 'Local';
 
-      const actionBtn = `<button class="btn-danger btn-sm inst-remove-btn" data-id="${inst.id}" style="padding:4px 10px;font-size:12px">Remove</button>`;
-      const restartBtn = `<button class="btn btn-secondary btn-sm inst-restart-btn" data-id="${inst.id}" style="padding:4px 10px;font-size:12px">Restart</button>`;
+      // Uptime: time since updated_at when running, or created_at as fallback
+      let uptimeStr = '—';
+      const uptimeSrc = inst.status === 'running' ? (inst.updated_at || inst.created_at) : inst.created_at;
+      if (uptimeSrc) {
+        const diffMs = Date.now() - new Date(uptimeSrc).getTime();
+        uptimeStr = diffMs > 0 ? fmtUptime(Math.floor(diffMs / 1000)) : '—';
+      }
 
-      return `<tr style="border-bottom:1px solid #21262d">
-        <td style="padding:8px 12px;color:#e6edf3;font-size:13px">${idx + 1}</td>
-        <td style="padding:8px 12px;color:#e6edf3;font-size:13px">${nodeName}</td>
-        <td style="padding:8px 12px;color:#e6edf3;font-size:13px;font-family:monospace">${inst.external_port || '—'}</td>
-        <td style="padding:8px 12px;font-size:13px">${tunnelCell}</td>
-        <td style="padding:8px 12px;font-size:13px">
-          <span style="color:${statusColor};font-weight:500">${inst.status || '—'}</span>
-          ${inst.last_error ? `<br><span style="color:#f85149;font-size:11px">${inst.last_error}</span>` : ''}
+      // Docker resource hints
+      const cpuLimit = inst.docker_cpu_limit != null ? `${inst.docker_cpu_limit} CPU` : null;
+      const memLimit = inst.docker_memory_limit_mb != null ? `${inst.docker_memory_limit_mb}MB` : null;
+      const resourceStr = [cpuLimit, memLimit].filter(Boolean).join(' · ') || '—';
+
+      const containerShort = inst.container_id ? inst.container_id.slice(0, 12) : '—';
+
+      const actionBtn = `<button class="btn btn-danger btn-sm inst-remove-btn" data-id="${inst.id}" style="padding:3px 10px;font-size:11px">Remove</button>`;
+      const restartBtn = `<button class="btn btn-secondary btn-sm inst-restart-btn" data-id="${inst.id}" style="padding:3px 10px;font-size:11px">Restart</button>`;
+
+      return `<tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:10px 12px;color:var(--text-muted);font-size:12px;width:28px">${idx + 1}</td>
+        <td style="padding:10px 12px;font-size:13px">
+          <span style="font-weight:500;color:var(--text-primary)">${nodeName}</span>
         </td>
-        <td style="padding:8px 12px;text-align:right;white-space:nowrap">
+        <td style="padding:10px 12px;font-size:12px;font-family:var(--font-mono);color:var(--text-secondary)">:${inst.external_port || '—'}</td>
+        <td style="padding:10px 12px;font-size:12px">${tunnelCell}</td>
+        <td style="padding:10px 12px;font-size:12px">
+          <span style="display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600;background:${statusBg};color:${statusColor}">${inst.status || '—'}</span>
+          ${inst.last_error ? `<div style="color:var(--red);font-size:11px;margin-top:3px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(inst.last_error)}">${escHtml(inst.last_error)}</div>` : ''}
+        </td>
+        <td style="padding:10px 12px;font-size:12px;color:var(--text-muted)">${uptimeStr}</td>
+        <td style="padding:10px 12px;font-size:12px;color:var(--text-muted)">${resourceStr}</td>
+        <td style="padding:10px 12px;font-size:11px;font-family:var(--font-mono);color:var(--text-muted)" title="${inst.container_id || ''}">${containerShort}</td>
+        <td style="padding:10px 12px;text-align:right;white-space:nowrap;display:flex;gap:6px;justify-content:flex-end">
           ${restartBtn}
           ${actionBtn}
         </td>
@@ -1630,13 +1657,16 @@ async function initInstances() {
     wrap.innerHTML = `
       <table style="width:100%;border-collapse:collapse">
         <thead>
-          <tr style="border-bottom:1px solid #30363d">
-            <th style="padding:6px 12px;text-align:left;font-size:12px;color:#8b949e;font-weight:500">#</th>
-            <th style="padding:6px 12px;text-align:left;font-size:12px;color:#8b949e;font-weight:500">Node</th>
-            <th style="padding:6px 12px;text-align:left;font-size:12px;color:#8b949e;font-weight:500">Port</th>
-            <th style="padding:6px 12px;text-align:left;font-size:12px;color:#8b949e;font-weight:500">Tunnel</th>
-            <th style="padding:6px 12px;text-align:left;font-size:12px;color:#8b949e;font-weight:500">Status</th>
-            <th style="padding:6px 12px;text-align:right;font-size:12px;color:#8b949e;font-weight:500"></th>
+          <tr style="border-bottom:1px solid var(--border)">
+            <th style="padding:6px 12px;text-align:left;font-size:11px;color:var(--text-muted);font-weight:500">#</th>
+            <th style="padding:6px 12px;text-align:left;font-size:11px;color:var(--text-muted);font-weight:500">Node</th>
+            <th style="padding:6px 12px;text-align:left;font-size:11px;color:var(--text-muted);font-weight:500">Port</th>
+            <th style="padding:6px 12px;text-align:left;font-size:11px;color:var(--text-muted);font-weight:500">Tunnel</th>
+            <th style="padding:6px 12px;text-align:left;font-size:11px;color:var(--text-muted);font-weight:500">Status</th>
+            <th style="padding:6px 12px;text-align:left;font-size:11px;color:var(--text-muted);font-weight:500">Uptime</th>
+            <th style="padding:6px 12px;text-align:left;font-size:11px;color:var(--text-muted);font-weight:500">Resources</th>
+            <th style="padding:6px 12px;text-align:left;font-size:11px;color:var(--text-muted);font-weight:500">Container</th>
+            <th style="padding:6px 12px;text-align:right;font-size:11px;color:var(--text-muted);font-weight:500"></th>
           </tr>
         </thead>
         <tbody>${rows}</tbody>

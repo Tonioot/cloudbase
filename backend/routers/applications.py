@@ -3364,7 +3364,13 @@ def _replica_to_dict(replica: ApplicationReplica, node: Optional[Node] = None) -
         "container_id": replica.container_id,
         "status": replica.status,
         "last_error": replica.last_error,
+        "docker_cpu_limit": replica.docker_cpu_limit,
+        "docker_memory_limit_mb": replica.docker_memory_limit_mb,
+        "docker_read_only_root": bool(replica.docker_read_only_root),
+        "docker_tmpfs_enabled": bool(replica.docker_tmpfs_enabled),
+        "docker_tmpfs_size_mb": replica.docker_tmpfs_size_mb,
         "created_at": replica.created_at.isoformat() if replica.created_at else None,
+        "updated_at": replica.updated_at.isoformat() if replica.updated_at else None,
     }
 
 

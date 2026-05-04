@@ -180,7 +180,9 @@ function nodeCardHTML(n) {
   const statusColor = online ? 'var(--green)' : offline ? 'var(--red)' : 'var(--yellow)';
   const statusBg    = online ? 'var(--green-bg)' : offline ? 'var(--red-bg)' : 'var(--bg-muted)';
 
-  const appCount = appsData.filter(a => a.node_id === n.id).length;
+  const instanceCount = appsData.reduce((acc, a) => acc + (a.replicas || []).filter(r =>
+    n.is_local ? (r.node_id === n.id || r.node_id === null) : r.node_id === n.id
+  ).length, 0);
 
   const serverSvg = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>`;
   const clockSvg  = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`;
@@ -227,7 +229,7 @@ function nodeCardHTML(n) {
           </div>
         </div>
 
-        <div class="node-meta-row" style="margin-top:8px">${appSvg}<span>${appCount} app${appCount !== 1 ? 's' : ''}</span></div>
+        <div class="node-meta-row" style="margin-top:8px">${appSvg}<span>${instanceCount} instance${instanceCount !== 1 ? 's' : ''}</span></div>
         ${(!n.is_local && n.status === 'online') ? `<div class="node-meta-row" data-node-ping-badge="${n.id}">
           ${pingSvg}<span class="ping-val" style="font-size:11px;color:var(--text-muted)">…</span>
         </div>` : ''}

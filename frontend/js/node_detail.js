@@ -5,7 +5,6 @@ const params  = new URLSearchParams(location.search);
 const NODE_ID = parseInt(params.get('id'));
 
 let node = null;
-let apps = [];
 let hasLoadedLogs = false;
 let lastLogsText = '';
 let latestLogsRequest = 0;
@@ -25,7 +24,6 @@ export async function initNodePage() {
         const nodes = await api.listNodes();
         node = nodes.find(n => n.id === NODE_ID);
         if (!node) { window.location.href = '/'; return; }
-        apps = (await api.listApps()).filter(a => a.node_id === NODE_ID);
     } catch (err) {
         toast(err.message, 'error');
         setTimeout(() => { window.location.href = '/'; }, 1500);
@@ -145,7 +143,6 @@ function renderHeader_overview() {
             valueClass: (node.is_local || node.websocket_connected) ? 'node-detail-value-live' : ''
         }),
         _detailItem('Uptime', `<span id="n-uptime">—</span>`),
-        _detailItem('Apps', String(apps.length)),
         meta.hostname ? _detailItem('Hostname', meta.hostname) : '',
         meta.ip ? _detailItem('IP Address', meta.ip, { valueClass: 'node-detail-value-mono' }) : '',
         meta.os ? _detailItem('OS', meta.os_short || meta.os) : '',
@@ -158,7 +155,6 @@ function renderHeader_overview() {
 
     if (meta.uptime_secs) { const el = document.getElementById('n-uptime'); if (el) el.textContent = fmtUptime(meta.uptime_secs); }
 
-    renderApps();
     renderCommands([]);
     _initNodeCharts();
 }
@@ -325,36 +321,6 @@ function _updateNodeChart(chart, data) {
 function _emptyState(svgPath, label) {
     const svg = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">${svgPath}</svg>`;
     return `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;height:100%;color:var(--text-muted)">${svg}<span style="font-size:11px;font-weight:500;opacity:0.5">${label}</span></div>`;
-}
-
-function renderApps() {
-    const grid = document.getElementById('node-apps-grid');
-    if (!apps.length) {
-        grid.style.display = 'flex';
-        grid.style.alignItems = 'center';
-        grid.style.justifyContent = 'center';
-        grid.innerHTML = _emptyState('<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>', 'No applications');
-        return;
-    }
-    grid.style.display = '';
-    const dotColor = { running:'var(--green)', stopped:'var(--text-muted)', error:'var(--red)', deploying:'var(--yellow)', starting:'var(--yellow)', stopping:'var(--yellow)' };
-    const bgColor  = { running:'var(--green-bg)', stopped:'var(--bg-muted)', error:'var(--red-bg)', deploying:'var(--yellow-bg)', starting:'var(--yellow-bg)', stopping:'var(--yellow-bg)' };
-    const txtColor = { running:'var(--green)', stopped:'var(--text-muted)', error:'var(--red)', deploying:'var(--yellow)', starting:'var(--yellow)', stopping:'var(--yellow)' };
-    grid.innerHTML = apps.map(app => `
-        <a href="app.html?id=${app.id}"
-           style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 12px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:8px;text-decoration:none;transition:border-color .15s,background .15s"
-           onmouseenter="this.style.borderColor='rgba(88,166,255,.3)';this.style.background='rgba(88,166,255,.05)'"
-           onmouseleave="this.style.borderColor='var(--border)';this.style.background='var(--bg-elevated)'">
-            <div style="display:flex;align-items:center;gap:8px;min-width:0">
-                <span style="width:7px;height:7px;border-radius:50%;flex-shrink:0;background:${dotColor[app.status]||'var(--text-muted)'}"></span>
-                <div style="min-width:0">
-                    <div style="font-size:12px;font-weight:600;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${app.name}</div>
-                    <div style="font-size:10px;color:var(--text-muted);margin-top:1px;text-transform:capitalize">${app.app_type}${app.external_port ? ` · internal :${app.port || 'N/A'} · external :${app.external_port}` : app.port ? ' · :'+app.port : ''}</div>
-                </div>
-            </div>
-            <span style="font-size:10px;font-weight:600;padding:2px 7px;border-radius:20px;white-space:nowrap;flex-shrink:0;background:${bgColor[app.status]||'var(--bg-muted)'};color:${txtColor[app.status]||'var(--text-muted)'}">${app.status}</span>
-        </a>
-    `).join('');
 }
 
 function renderCommands(cmds) {

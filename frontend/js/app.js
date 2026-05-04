@@ -1064,6 +1064,71 @@ function initSettings() {
   // Save
   document.getElementById('btn-save').onclick = saveSettings;
 
+  // DNS Setup modal (from Settings header)
+  const dnsBtn = document.getElementById('btn-dns-setup');
+  const dnsModal = document.getElementById('dns-setup-modal');
+  const dnsModalClose = document.getElementById('dns-modal-close');
+  if (dnsBtn && dnsModal) {
+    dnsBtn.onclick = async () => {
+      const ipEl = document.getElementById('dns-server-ip');
+      const domainEl = document.getElementById('dns-app-domain');
+
+      if (domainEl) {
+        const domain = app && app.domain ? app.domain : '(no domain configured)';
+        domainEl.textContent = domain;
+        domainEl.style.color = app && app.domain ? 'var(--text-primary)' : 'var(--text-muted)';
+      }
+
+      let serverIp = null;
+      if (ipEl) {
+        ipEl.textContent = 'Loading…';
+        ipEl.style.cursor = 'default';
+        ipEl.onclick = null;
+      }
+
+      try {
+        const nodes = await api.listNodes();
+        const primaryNode = nodes.find(n => n.is_local) || nodes.find(n => n.role === 'main') || nodes[0] || null;
+        if (primaryNode) {
+          const meta = primaryNode.metadata || {};
+          const ipAll = Array.isArray(meta.ip_all) ? meta.ip_all : [];
+          const parsedHost = primaryNode.api_base_url ? (() => {
+            try { return new URL(primaryNode.api_base_url).hostname; } catch { return null; }
+          })() : null;
+          const isIpAddress = value => {
+            if (!value || typeof value !== 'string') return false;
+            const v = value.trim();
+            const isV4 = /^(\d{1,3}\.){3}\d{1,3}$/.test(v);
+            const isV6 = /^[0-9a-fA-F:]+$/.test(v) && v.includes(':');
+            return isV4 || isV6;
+          };
+
+          const candidates = [meta.ip, ...ipAll, parsedHost, primaryNode.public_host];
+          serverIp = candidates.find(isIpAddress) || null;
+        }
+      } catch {
+        // Keep fallback text below
+      }
+
+      if (ipEl) {
+        if (serverIp) {
+          ipEl.textContent = serverIp;
+          ipEl.style.cursor = 'pointer';
+          ipEl.onclick = () => {
+            navigator.clipboard.writeText(serverIp).then(() => toast('IP copied', 'success')).catch(() => {});
+          };
+        } else {
+          ipEl.textContent = 'IP not available';
+          ipEl.style.cursor = 'default';
+        }
+      }
+
+      dnsModal.style.display = 'flex';
+    };
+    if (dnsModalClose) dnsModalClose.onclick = () => { dnsModal.style.display = 'none'; };
+    dnsModal.onclick = e => { if (e.target === dnsModal) dnsModal.style.display = 'none'; };
+  }
+
   // Action tiles
   document.getElementById('tile-pull').onclick = () => tileAction('pull', 'Pull');
   document.getElementById('tile-nginx').onclick = openNginxModal;
@@ -1691,7 +1756,7 @@ async function initInstances() {
       </div>`;
     }).join('');
 
-    wrap.innerHTML = `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">${cards}</div>`;
+    wrap.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px">${cards}</div>`;
 
     wrap.querySelectorAll('.inst-restart-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
@@ -1741,33 +1806,6 @@ async function initInstances() {
 
   const refreshBtn = document.getElementById('btn-instances-refresh');
   if (refreshBtn) refreshBtn.onclick = renderInstances;
-
-  // DNS Setup modal
-  const dnsBtn = document.getElementById('btn-dns-setup');
-  const dnsModal = document.getElementById('dns-setup-modal');
-  const dnsModalClose = document.getElementById('dns-modal-close');
-  if (dnsBtn && dnsModal) {
-    dnsBtn.onclick = () => {
-      // Populate server IP from current hostname (where nginx/panel runs)
-      const serverIp = window.location.hostname;
-      const ipEl = document.getElementById('dns-server-ip');
-      const domainEl = document.getElementById('dns-app-domain');
-      if (ipEl) {
-        ipEl.textContent = serverIp;
-        ipEl.onclick = () => {
-          navigator.clipboard.writeText(serverIp).then(() => toast('IP copied', 'success')).catch(() => {});
-        };
-      }
-      if (domainEl) {
-        const domain = app && app.domain ? app.domain : '(no domain configured)';
-        domainEl.textContent = domain;
-        domainEl.style.color = app && app.domain ? 'var(--text-primary)' : 'var(--text-muted)';
-      }
-      dnsModal.style.display = 'flex';
-    };
-    if (dnsModalClose) dnsModalClose.onclick = () => { dnsModal.style.display = 'none'; };
-    dnsModal.addEventListener('click', e => { if (e.target === dnsModal) dnsModal.style.display = 'none'; });
-  }
 
   const addBtn = document.getElementById('btn-add-instance');
   if (addBtn) {

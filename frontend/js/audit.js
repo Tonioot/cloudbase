@@ -42,12 +42,28 @@ async function loadPage() {
     const entries = await api.getAuditLog(null, LIMIT, page * LIMIT);
     hasMore = entries.length === LIMIT;
     allLoaded.push(...entries);
+    syncActionFilterOptions();
     renderFiltered();
     const btn = document.getElementById('btn-load-more');
     if (btn) btn.style.display = hasMore ? '' : 'none';
     page++;
   } catch (e) {
     wrap.innerHTML = `<div style="padding:20px;color:var(--red);font-size:13px">${e.message}</div>`;
+  }
+}
+
+function syncActionFilterOptions() {
+  const sel = document.getElementById('filter-action');
+  if (!sel) return;
+
+  const prev = sel.value || '';
+  const actions = Array.from(new Set(allLoaded.map(e => e.action).filter(Boolean))).sort();
+
+  sel.innerHTML = '<option value="">All actions</option>' +
+    actions.map(a => `<option value="${a}">${a}</option>`).join('');
+
+  if (prev && actions.includes(prev)) {
+    sel.value = prev;
   }
 }
 

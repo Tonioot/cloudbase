@@ -100,6 +100,39 @@ function renderHeader() {
 
   document.getElementById('btn-maintenance-mode').addEventListener('click', () => toggleMode('maintenance'));
   document.getElementById('btn-update-mode').addEventListener('click',      () => toggleMode('update'));
+  _syncZeroDowntimeButton();
+}
+
+function _syncZeroDowntimeButton() {
+  const zdBtn = document.getElementById('btn-zero-downtime');
+  if (!zdBtn) return;
+
+  // Keep it available from initial page load (not only after opening Settings).
+  zdBtn.style.display = (app.use_docker && app.nginx_enabled) ? '' : 'none';
+
+  if (zdBtn.dataset.bound === '1') return;
+  zdBtn.dataset.bound = '1';
+  zdBtn.onclick = async () => {
+    const ok = await confirm(
+      'Zero-downtime Restart',
+      'Builds a new image for every running instance, starts each on a new port, verifies health, then atomically swaps nginx. Old containers stop only after the new ones are live.'
+    );
+    if (!ok) return;
+    zdBtn.disabled = true;
+    const orig = zdBtn.innerHTML;
+    zdBtn.textContent = 'Restarting…';
+    try {
+      const res = await api.deployZeroDowntime(APP_ID);
+      toast(`Zero-downtime restart complete — instance ${res.instance_id}`, 'success');
+      app = await api.getApp(APP_ID);
+      updateHeaderStatus();
+    } catch (e) {
+      toast(e.message || 'Zero-downtime restart failed', 'error');
+    } finally {
+      zdBtn.disabled = false;
+      zdBtn.innerHTML = orig;
+    }
+  };
 }
 
 function _updateHeaderStatus_legacy() {
@@ -193,6 +226,8 @@ function updateHeaderStatus() {
     btnMaint.classList.toggle('active-maintenance', !!app.maintenance_mode);
     btnUpdate.classList.toggle('active-update', !!app.update_mode);
   }
+
+  _syncZeroDowntimeButton();
 
   refreshMaintenanceUiState();
 }
@@ -1151,32 +1186,6 @@ function initSettings() {
   // Action tiles
   document.getElementById('tile-pull').onclick = () => tileAction('pull', 'Pull');
   document.getElementById('tile-nginx').onclick = openNginxModal;
-
-  const zdBtn = document.getElementById('btn-zero-downtime');
-  if (zdBtn) {
-    if (app.use_docker && app.nginx_enabled) {
-      zdBtn.style.display = '';
-    }
-    zdBtn.onclick = async () => {
-      const ok = await confirm(
-        'Zero-downtime Restart',
-        'Builds a new image for every running instance, starts each on a new port, verifies health, then atomically swaps nginx. Old containers stop only after the new ones are live.'
-      );
-      if (!ok) return;
-      zdBtn.disabled = true;
-      const orig = zdBtn.innerHTML;
-      zdBtn.textContent = 'Restarting…';
-      try {
-        const res = await api.deployZeroDowntime(APP_ID);
-        toast(`Zero-downtime restart complete — instance ${res.instance_id}`, 'success');
-      } catch (e) {
-        toast(e.message || 'Zero-downtime restart failed', 'error');
-      } finally {
-        zdBtn.disabled = false;
-        zdBtn.innerHTML = orig;
-      }
-    };
-  }
 
   const pullTitle = document.getElementById('tile-pull-title');
   const pullSub = document.getElementById('tile-pull-sub');

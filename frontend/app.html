@@ -311,10 +311,6 @@
           <div class="settings-bar">
             <span class="settings-bar-title">Application Settings</span>
             <div style="display:flex;gap:8px;align-items:center">
-              <button class="btn btn-secondary btn-sm" id="btn-dns-setup">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-                DNS Setup
-              </button>
               <button class="btn btn-primary btn-sm" id="btn-save" data-admin>
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17,21 17,13 7,13 7,21"/><polyline points="7,3 7,8 15,8"/></svg>
                 Save Changes
@@ -424,7 +420,13 @@
             <!-- Network -->
             <div class="settings-group">
               <div class="settings-group-hd">
-                <div class="settings-group-title">Network</div>
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+                  <div class="settings-group-title">Network</div>
+                  <button type="button" class="btn btn-secondary btn-sm" id="btn-dns-setup">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                    DNS Setup
+                  </button>
+                </div>
                 <div class="settings-group-sub">Domains, redirects and SSL certificates</div>
               </div>
               <div class="settings-group-bd">

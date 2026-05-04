@@ -3,6 +3,7 @@ import asyncio
 import logging
 import secrets
 import time
+import urllib.request
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -367,6 +368,26 @@ def _utcnow() -> datetime:
     return datetime.utcnow()
 
 
+def _detect_public_ip(timeout: float = 2.5) -> Optional[str]:
+    """Best-effort public IPv4 detection for the primary node."""
+    endpoints = (
+        "https://api.ipify.org",
+        "https://ipv4.icanhazip.com",
+        "https://ifconfig.me/ip",
+    )
+    for url in endpoints:
+        try:
+            with urllib.request.urlopen(url, timeout=timeout) as resp:
+                raw = resp.read().decode("utf-8", errors="ignore").strip()
+            # Basic IPv4 validation
+            parts = raw.split(".")
+            if len(parts) == 4 and all(p.isdigit() and 0 <= int(p) <= 255 for p in parts):
+                return raw
+        except Exception:
+            continue
+    return None
+
+
 async def ensure_local_node(db: AsyncSession) -> Node:
     result = await db.execute(select(Node).where(Node.is_local == True))
     local = result.scalar_one_or_none()
@@ -382,8 +403,13 @@ async def ensure_local_node(db: AsyncSession) -> Node:
         if local.name in ("local-cloudbase", "local_cloudbase", "local-cloudbae", "local_cloudbae", "") or "local" in local.name.lower():
             local.name = "Primary Node"
             updated = True
-        # Always refresh local system info
-        local.metadata_json = json.dumps(_local_system_info())
+        # Always refresh local system info and public host/IP for DNS guidance
+        info = _local_system_info()
+        public_ip = _detect_public_ip()
+        if public_ip:
+            info["public_ip"] = public_ip
+            local.public_host = public_ip
+        local.metadata_json = json.dumps(info)
         updated = True
         if updated:
             local.updated_at = _utcnow()
@@ -402,6 +428,12 @@ async def ensure_local_node(db: AsyncSession) -> Node:
         metadata_json=json.dumps(_local_system_info()),
         last_seen=_utcnow(),
     )
+    info = _local_system_info()
+    public_ip = _detect_public_ip()
+    if public_ip:
+        info["public_ip"] = public_ip
+        local.public_host = public_ip
+    local.metadata_json = json.dumps(info)
     db.add(local)
     await db.commit()
     await db.refresh(local)

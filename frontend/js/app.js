@@ -1091,20 +1091,39 @@ function initSettings() {
         const primaryNode = nodes.find(n => n.is_local) || nodes.find(n => n.role === 'main') || nodes[0] || null;
         if (primaryNode) {
           const meta = primaryNode.metadata || {};
-          const ipAll = Array.isArray(meta.ip_all) ? meta.ip_all : [];
           const parsedHost = primaryNode.api_base_url ? (() => {
             try { return new URL(primaryNode.api_base_url).hostname; } catch { return null; }
           })() : null;
-          const isIpAddress = value => {
+          const isPublicIpAddress = value => {
             if (!value || typeof value !== 'string') return false;
             const v = value.trim();
-            const isV4 = /^(\d{1,3}\.){3}\d{1,3}$/.test(v);
-            const isV6 = /^[0-9a-fA-F:]+$/.test(v) && v.includes(':');
-            return isV4 || isV6;
+
+            if (/^(\d{1,3}\.){3}\d{1,3}$/.test(v)) {
+              const parts = v.split('.').map(Number);
+              if (parts.some(n => Number.isNaN(n) || n < 0 || n > 255)) return false;
+              if (parts[0] === 10) return false;
+              if (parts[0] === 127) return false;
+              if (parts[0] === 0) return false;
+              if (parts[0] === 169 && parts[1] === 254) return false;
+              if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return false;
+              if (parts[0] === 192 && parts[1] === 168) return false;
+              if (parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127) return false;
+              return true;
+            }
+
+            if (/^[0-9a-fA-F:]+$/.test(v) && v.includes(':')) {
+              const low = v.toLowerCase();
+              if (low === '::1') return false;
+              if (low.startsWith('fe80:')) return false;
+              if (low.startsWith('fc') || low.startsWith('fd')) return false;
+              return true;
+            }
+
+            return false;
           };
 
-          const candidates = [meta.ip, ...ipAll, parsedHost, primaryNode.public_host];
-          serverIp = candidates.find(isIpAddress) || null;
+          const candidates = [meta.public_ip, primaryNode.public_host, parsedHost];
+          serverIp = candidates.find(isPublicIpAddress) || null;
         }
       } catch {
         // Keep fallback text below

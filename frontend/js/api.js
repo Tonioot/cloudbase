@@ -123,6 +123,7 @@ export const api = {
   deployZeroDowntime: (id) => request('POST', `/apps/${id}/deploy-zero-downtime`),
   listReplicas:   (id)             => request('GET',    `/apps/${id}/replicas`),
   listInstances:  (id)             => request('GET',    `/apps/${id}/instances`),
+  getInstanceStats:(id)            => request('GET',    `/apps/${id}/instances/stats`),
   scaleApp:       (id, body)       => request('POST',   `/apps/${id}/scale`, body),
   removeReplica:  (id, replicaId)  => request('DELETE', `/apps/${id}/replicas/${replicaId}`),
   deleteInstance: (id, instanceId) => request('DELETE', `/apps/${id}/instances/${instanceId}`),

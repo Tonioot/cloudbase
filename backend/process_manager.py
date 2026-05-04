@@ -39,6 +39,9 @@ _stats_history: dict[int, deque] = {}
 _stats_queues: dict[int, list[asyncio.Queue]] = {}
 _stats_queues_lock = threading.Lock()
 
+# Latest stats snapshot per replica_id (for the instances table)
+_replica_stats: dict[int, dict] = {}
+
 
 def set_main_loop(loop: asyncio.AbstractEventLoop) -> None:
     global _main_loop
@@ -72,6 +75,18 @@ def _push_stat(app_id: int, data: dict) -> None:
 
 def get_recent_stats(app_id: int) -> list[dict]:
     return list(_stats_history.get(app_id, []))
+
+
+def set_replica_stats(replica_id: int, data: dict) -> None:
+    _replica_stats[replica_id] = data
+
+
+def get_replica_stats(replica_id: int) -> dict | None:
+    return _replica_stats.get(replica_id)
+
+
+def get_all_replica_stats(app_id: int, replica_ids: list[int]) -> dict[int, dict]:
+    return {rid: _replica_stats[rid] for rid in replica_ids if rid in _replica_stats}
 
 
 def load_registry() -> None:

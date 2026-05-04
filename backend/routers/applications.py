@@ -855,7 +855,7 @@ async def _sync_process_status(app, db) -> None:
 
 @router.get("")
 async def list_apps(request: Request, db: AsyncSession = Depends(get_db)):
-    local_node = await ensure_local_node(db)
+    await ensure_local_node(db)
     result = await db.execute(select(Application))
     apps = result.scalars().all()
     node_map = await _load_node_map(db)
@@ -867,31 +867,12 @@ async def list_apps(request: Request, db: AsyncSession = Depends(get_db)):
     for r in all_replicas:
         replica_map.setdefault(r.app_id, []).append(r)
 
-    # Check all process statuses in parallel (each check runs blocking psutil calls in threads)
+    # Derive status from replica statuses — no live Docker check needed
     async def _check(app):
-        node = node_map.get(app.node_id) or local_node
-
-        # Instance-based model: derive status from stored replica statuses (no Docker call)
         app_replicas = replica_map.get(app.id)
         if app_replicas:
             return app.id, _derive_app_status_from_instances(app_replicas), None
-
-        if not node.is_local:
-            return app.id, app.status, app.pid
-
-        if app.use_docker:
-            alive = await asyncio.to_thread(pm.is_docker_app_running, app.id)
-            return app.id, ("running" if alive else "stopped"), None
-        if not app.pid:
-            return app.id, app.status, app.pid
-        alive = await asyncio.to_thread(pm.is_process_running, app.pid, app.id)
-        if alive:
-            return app.id, "running", app.pid
-        if app.port:
-            recovered = await asyncio.to_thread(pm.find_process_by_port, app.port)
-            if recovered:
-                return app.id, "running", recovered
-        return app.id, "stopped", None
+        return app.id, app.status, app.pid
 
     checks = await asyncio.gather(*[_check(a) for a in apps])
 
@@ -911,7 +892,7 @@ async def list_apps(request: Request, db: AsyncSession = Depends(get_db)):
     for a in apps:
         app_replicas = replica_map.get(a.id, [])
         replica_dicts = [_replica_to_dict(r, node_map.get(r.node_id)) for r in app_replicas]
-        result_list.append(_app_to_dict(a, node_map.get(a.node_id) or local_node, include_sensitive=include_sensitive, replicas=replica_dicts))
+        result_list.append(_app_to_dict(a, include_sensitive=include_sensitive, replicas=replica_dicts))
     return result_list
 
 
@@ -1007,7 +988,7 @@ async def deploy_app(req: DeployRequest, background_tasks: BackgroundTasks, db: 
         )
         await db.commit()
         await db.refresh(app)
-        return _app_to_dict(app, target_node)
+        return _app_to_dict(app)
 
     try:
         await _deploy_app(app)
@@ -1034,7 +1015,7 @@ async def deploy_app(req: DeployRequest, background_tasks: BackgroundTasks, db: 
         await log_audit(db, "app.deploy", actor=actor, app_id=app.id, detail={"name": app.name})
         await db.commit()
         await db.refresh(app)
-        return _app_to_dict(app, target_node)
+        return _app_to_dict(app)
     except Exception as e:
         app.status = "error"
         await db.commit()
@@ -1043,17 +1024,16 @@ async def deploy_app(req: DeployRequest, background_tasks: BackgroundTasks, db: 
 
 @router.get("/{app_id}")
 async def get_app(app_id: int, request: Request, db: AsyncSession = Depends(get_db)):
-    local_node = await ensure_local_node(db)
+    await ensure_local_node(db)
     app = await _get_or_404(app_id, db)
     await _sync_process_status(app, db)
-    node = await _get_app_node(app, db, local_node)
     node_map = await _load_node_map(db)
     replica_result = await db.execute(
         select(ApplicationReplica).where(ApplicationReplica.app_id == app_id)
     )
     replicas = replica_result.scalars().all()
     replicas_dicts = [_replica_to_dict(r, node_map.get(r.node_id)) for r in replicas]
-    return _app_to_dict(app, node, include_sensitive=_request_is_admin(request), replicas=replicas_dicts)
+    return _app_to_dict(app, include_sensitive=_request_is_admin(request), replicas=replicas_dicts)
 
 
 @router.get("/{app_id}/stats/history")
@@ -1163,7 +1143,7 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
 
         # When a node is offline/unknown, keep the update queued and apply it when it reconnects.
         if node.status != "online":
-            queued = _app_to_dict(app, node)
+            queued = _app_to_dict(app)
             queued["queued"] = True
             queued["pending_sync"] = True
             queued["command_id"] = cmd.id
@@ -1174,7 +1154,7 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
             done = await wait_for_node_command(db, cmd.id, timeout_seconds=30)
         except HTTPException as exc:
             if exc.status_code == 504:
-                queued = _app_to_dict(app, node)
+                queued = _app_to_dict(app)
                 queued["queued"] = True
                 queued["pending_sync"] = True
                 queued["command_id"] = cmd.id
@@ -1185,7 +1165,7 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
         await db.refresh(app)
         if done.status != "done":
             raise HTTPException(500, f"Failed to update remote app settings: {done.error_message}")
-        return _app_to_dict(app, node)
+        return _app_to_dict(app)
 
     if app.domain:
         maint_ok, maint_msg = _ensure_maintenance_files(app, app.id)
@@ -1207,7 +1187,7 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
 
     await log_audit(db, "app.config_update", actor=actor, app_id=app.id, detail={"name": app.name})
     await db.commit()
-    return _app_to_dict(app, node)
+    return _app_to_dict(app)
 
 
 @router.delete("/{app_id}")
@@ -1704,7 +1684,7 @@ async def move_app(app_id: int, req: MoveRequest, db: AsyncSession = Depends(get
             await db.commit()
 
     await db.refresh(app)
-    return _app_to_dict(app, target_node)
+    return _app_to_dict(app)
 
 
 async def _start_instance_local(app: "Application", replica: "ApplicationReplica", env_vars: dict, app_id: int) -> str:
@@ -2115,6 +2095,29 @@ async def list_instances(app_id: int, db: AsyncSession = Depends(get_db)):
         .order_by(ApplicationReplica.id)
     )
     return [_replica_to_dict(r, node_map.get(r.node_id)) for r in rep_result.scalars().all()]
+
+
+@router.get("/{app_id}/instances/stats")
+async def get_instance_stats(app_id: int, db: AsyncSession = Depends(get_db)):
+    """Return the latest stats snapshot for each replica of this app."""
+    await _get_or_404(app_id, db)
+    rep_result = await db.execute(
+        select(ApplicationReplica).where(ApplicationReplica.app_id == app_id)
+    )
+    replicas = rep_result.scalars().all()
+    replica_ids = [r.id for r in replicas]
+    snapshots = pm.get_all_replica_stats(app_id, replica_ids)
+    return {
+        str(rid): {
+            "cpu_percent":  round(s.get("cpu_percent", 0), 1),
+            "memory_mb":    round(s.get("memory_mb", 0), 0),
+            "net_rx_mb":    round(s.get("net_rx_mb", 0), 2),
+            "net_tx_mb":    round(s.get("net_tx_mb", 0), 2),
+            "uptime_seconds": s.get("uptime_seconds"),
+            "timestamp":    s.get("timestamp"),
+        }
+        for rid, s in snapshots.items()
+    }
 
 
 @router.get("/{app_id}/replicas/{replica_id}/logs")
@@ -3303,7 +3306,7 @@ async def _get_or_404(app_id: int, db: AsyncSession) -> Application:
     return app
 
 
-def _app_to_dict(app: Application, node: Optional[Node] = None, include_sensitive: bool = True, replicas: Optional[list] = None) -> dict:
+def _app_to_dict(app: Application, include_sensitive: bool = True, replicas: Optional[list] = None) -> dict:
     return {
         "id": app.id,
         "name": app.name,
@@ -3319,13 +3322,6 @@ def _app_to_dict(app: Application, node: Optional[Node] = None, include_sensitiv
         "last_error": app.last_error,
         "env_vars": decrypt_env(app.env_vars or "") if include_sensitive else {},
         "nginx_enabled": app.nginx_enabled,
-        "node": {
-            "id": node.id,
-            "name": node.name,
-            "status": node.status,
-            "is_local": bool(node.is_local),
-            "public_host": node.public_host,
-        } if node else None,
         "auto_start":     app.auto_start,
         "restart_policy": app.restart_policy or "no",
         "use_docker":     True,
@@ -3402,9 +3398,21 @@ async def _get_nginx_backends(app: Application, db: AsyncSession, local_node: "N
 
 
 async def _get_app_node(app: Application, db: AsyncSession, local_node: Optional[Node] = None) -> Node:
-    if app.node_id:
-        result = await db.execute(select(Node).where(Node.id == app.node_id))
-        node = result.scalar_one_or_none()
+    """Return the node that should handle single-node operations (logs, git, rebuild).
+
+    Prefers the node of the first running replica, then any replica, then local.
+    """
+    rep_result = await db.execute(
+        select(ApplicationReplica).where(ApplicationReplica.app_id == app.id)
+        .order_by(ApplicationReplica.status.desc())  # running > stopped
+        .limit(5)
+    )
+    replicas = rep_result.scalars().all()
+    running = next((r for r in replicas if r.status in ("running", "starting") and r.node_id), None)
+    candidate = running or next((r for r in replicas if r.node_id), None)
+    if candidate and candidate.node_id:
+        node_result = await db.execute(select(Node).where(Node.id == candidate.node_id))
+        node = node_result.scalar_one_or_none()
         if node:
             return node
     if local_node is not None:
@@ -3565,7 +3573,7 @@ async def toggle_maintenance_mode(app_id: int, db: AsyncSession = Depends(get_db
         await db.refresh(app)
         if done.status != "done":
             raise HTTPException(500, f"Failed to toggle maintenance mode on node '{node.name}': {done.error_message}")
-        return _app_to_dict(app, node)
+        return _app_to_dict(app)
 
     mode = _get_nginx_mode(app)
     log.info("[toggle-maintenance] app_id=%d new_mode=%r nginx_mode=%r domain=%r",
@@ -3588,7 +3596,7 @@ async def toggle_maintenance_mode(app_id: int, db: AsyncSession = Depends(get_db
         raise HTTPException(500, f"Nginx config failed: {msg}")
 
     await db.commit()
-    return _app_to_dict(app, node)
+    return _app_to_dict(app)
 
 
 @router.post("/{app_id}/update-mode/toggle")
@@ -3630,7 +3638,7 @@ async def toggle_update_mode(app_id: int, db: AsyncSession = Depends(get_db)):
         await db.refresh(app)
         if done.status != "done":
             raise HTTPException(500, f"Failed to toggle update mode on node '{node.name}': {done.error_message}")
-        return _app_to_dict(app, node)
+        return _app_to_dict(app)
 
     mode = _get_nginx_mode(app)
     log.info("[toggle-update] app_id=%d new_mode=%r nginx_mode=%r domain=%r",
@@ -3653,7 +3661,7 @@ async def toggle_update_mode(app_id: int, db: AsyncSession = Depends(get_db)):
         raise HTTPException(500, f"Nginx config failed: {msg}")
 
     await db.commit()
-    return _app_to_dict(app, node)
+    return _app_to_dict(app)
 
 
 @router.get("/{app_id}/maintenance-pages/preview/{page_type}")

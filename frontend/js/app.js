@@ -161,14 +161,8 @@ async function _toggleMode_legacy(type) {
 }
 
 function updateHeaderStatus() {
-  const nodeOffline = app.node && app.node.status === 'offline';
-
   const badgeEl = document.getElementById('app-badge');
-  if (nodeOffline) {
-    badgeEl.innerHTML = `<span style="font-size:11px;padding:4px 12px;border-radius:999px;background:var(--red-bg);border:1px solid var(--red-border);color:var(--red);font-weight:600;text-transform:uppercase">Node Offline</span>`;
-  } else {
-    badgeEl.innerHTML = badge(app.status);
-  }
+  badgeEl.innerHTML = badge(app.status);
 
   const s = app.status;
   const busy = (s === 'deploying');
@@ -177,12 +171,12 @@ function updateHeaderStatus() {
   const btnStop    = document.getElementById('btn-stop');
   const btnRestart = document.getElementById('btn-restart');
 
-  btnStart.disabled   = (s === 'running') || busy || nodeOffline;
-  btnStop.disabled    = (s === 'stopped') || busy || nodeOffline;
-  btnRestart.disabled = busy || nodeOffline;
+  btnStart.disabled   = (s === 'running') || busy;
+  btnStop.disabled    = (s === 'stopped') || busy;
+  btnRestart.disabled = busy;
 
-  btnStart.style.opacity = ((s === 'running') || nodeOffline) ? '0.4' : '1';
-  btnStop.style.opacity  = ((s === 'stopped') || nodeOffline) ? '0.4' : '1';
+  btnStart.style.opacity = (s === 'running') ? '0.4' : '1';
+  btnStop.style.opacity  = (s === 'stopped') ? '0.4' : '1';
 
   const btnMaint  = document.getElementById('btn-maintenance-mode');
   const btnUpdate = document.getElementById('btn-update-mode');
@@ -250,10 +244,11 @@ async function quickAction(action) {
     const result = await fns[action](APP_ID);
 
     // Remote node: subscribe to events and wait for command completion
-    if (result?.command_id && app.node?.id) {
+    const remoteNodeId = result?.node_id || (app.replicas || []).find(r => r.node_id && !r.node_is_local)?.node_id;
+    if (result?.command_id && remoteNodeId) {
       btn.innerHTML = `${spinner} Pending on node…`;
       document.getElementById('app-badge').innerHTML = badge('pending');
-      await _waitForRemoteCommand(result.command_id, app.node.id);
+      await _waitForRemoteCommand(result.command_id, remoteNodeId);
     } else {
       // Local: clear chart history on start/restart
       if (action === 'start' || action === 'restart') {
@@ -425,15 +420,6 @@ function _startPrimaryLogs() {
   const terminal = document.getElementById('log-terminal');
   if (logWs) { logWs.close(); logWs = null; }
 
-  if (app.node && app.node.status === 'offline') {
-    terminal.innerHTML = `
-      <div style="padding:40px;text-align:center;color:var(--text-muted)">
-        <div style="margin-bottom:12px;color:var(--red)">${icon.activity}</div>
-        <div style="font-size:14px;font-weight:600;margin-bottom:4px;color:var(--text-primary)">Logs Unavailable</div>
-        <div style="font-size:12px">Real-time logs cannot be streamed while the node is offline.</div>
-      </div>`;
-    return;
-  }
   terminal.innerHTML = `<div class="log-empty">Waiting for log output…</div>`;
   logLines = [];
 
@@ -516,6 +502,21 @@ function fmtMb(mb) {
   return `${mb.toFixed(1)} MB`;
 }
 
+let _lastInstanceCount = 0;
+
+function _updateStatsContextBar(instanceCount) {
+  const bar = document.getElementById('stats-context-bar');
+  if (!bar) return;
+  if (!instanceCount || instanceCount <= 0) { bar.style.display = 'none'; return; }
+  _lastInstanceCount = instanceCount;
+  const cpuNote = instanceCount > 1 ? 'CPU avg · memory/network/disk sum' : '';
+  bar.innerHTML = `
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>
+    <span>${instanceCount} instance${instanceCount !== 1 ? 's' : ''}${instanceCount > 1 ? ' · aggregated' : ''}</span>
+    ${cpuNote ? `<span style="color:var(--border);margin:0 2px">·</span><span style="font-style:italic">${cpuNote}</span>` : ''}`;
+  bar.style.display = 'flex';
+}
+
 function handleStatData(data) {
   if (data.status === 'stopped') {
     lastStatStatus = 'stopped';
@@ -528,7 +529,11 @@ function handleStatData(data) {
     }
     return;
   }
+  // Per-replica frame — not an aggregated app-level frame, skip for charts
+  if (data.replica_id != null && data.cpu_percent == null) return;
   lastStatStatus = 'running';
+
+  if (data._instance_count) _updateStatsContextBar(data._instance_count);
 
   // Always accumulate — even while on a different tab
   const now = new Date().toLocaleTimeString('nl', { hour:'2-digit', minute:'2-digit' });
@@ -587,22 +592,6 @@ function handleStatData(data) {
 function initStats() {
   statsTabActive = true;
 
-  if (app.node && app.node.status === 'offline') {
-    _removeStatsLoading();
-    document.getElementById('stats-stopped').style.display = 'none';
-    document.getElementById('stats-content').style.display = 'none';
-    const panel = document.getElementById('panel-stats');
-    if (!document.getElementById('stats-offline')) {
-      panel.insertAdjacentHTML('afterbegin', `
-        <div id="stats-offline" style="padding:60px;text-align:center;color:var(--text-muted)">
-          <div style="margin-bottom:12px;color:var(--red)">${icon.cpu}</div>
-          <div style="font-size:14px;font-weight:600;margin-bottom:4px;color:var(--text-primary)">Statistics Unavailable</div>
-          <div style="font-size:12px">Real-time performance metrics are not available while the node is offline.</div>
-        </div>`);
-    }
-    return;
-  }
-  document.getElementById('stats-offline')?.remove();
 
   initCharts();
 
@@ -625,6 +614,7 @@ function initStats() {
     document.getElementById('stats-stopped').style.display = 'none';
     document.getElementById('stats-content').style.display = 'block';
     if (histSection) histSection.style.display = '';
+    if (_lastInstanceCount) _updateStatsContextBar(_lastInstanceCount);
     updateChart(chartCpu,  cpuData);
     updateChart(chartMem,  memData);
     updateChart(chartNet,  netData);
@@ -830,17 +820,6 @@ function drawSparkline(ctx, canvas, data, color, unit, opts = {}) {
 let currentFilePath = '';
 
 async function initFiles() {
-  if (app.node && app.node.status === 'offline') {
-    document.getElementById('files-list').innerHTML = `
-      <div style="padding:16px;display:flex;flex-direction:column;gap:6px">
-        <div style="font-size:12px;color:var(--red);display:flex;align-items:center;gap:6px">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-          Node offline
-        </div>
-        <div style="font-size:11px;color:var(--text-muted)">Files unavailable while node is offline.</div>
-      </div>`;
-    return;
-  }
   await loadDir('');
 }
 
@@ -848,7 +827,7 @@ async function loadDir(path) {
   currentFilePath = path;
   const list = document.getElementById('files-list');
   const bcrumb = document.getElementById('files-breadcrumb');
-  const isRemote = app.node && !app.node.is_local;
+  const isRemote = (app.replicas || []).some(r => r.node_id && !r.node_is_local);
   list.innerHTML = `<div style="padding:16px;color:var(--text-muted);font-size:12px">${isRemote && path === '' ? 'Fetching from node…' : 'Loading…'}</div>`;
 
   try {
@@ -1210,7 +1189,7 @@ function hasMaintenanceDomain() {
 }
 
 function isRemoteAppNode() {
-  return !!(app.node && app.node.is_local === false);
+  return (app.replicas || []).some(r => r.node_id && !r.node_is_local);
 }
 
 function canToggleMaintenanceMode() {
@@ -1535,7 +1514,8 @@ async function _initMoveToNode() {
   try { nodes = await api.listNodes(); } catch { return; }
 
   // Only show if there are other nodes to move to
-  const others = nodes.filter(n => n.id !== (app.node?.id || app.node_id) && n.enabled);
+  const usedNodeIds = new Set((app.replicas || []).map(r => r.node_id).filter(Boolean));
+  const others = nodes.filter(n => !usedNodeIds.has(n.id) && n.enabled);
   if (!others.length) return;
 
   section.style.display = '';
@@ -1578,9 +1558,12 @@ async function initInstances() {
   if (!wrap) return;
 
   async function renderInstances() {
-    let instances = [];
+    let instances = [], instStats = {};
     try {
-      instances = await api.listInstances(APP_ID);
+      [instances, instStats] = await Promise.all([
+        api.listInstances(APP_ID),
+        api.getInstanceStats(APP_ID).catch(() => ({})),
+      ]);
     } catch (e) {
       wrap.innerHTML = `<div style="color:var(--red);padding:12px;font-size:13px">Failed to load instances: ${e.message}</div>`;
       return;
@@ -1623,12 +1606,41 @@ async function initInstances() {
         uptimeStr = diffMs > 0 ? fmtUptime(Math.floor(diffMs / 1000)) : '—';
       }
 
-      // Docker resource hints
+      // Docker resource limits (from config)
       const cpuLimit = inst.docker_cpu_limit != null ? `${inst.docker_cpu_limit} CPU` : null;
       const memLimit = inst.docker_memory_limit_mb != null ? `${inst.docker_memory_limit_mb}MB` : null;
-      const resourceStr = [cpuLimit, memLimit].filter(Boolean).join(' · ') || '—';
+      const limitStr = [cpuLimit, memLimit].filter(Boolean).join(' · ') || '—';
 
       const containerShort = inst.container_id ? inst.container_id.slice(0, 12) : '—';
+
+      // Live metrics from latest snapshot
+      const snap = instStats[String(inst.id)];
+      let liveMetrics = '';
+      if (snap && inst.status === 'running') {
+        const cpu = snap.cpu_percent != null ? snap.cpu_percent.toFixed(1) : null;
+        const mem = snap.memory_mb   != null ? Math.round(snap.memory_mb) : null;
+        const cpuColor = snap.cpu_percent > 80 ? 'var(--red)' : snap.cpu_percent > 60 ? 'var(--yellow)' : 'var(--green)';
+        liveMetrics = `
+          <div style="display:flex;flex-direction:column;gap:3px;min-width:100px">
+            ${cpu != null ? `
+              <div>
+                <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted);margin-bottom:2px">
+                  <span>CPU</span><span style="color:${cpuColor};font-weight:600">${cpu}%</span>
+                </div>
+                <div style="height:2px;background:var(--border);border-radius:1px">
+                  <div style="height:100%;width:${Math.min(snap.cpu_percent, 100)}%;background:${cpuColor};border-radius:1px;transition:width .4s"></div>
+                </div>
+              </div>` : ''}
+            ${mem != null ? `
+              <div>
+                <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted);margin-bottom:2px">
+                  <span>MEM</span><span style="font-weight:500">${mem >= 1024 ? (mem/1024).toFixed(1)+'GB' : mem+'MB'}</span>
+                </div>
+              </div>` : ''}
+          </div>`;
+      } else if (inst.status === 'running') {
+        liveMetrics = `<span style="font-size:11px;color:var(--text-muted)">—</span>`;
+      }
 
       const actionBtn = `<button class="btn btn-danger btn-sm inst-remove-btn" data-id="${inst.id}" style="padding:3px 10px;font-size:11px">Remove</button>`;
       const restartBtn = `<button class="btn btn-secondary btn-sm inst-restart-btn" data-id="${inst.id}" style="padding:3px 10px;font-size:11px">Restart</button>`;
@@ -1645,7 +1657,8 @@ async function initInstances() {
           ${inst.last_error ? `<div style="color:var(--red);font-size:11px;margin-top:3px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(inst.last_error)}">${escHtml(inst.last_error)}</div>` : ''}
         </td>
         <td style="padding:10px 12px;font-size:12px;color:var(--text-muted)">${uptimeStr}</td>
-        <td style="padding:10px 12px;font-size:12px;color:var(--text-muted)">${resourceStr}</td>
+        <td style="padding:10px 12px">${liveMetrics}</td>
+        <td style="padding:10px 12px;font-size:12px;color:var(--text-muted)">${limitStr}</td>
         <td style="padding:10px 12px;font-size:11px;font-family:var(--font-mono);color:var(--text-muted)" title="${inst.container_id || ''}">${containerShort}</td>
         <td style="padding:10px 12px;text-align:right;white-space:nowrap;display:flex;gap:6px;justify-content:flex-end">
           ${restartBtn}
@@ -1664,7 +1677,8 @@ async function initInstances() {
             <th style="padding:6px 12px;text-align:left;font-size:11px;color:var(--text-muted);font-weight:500">Tunnel</th>
             <th style="padding:6px 12px;text-align:left;font-size:11px;color:var(--text-muted);font-weight:500">Status</th>
             <th style="padding:6px 12px;text-align:left;font-size:11px;color:var(--text-muted);font-weight:500">Uptime</th>
-            <th style="padding:6px 12px;text-align:left;font-size:11px;color:var(--text-muted);font-weight:500">Resources</th>
+            <th style="padding:6px 12px;text-align:left;font-size:11px;color:var(--text-muted);font-weight:500">Live</th>
+            <th style="padding:6px 12px;text-align:left;font-size:11px;color:var(--text-muted);font-weight:500">Limits</th>
             <th style="padding:6px 12px;text-align:left;font-size:11px;color:var(--text-muted);font-weight:500">Container</th>
             <th style="padding:6px 12px;text-align:right;font-size:11px;color:var(--text-muted);font-weight:500"></th>
           </tr>

@@ -226,10 +226,9 @@ async def _stats_collector():
             # Collect all apps concurrently — cpu_percent(interval=0.5) runs in threads
             await asyncio.gather(*[_one(a) for a in apps])
 
-            # Also push per-replica live stats so per-instance stream data is available
+            # Per-replica stats: store latest snapshot and push to subscribers
             async def _one_replica(replica):
                 try:
-                    import time as _time
                     cname = dm.replica_container_name(replica.app_id, replica.id)
                     s = await asyncio.to_thread(dm.get_container_stats_by_name, cname)
                     if not s:
@@ -240,6 +239,7 @@ async def _stats_collector():
                         "timestamp": timestamp,
                         **s,
                     }
+                    pm.set_replica_stats(replica.id, data)
                     pm._push_stat(replica.app_id, data)
                 except Exception:
                     pass
@@ -255,7 +255,11 @@ async def _stats_collector():
 
 # ── Historical stats writer ───────────────────────────────────────────────────
 async def _stats_history_writer():
-    """Every 30s write averaged cpu/mem from the in-memory deque to the DB for long-term history."""
+    """Every 30s write averaged stats from the in-memory deque to the DB for long-term history.
+
+    Works for both local and remote apps — remote apps buffer their stats into pm._stats_history
+    via the stats WebSocket relay in routers/stats.py, so we just write whatever has accumulated.
+    """
     import datetime as _dt
     from models import StatsHistory
     from sqlalchemy import delete as _delete
@@ -264,25 +268,24 @@ async def _stats_history_writer():
     while True:
         try:
             async with AsyncSessionLocal() as db:
-                from models import Node as _Node
-                local_node_result = await db.execute(select(_Node).where(_Node.is_local == True))
-                local_node_obj = local_node_result.scalar_one_or_none()
-                local_node_id = local_node_obj.id if local_node_obj else None
                 result = await db.execute(
                     select(Application).where(Application.status == "running")
                 )
                 apps = result.scalars().all()
                 for a in apps:
-                    if a.node_id and a.node_id != local_node_id:
-                        continue
                     recent = pm.get_recent_stats(a.id)
                     if not recent:
                         continue
-                    window = recent[-15:]
-                    avg_cpu  = sum(s.get("cpu_percent", 0) for s in window) / len(window)
-                    avg_mem  = sum(s.get("memory_mb",   0) for s in window) / len(window)
-                    avg_net  = sum((s.get("net_rx_mb",  0) or 0) + (s.get("net_tx_mb",   0) or 0) for s in window) / len(window)
-                    avg_disk = sum((s.get("disk_read_mb",0) or 0) + (s.get("disk_write_mb",0) or 0) for s in window) / len(window)
+                    # Skip per-replica frames (they have replica_id, not cpu_percent at top level)
+                    agg = [s for s in recent if "cpu_percent" in s]
+                    if not agg:
+                        continue
+                    window = agg[-15:]
+                    n = len(window)
+                    avg_cpu  = sum(s.get("cpu_percent", 0) for s in window) / n
+                    avg_mem  = sum(s.get("memory_mb",   0) for s in window) / n
+                    avg_net  = sum((s.get("net_rx_mb",  0) or 0) + (s.get("net_tx_mb",   0) or 0) for s in window) / n
+                    avg_disk = sum((s.get("disk_read_mb",0) or 0) + (s.get("disk_write_mb",0) or 0) for s in window) / n
                     db.add(StatsHistory(
                         app_id=a.id,
                         timestamp=_dt.datetime.utcnow(),

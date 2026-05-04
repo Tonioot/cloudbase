@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
-from models import Application, Node
+from models import Application, ApplicationReplica, Node
 import process_manager as pm
 from routers.nodes import ensure_local_node, queue_node_command, wait_for_node_command
 
@@ -171,9 +171,16 @@ async def _get_or_404(app_id: int, db: AsyncSession) -> Application:
 
 
 async def _get_app_node(app: Application, db: AsyncSession, local_node: Node) -> Node:
-    if app.node_id:
-        result = await db.execute(select(Node).where(Node.id == app.node_id))
-        node = result.scalar_one_or_none()
+    rep_result = await db.execute(
+        select(ApplicationReplica).where(ApplicationReplica.app_id == app.id)
+        .order_by(ApplicationReplica.status.desc()).limit(5)
+    )
+    replicas = rep_result.scalars().all()
+    running = next((r for r in replicas if r.status in ("running", "starting") and r.node_id), None)
+    candidate = running or next((r for r in replicas if r.node_id), None)
+    if candidate and candidate.node_id:
+        node_result = await db.execute(select(Node).where(Node.id == candidate.node_id))
+        node = node_result.scalar_one_or_none()
         if node:
             return node
     return local_node

@@ -71,61 +71,62 @@ async def _open_remote_stream(node: Node, app_id: int, app_name: str, out_q: asy
     """Start a background task that reads stats from one remote node and puts frames on out_q."""
 
     async def _run():
-        caps = json.loads(node.capabilities or "{}")
-        features = caps.get("features") or []
-        agent_ws = _node_ws_connections.get(node.id)
-
-        if "streaming_stats" in features and agent_ws is not None:
-            stream_id = secrets.token_hex(8)
-            q = subscribe_node_stream(stream_id)
+        while True:
             try:
-                await agent_ws.send_json({
-                    "type": "command",
-                    "command": {
-                        "id": -1,
-                        "command_type": "stream_stats",
-                        "payload": {"app_id": app_id, "app_name": app_name, "stream_id": stream_id},
-                    },
-                })
-                while True:
-                    data = await asyncio.wait_for(q.get(), timeout=30.0)
-                    parsed = json.loads(data) if isinstance(data, str) else data
-                    await out_q.put((node.id, parsed))
+                caps = json.loads(node.capabilities or "{}")
+                features = caps.get("features") or []
+                agent_ws = _node_ws_connections.get(node.id)
+
+                if "streaming_stats" in features and agent_ws is not None:
+                    stream_id = secrets.token_hex(8)
+                    q = subscribe_node_stream(stream_id)
+                    try:
+                        await agent_ws.send_json({
+                            "type": "command",
+                            "command": {
+                                "id": -1,
+                                "command_type": "stream_stats",
+                                "payload": {"app_id": app_id, "app_name": app_name, "stream_id": stream_id},
+                            },
+                        })
+                        while True:
+                            data = await asyncio.wait_for(q.get(), timeout=30.0)
+                            parsed = json.loads(data) if isinstance(data, str) else data
+                            await out_q.put((node.id, parsed))
+                    except asyncio.TimeoutError:
+                        # Stream stalled; reconnect loop will re-open it.
+                        pass
+                    except Exception as e:
+                        log.debug("remote stream node %d ended: %s", node.id, e)
+                    finally:
+                        unsubscribe_node_stream(stream_id, q)
+                        try:
+                            if _node_ws_connections.get(node.id) is agent_ws:
+                                await agent_ws.send_json({"type": "cancel_stream", "stream_id": stream_id})
+                        except Exception:
+                            pass
+                    await asyncio.sleep(1)
+                    continue
+
+                # Poll fallback (also used while node websocket is reconnecting)
+                async with AsyncSessionLocal() as poll_db:
+                    cmd = await queue_node_command(
+                        poll_db,
+                        node_id=node.id,
+                        app_id=app_id,
+                        command_type="get_stats",
+                        payload={"app_id": app_id, "app_name": app_name},
+                    )
+                    done = await wait_for_node_command(poll_db, cmd.id, timeout_seconds=20)
+                if done.status == "done":
+                    payload = json.loads(done.result or "{}") if done.result else {}
+                    await out_q.put((node.id, payload))
+                await asyncio.sleep(2)
             except asyncio.CancelledError:
-                pass
-            except asyncio.TimeoutError:
-                pass
+                break
             except Exception as e:
-                log.debug("remote stream node %d ended: %s", node.id, e)
-            finally:
-                unsubscribe_node_stream(stream_id, q)
-                try:
-                    if _node_ws_connections.get(node.id) is agent_ws:
-                        await agent_ws.send_json({"type": "cancel_stream", "stream_id": stream_id})
-                except Exception:
-                    pass
-        else:
-            # Poll fallback
-            while True:
-                try:
-                    async with AsyncSessionLocal() as poll_db:
-                        cmd = await queue_node_command(
-                            poll_db,
-                            node_id=node.id,
-                            app_id=app_id,
-                            command_type="get_stats",
-                            payload={"app_id": app_id, "app_name": app_name},
-                        )
-                        done = await wait_for_node_command(poll_db, cmd.id, timeout_seconds=20)
-                    if done.status == "done":
-                        payload = json.loads(done.result or "{}") if done.result else {}
-                        await out_q.put((node.id, payload))
-                    await asyncio.sleep(2)
-                except asyncio.CancelledError:
-                    break
-                except Exception as e:
-                    log.debug("remote poll node %d error: %s", node.id, e)
-                    await asyncio.sleep(2)
+                log.debug("remote stats loop node %d error: %s", node.id, e)
+                await asyncio.sleep(2)
 
     return asyncio.create_task(_run())
 

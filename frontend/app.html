@@ -420,16 +420,16 @@
             <!-- Network -->
             <div class="settings-group">
               <div class="settings-group-hd">
-                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
-                  <div class="settings-group-title">Network</div>
-                  <button type="button" class="btn btn-secondary btn-sm" id="btn-dns-setup">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-                    DNS Setup
-                  </button>
-                </div>
+                <div class="settings-group-title">Network</div>
                 <div class="settings-group-sub">Domains, redirects and SSL certificates</div>
               </div>
               <div class="settings-group-bd">
+                <div style="display:flex;justify-content:flex-end;margin-bottom:10px">
+                  <button type="button" class="btn-scan" id="btn-dns-setup">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                    DNS Setup
+                  </button>
+                </div>
                 <div class="field">
                   <label class="field-label">Domains <span style="font-weight:400;color:var(--text-muted);font-size:11px">(first is primary)</span></label>
                   <div id="cfg-domains-rows"></div>

@@ -275,7 +275,7 @@ async def _remote_replica_stats_poller():
 
                 rep_result = await db.execute(
                     select(_AR).where(
-                        _AR.status == "running",
+                        _AR.status.in_(["running", "starting"]),
                         _AR.node_id.isnot(None),
                         _AR.node_id != local_node_id,
                     )
@@ -333,6 +333,8 @@ async def _remote_replica_stats_poller():
                             for replica in replicas:
                                 pm.set_replica_stats(replica.id, {"replica_id": replica.id, **snap})
                             _rlog.info("poll stored stats for %d replicas on node=%d", len(replicas), node_id)
+                        elif s.get("status") == "stopped":
+                            _rlog.info("poll node=%d app=%d temporarily stopped during restart", node_id, app_id)
                 except Exception as _e:
                     logging.getLogger("cloudbase.remote_stats").warning(
                         "remote stats poll failed node=%d app=%d: %s", node_id, app_id, _e)

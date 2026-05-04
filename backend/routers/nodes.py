@@ -882,7 +882,10 @@ async def agent_ws(websocket: WebSocket):
                             # Mark running replicas so they get recovered on reconnect
                             rep_res = await db.execute(
                                 select(ApplicationReplica).where(
-                                    and_(ApplicationReplica.node_id == node_id, ApplicationReplica.status == "running")
+                                    and_(
+                                        ApplicationReplica.node_id == node_id,
+                                        ApplicationReplica.status.in_(["running", "starting"]),
+                                    )
                                 )
                             )
                             for _r in rep_res.scalars().all():

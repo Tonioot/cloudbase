@@ -1153,6 +1153,22 @@ async def recover_node_replicas(node_id: int) -> None:
         log.info("Node id=%d reconnected — recovering %d replica(s)", node_id, len(replicas))
 
         for replica in replicas:
+            # Guard against queue storms during reconnect flapping:
+            # if a start_replica command for this replica is already pending,
+            # do not enqueue another one.
+            pending_res = await db.execute(
+                select(NodeCommand).where(
+                    and_(
+                        NodeCommand.node_id == node_id,
+                        NodeCommand.command_type == "start_replica",
+                        NodeCommand.status.in_(["queued", "in_progress"]),
+                        NodeCommand.payload.like(f'%"replica_id": {replica.id}%'),
+                    )
+                ).limit(1)
+            )
+            if pending_res.scalar_one_or_none() is not None:
+                continue
+
             app_result = await db.execute(select(Application).where(Application.id == replica.app_id))
             app = app_result.scalar_one_or_none()
             if not app:
@@ -1207,7 +1223,10 @@ async def mark_stale_nodes_offline(db: AsyncSession) -> None:
             # Mark running replicas as node_offline so they get recovered when the node reconnects
             rep_result = await db.execute(
                 select(ApplicationReplica).where(
-                    and_(ApplicationReplica.node_id == node.id, ApplicationReplica.status == "running")
+                    and_(
+                        ApplicationReplica.node_id == node.id,
+                        ApplicationReplica.status.in_(["running", "starting"]),
+                    )
                 )
             )
             for replica in rep_result.scalars().all():

@@ -90,11 +90,18 @@ async def _open_remote_stream(node: Node, app_id: int, app_name: str, out_q: asy
                             },
                         })
                         while True:
-                            data = await asyncio.wait_for(q.get(), timeout=30.0)
+                            try:
+                                data = await asyncio.wait_for(q.get(), timeout=30.0)
+                            except asyncio.TimeoutError:
+                                # If the same node websocket is still active, keep the
+                                # stream open instead of thrashing reconnects with 0 frames.
+                                if _node_ws_connections.get(node.id) is agent_ws:
+                                    continue
+                                # WS changed/dropped; break so outer loop reconnects.
+                                break
                             parsed = json.loads(data) if isinstance(data, str) else data
                             await out_q.put((node.id, parsed))
                     except asyncio.TimeoutError:
-                        # Stream stalled; reconnect loop will re-open it.
                         pass
                     except Exception as e:
                         log.debug("remote stream node %d ended: %s", node.id, e)

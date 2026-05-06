@@ -18,15 +18,24 @@ def _normalize_domain(value: str) -> str:
   if not raw:
     return ""
 
+  # Remove common accidental wrappers from UI/input copy-paste.
+  raw = raw.strip('"\'`').strip()
+
   if "://" in raw:
     from urllib.parse import urlsplit
     split = urlsplit(raw)
     raw = split.netloc or split.path
 
   raw = raw.split("/", 1)[0].split("?", 1)[0].split("#", 1)[0].strip()
+  raw = raw.strip('"\'`').strip()
   if ":" in raw and raw.count(":") == 1:
     # Drop a single trailing port suffix host:443
     raw = raw.split(":", 1)[0]
+
+  # Keep only nginx server_name-safe hostname characters.
+  import re as _re
+  raw = _re.sub(r"[^a-zA-Z0-9.*-]", "", raw)
+  raw = raw.strip(".")
   return raw.lower()
 
 

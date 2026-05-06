@@ -9,6 +9,27 @@ NGINX_ENABLED_DIR = "/etc/nginx/sites-enabled"
 MAINTENANCE_DIR = "/var/www/cloudbase/maintenance"
 
 
+def _normalize_domain(value: str) -> str:
+  """Convert user input to a plain hostname for nginx server_name.
+
+  Accepts values like https://example.com/path and returns example.com.
+  """
+  raw = (value or "").strip()
+  if not raw:
+    return ""
+
+  if "://" in raw:
+    from urllib.parse import urlsplit
+    split = urlsplit(raw)
+    raw = split.netloc or split.path
+
+  raw = raw.split("/", 1)[0].split("?", 1)[0].split("#", 1)[0].strip()
+  if ":" in raw and raw.count(":") == 1:
+    # Drop a single trailing port suffix host:443
+    raw = raw.split(":", 1)[0]
+  return raw.lower()
+
+
 # â"€â"€ Maintenance page HTML generation â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 def generate_maintenance_html(
@@ -599,6 +620,20 @@ def generate_config(
     redirect_domains: list of domains that issue a 301 redirect to the primary domain
     """
     import re as _re
+
+    domain = _normalize_domain(domain)
+    extra_domains = [
+      d for d in (_normalize_domain(v) for v in (extra_domains or []))
+      if d and d != domain
+    ]
+    redirect_domains = [
+      d for d in (_normalize_domain(v) for v in (redirect_domains or []))
+      if d and d != domain
+    ]
+
+    if not domain:
+      domain = "localhost"
+
     is_cloudbase = (app_name or "").strip().lower() == "cloudbase"
     maint_root = f"{MAINTENANCE_DIR}/{app_id}" if app_id else f"{MAINTENANCE_DIR}/0"
     fallback_filename = "downtime.html"
@@ -644,7 +679,7 @@ def _proxy_config(domain: str, proxy_target: str, maint_root: str, ssl_cert: str
     location = /_pdm_maintenance {{
         internal;
         root {maint_root};
-      try_files /{fallback_filename} =503;
+        try_files /{fallback_filename} =503;
         default_type text/html;
         add_header Cache-Control "no-store, no-cache, must-revalidate" always;
         add_header Pragma "no-cache" always;

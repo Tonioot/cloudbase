@@ -1057,10 +1057,10 @@ async def get_stats_history(
     )
     rows = result.scalars().all()
     return [
-            "downtime_page":    downtime_page,
-            "update_page":      update_page,
-            "restart_page":     restart_page,
-            "starting_page":    starting_page,
+        {
+            "timestamp":   r.timestamp.isoformat() + "Z",
+            "cpu_percent": r.cpu_percent,
+            "memory_mb":   r.memory_mb,
             "net_mb":      r.net_mb  or 0,
             "disk_mb":     r.disk_mb or 0,
         }

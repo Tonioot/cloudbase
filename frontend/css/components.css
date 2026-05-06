@@ -22,11 +22,11 @@
 .btn-primary:hover:not(:disabled) { background: #484848; border-color: #555555; }
 
 .btn-secondary {
-  background: rgba(28, 41, 68, 0.65);
+  background: var(--control-bg);
   color: var(--text-secondary);
   border-color: var(--border);
 }
-.btn-secondary:hover:not(:disabled) { color: var(--text-primary); background: #2d333b; }
+.btn-secondary:hover:not(:disabled) { color: var(--text-primary); background: var(--control-hover); }
 
 .btn-success {
   background: var(--green-bg);
@@ -207,7 +207,7 @@
   white-space: nowrap;
   transition: all var(--transition);
 }
-.btn-scan:hover:not(:disabled) { color: var(--text-primary); background: #2d333b; }
+.btn-scan:hover:not(:disabled) { color: var(--text-primary); background: var(--control-hover); }
 .btn-scan:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }

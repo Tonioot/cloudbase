@@ -95,7 +95,7 @@ function modalHTML() {
       <div class="modal-header">
         <div>
           <div class="modal-title">Deploy Application</div>
-          <div class="modal-sub">Configure and deploy a new application from GitHub</div>
+          <div class="modal-sub">Launch from GitHub with a cleaner runtime setup and safer defaults</div>
         </div>
         <button class="modal-close" id="modal-close">${icon.x}</button>
       </div>
@@ -103,99 +103,124 @@ function modalHTML() {
       <form id="deploy-form" novalidate>
         <div class="modal-body">
 
-          <!-- Basic -->
-          <div class="modal-section modal-section--compact">
-            <div class="section-title">${icon.terminal} Basic Configuration</div>
-            <div class="deploy-grid deploy-grid--basic">
-              <div class="field deploy-field-span-2">
-                <label class="field-label">Application Name <span class="req">*</span></label>
-                <input class="input" id="f-name" placeholder="my-app" required autocomplete="off" />
-              </div>
-
-              <div class="field deploy-field-span-2">
-                <label class="field-label">GitHub Repository URL <span class="req">*</span></label>
-                <div class="input-icon-wrap">
-                  <span class="icon">${icon.github}</span>
-                  <input class="input" id="f-repo" placeholder="https://github.com/user/repo" required />
-                </div>
-              </div>
-
-              <div class="field deploy-field-span-2 deploy-token-field">
-                <label class="field-label">GitHub Token <span class="hint">(optional, for private repos)</span></label>
-                <div class="deploy-token-row">
-                  <div class="input-icon-wrap deploy-input-grow">
-                    <span class="icon">${icon.lock}</span>
-                    <input class="input input-mono" id="f-token" type="password" placeholder="ghp_..." />
-                  </div>
-                  <button type="button" class="btn btn-secondary btn-sm deploy-token-btn" id="f-token-pick">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
-                    Saved
-                  </button>
-                </div>
-                <input type="hidden" id="f-token-id" />
-              </div>
+          <div class="deploy-hero">
+            <div class="deploy-hero-title">${icon.terminal} New Deployment</div>
+            <div class="deploy-hero-sub">Connect your repository, define runtime limits, and deploy in one flow.</div>
+            <div class="deploy-hero-badges">
+              <span class="deploy-hero-badge">GitHub source</span>
+              <span class="deploy-hero-badge">Docker-first runtime</span>
+              <span class="deploy-hero-badge">Encrypted env vars</span>
             </div>
           </div>
 
-          <!-- Process -->
-          <div class="modal-section modal-section--compact">
-            <div class="section-title">${icon.settings} Process</div>
-            <div class="deploy-grid">
-              <div class="field">
-                <label class="field-label">Start Command <span class="hint">(auto-detected if empty)</span></label>
-                <input class="input input-mono" id="f-cmd" placeholder="npm start" />
-              </div>
-              <div class="field">
-                <label class="field-label">Internal Port</label>
-                <input class="input" id="f-port" type="number" placeholder="3000" />
-                <div class="field-hint">For Docker apps this is the port inside the container.</div>
-              </div>
-            </div>
-          </div>
+          <div class="deploy-layout">
+            <div class="deploy-column deploy-column-main">
 
-          <div class="modal-section modal-section--compact">
-            <div class="section-title">${icon.server} Docker Runtime</div>
-            <div class="deploy-grid">
-              <div class="field">
-                <label class="field-label">CPU Limit</label>
-                <input class="input" id="f-docker-cpu" type="number" min="0.1" step="0.1" placeholder="1.0" />
-              </div>
-              <div class="field">
-                <label class="field-label">Memory Limit (MB)</label>
-                <input class="input" id="f-docker-memory" type="number" min="1" step="1" placeholder="512" />
-              </div>
-              <div class="field deploy-field-span-2 deploy-toggle-stack" style="margin-bottom:0">
-                <div class="deploy-toggle-item">
-                  <div class="toggle-row">
-                    <span class="field-label" style="margin-bottom:0">Read-only root filesystem</span>
-                    <label class="toggle" for="f-docker-readonly">
-                      <input type="checkbox" id="f-docker-readonly" />
-                      <span class="toggle-slider"></span>
-                    </label>
+              <div class="modal-section modal-section--compact">
+                <div class="section-title">${icon.github} Source</div>
+                <div class="deploy-grid deploy-grid--basic">
+                  <div class="field deploy-field-span-2">
+                    <label class="field-label">Application Name <span class="req">*</span></label>
+                    <input class="input" id="f-name" placeholder="my-app" required autocomplete="off" />
                   </div>
-                </div>
-                <div class="deploy-toggle-item">
-                  <div class="toggle-row">
-                    <span class="field-label" style="margin-bottom:0">Tmpfs at /tmp</span>
-                    <label class="toggle" for="f-docker-tmpfs-enabled">
-                      <input type="checkbox" id="f-docker-tmpfs-enabled" />
-                      <span class="toggle-slider"></span>
-                    </label>
+
+                  <div class="field deploy-field-span-2">
+                    <label class="field-label">GitHub Repository URL <span class="req">*</span></label>
+                    <div class="input-icon-wrap">
+                      <span class="icon">${icon.github}</span>
+                      <input class="input" id="f-repo" placeholder="https://github.com/user/repo" required />
+                    </div>
                   </div>
-                  <div class="deploy-inline-hint-row">
-                    <input class="input deploy-tmpfs-input" id="f-docker-tmpfs-size" type="number" min="1" step="1" placeholder="64" />
-                    <span class="deploy-inline-hint">MB for /tmp tmpfs</span>
+
+                  <div class="field deploy-field-span-2 deploy-token-field">
+                    <label class="field-label">GitHub Token <span class="hint">optional for private repositories</span></label>
+                    <div class="deploy-token-row">
+                      <div class="input-icon-wrap deploy-input-grow">
+                        <span class="icon">${icon.lock}</span>
+                        <input class="input input-mono" id="f-token" type="password" placeholder="ghp_..." />
+                      </div>
+                      <button type="button" class="btn btn-secondary btn-sm deploy-token-btn" id="f-token-pick">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
+                        Saved
+                      </button>
+                    </div>
+                    <input type="hidden" id="f-token-id" />
                   </div>
                 </div>
               </div>
-            </div>
-          </div>
+              </div>
 
-          <!-- Env vars -->
-          <div class="modal-section modal-section--compact modal-section--full">
-            <div class="section-title">${icon.lock} Environment Variables</div>
-            <div id="env-rows"></div>
-            <button type="button" class="add-env-btn" id="add-env">${icon.plus} Add variable</button>
+              <div class="modal-section modal-section--compact modal-section--full">
+                <div class="section-title">${icon.lock} Environment Variables</div>
+                <div class="deploy-section-sub">Store secure app variables in one place before first boot.</div>
+                <div id="env-rows"></div>
+                <button type="button" class="add-env-btn" id="add-env">${icon.plus} Add variable</button>
+              </div>
+            </div>
+
+            <div class="deploy-column deploy-column-side">
+              <div class="modal-section modal-section--compact">
+                <div class="section-title">${icon.settings} Process</div>
+                <div class="deploy-grid">
+                  <div class="field deploy-field-span-2">
+                    <label class="field-label">Start Command <span class="hint">auto-detected if empty</span></label>
+                    <input class="input input-mono" id="f-cmd" placeholder="npm start" />
+                  </div>
+                  <div class="field deploy-field-inline">
+                    <label class="field-label">Internal Port</label>
+                    <input class="input" id="f-port" type="number" placeholder="3000" />
+                    <div class="field-hint">Container service port</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="modal-section modal-section--compact">
+                <div class="section-title">${icon.server} Docker Runtime</div>
+                <div class="deploy-grid">
+                  <div class="field">
+                    <label class="field-label">CPU Limit</label>
+                    <input class="input" id="f-docker-cpu" type="number" min="0.1" step="0.1" placeholder="1.0" />
+                  </div>
+                  <div class="field">
+                    <label class="field-label">Memory Limit (MB)</label>
+                    <input class="input" id="f-docker-memory" type="number" min="1" step="1" placeholder="512" />
+                  </div>
+                  <div class="field deploy-field-span-2 deploy-toggle-stack" style="margin-bottom:0">
+                    <div class="deploy-toggle-item">
+                      <div class="toggle-row">
+                        <span class="field-label" style="margin-bottom:0">Read-only root filesystem</span>
+                        <label class="toggle" for="f-docker-readonly">
+                          <input type="checkbox" id="f-docker-readonly" />
+                          <span class="toggle-slider"></span>
+                        </label>
+                      </div>
+                    </div>
+                    <div class="deploy-toggle-item">
+                      <div class="toggle-row">
+                        <span class="field-label" style="margin-bottom:0">Tmpfs at /tmp</span>
+                        <label class="toggle" for="f-docker-tmpfs-enabled">
+                          <input type="checkbox" id="f-docker-tmpfs-enabled" />
+                          <span class="toggle-slider"></span>
+                        </label>
+                      </div>
+                      <div class="deploy-inline-hint-row">
+                        <input class="input deploy-tmpfs-input" id="f-docker-tmpfs-size" type="number" min="1" step="1" placeholder="64" />
+                        <span class="deploy-inline-hint">MB for /tmp tmpfs</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="deploy-help-card">
+                <div class="deploy-help-title">Deploy checklist</div>
+                <ul class="deploy-help-list">
+                  <li>Repository URL and name are required</li>
+                  <li>Leave start command empty for auto-detection</li>
+                  <li>Set limits later if you want quick first deploys</li>
+                </ul>
+              </div>
+            </div>
           </div>
 
           <div id="modal-error" class="modal-error" style="display:none"></div>

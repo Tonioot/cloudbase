@@ -19,6 +19,9 @@
   --accent-dark:  #3a3a3a;
   --accent-bg:    rgba(200, 200, 200, 0.08);
   --accent-border: rgba(200, 200, 200, 0.18);
+  --control-bg:   #1f1f1f;
+  --control-hover:#2a2a2a;
+  --control-soft: rgba(240, 240, 240, 0.04);
 
   /* Status */
   --green:        #34d399;

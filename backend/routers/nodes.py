@@ -39,6 +39,10 @@ _pending_pings: dict[str, asyncio.Future] = {}
 from collections import deque
 _node_stats_history: dict[int, deque] = {}
 
+_LOCAL_INFO_REFRESH_SECONDS = 300
+_LOCAL_SEEN_UPDATE_SECONDS = 30
+_last_local_info_refresh_at = 0.0
+
 
 def subscribe_node_stream(stream_id: str) -> asyncio.Queue:
     q: asyncio.Queue = asyncio.Queue(maxsize=2000)
@@ -389,30 +393,49 @@ def _detect_public_ip(timeout: float = 2.5) -> Optional[str]:
 
 
 async def ensure_local_node(db: AsyncSession) -> Node:
+    global _last_local_info_refresh_at
     result = await db.execute(select(Node).where(Node.is_local == True))
     local = result.scalar_one_or_none()
+    now = _utcnow()
     if local:
         updated = False
         if local.status != "online":
             local.status = "online"
             updated = True
-        local.last_seen = _utcnow()
         if local.offline_since is not None:
             local.offline_since = None
             updated = True
         if local.name in ("local-cloudbase", "local_cloudbase", "local-cloudbae", "local_cloudbae", "") or "local" in local.name.lower():
             local.name = "Primary Node"
             updated = True
-        # Always refresh local system info and public host/IP for DNS guidance
-        info = _local_system_info()
-        public_ip = _detect_public_ip()
-        if public_ip:
-            info["public_ip"] = public_ip
-            local.public_host = public_ip
-        local.metadata_json = json.dumps(info)
-        updated = True
+
+        # Keep heartbeat updates cheap: avoid committing on every request.
+        if local.last_seen is None or (now - local.last_seen).total_seconds() >= _LOCAL_SEEN_UPDATE_SECONDS:
+            local.last_seen = now
+            updated = True
+
+        # Expensive system/public-IP discovery is throttled to avoid 2-7s request stalls.
+        monotonic_now = time.monotonic()
+        needs_info_refresh = (
+            local.metadata_json in (None, "", "{}")
+            or (monotonic_now - _last_local_info_refresh_at) >= _LOCAL_INFO_REFRESH_SECONDS
+        )
+        if needs_info_refresh:
+            def _collect_local_info() -> tuple[dict, Optional[str]]:
+                info = _local_system_info()
+                public_ip = _detect_public_ip(timeout=1.0)
+                return info, public_ip
+
+            info, public_ip = await asyncio.to_thread(_collect_local_info)
+            if public_ip:
+                info["public_ip"] = public_ip
+                local.public_host = public_ip
+            local.metadata_json = json.dumps(info)
+            _last_local_info_refresh_at = monotonic_now
+            updated = True
+
         if updated:
-            local.updated_at = _utcnow()
+            local.updated_at = now
             await db.commit()
             await db.refresh(local)
         return local
@@ -425,15 +448,20 @@ async def ensure_local_node(db: AsyncSession) -> Node:
         enabled=True,
         heartbeat_interval=15,
         capabilities=json.dumps({"local_execution": True}),
-        metadata_json=json.dumps(_local_system_info()),
-        last_seen=_utcnow(),
+        metadata_json="{}",
+        last_seen=now,
     )
-    info = _local_system_info()
-    public_ip = _detect_public_ip()
+    def _collect_local_info() -> tuple[dict, Optional[str]]:
+        info = _local_system_info()
+        public_ip = _detect_public_ip(timeout=1.0)
+        return info, public_ip
+
+    info, public_ip = await asyncio.to_thread(_collect_local_info)
     if public_ip:
         info["public_ip"] = public_ip
         local.public_host = public_ip
     local.metadata_json = json.dumps(info)
+    _last_local_info_refresh_at = time.monotonic()
     db.add(local)
     await db.commit()
     await db.refresh(local)

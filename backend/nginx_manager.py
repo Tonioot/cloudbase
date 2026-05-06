@@ -91,6 +91,186 @@ def generate_maintenance_html(
     return _update_template(safe_title, safe_message, safe_color, safe_status_url, safe_logo_data)
 
 
+def generate_cloudbase_unavailable_html(domain: str | None = None) -> str:
+    """Return a branded Cloudbase unavailable page in dashboard style."""
+    safe_domain = (domain or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    domain_line = f"Primary domain: {safe_domain}" if safe_domain else "Cloudbase endpoint is temporarily unavailable"
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="refresh" content="8">
+  <title>Cloudbase Unavailable</title>
+  <style>
+    :root {{
+      --bg-base: #0a0a0a;
+      --bg-surface: #111111;
+      --bg-elevated: #1a1a1a;
+      --bg-muted: #222222;
+      --border: #2e2e2e;
+      --text-primary: #f0f0f0;
+      --text-secondary: #a0a0a0;
+      --text-muted: #606060;
+      --accent: #c8c8c8;
+      --accent-bg: rgba(200, 200, 200, 0.08);
+      --accent-border: rgba(200, 200, 200, 0.18);
+      --red: #f87171;
+      --red-bg: rgba(248, 113, 113, 0.1);
+      --red-border: rgba(248, 113, 113, 0.25);
+    }}
+
+    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+
+    body {{
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif;
+      background:
+        radial-gradient(120% 80% at 0% 0%, rgba(200,200,200,0.08), transparent 52%),
+        radial-gradient(120% 80% at 100% 100%, rgba(200,200,200,0.05), transparent 58%),
+        var(--bg-base);
+      color: var(--text-primary);
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+    }}
+
+    .panel {{
+      width: min(700px, 100%);
+      background: linear-gradient(180deg, rgba(20,20,20,0.96), rgba(12,12,12,0.94));
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      box-shadow: 0 24px 60px rgba(0,0,0,0.7);
+      overflow: hidden;
+    }}
+
+    .panel-head {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-surface);
+    }}
+
+    .brand {{
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 700;
+      letter-spacing: .01em;
+    }}
+
+    .brand-dot {{
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+      background: var(--red);
+      box-shadow: 0 0 0 4px var(--red-bg);
+      animation: pulse 1.8s ease-in-out infinite;
+    }}
+
+    @keyframes pulse {{
+      0%, 100% {{ transform: scale(1); opacity: 1; }}
+      50% {{ transform: scale(0.85); opacity: 0.55; }}
+    }}
+
+    .badge {{
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--red);
+      background: var(--red-bg);
+      border: 1px solid var(--red-border);
+      white-space: nowrap;
+    }}
+
+    .panel-body {{
+      padding: 22px 18px 18px;
+    }}
+
+    h1 {{
+      font-size: 24px;
+      line-height: 1.2;
+      margin-bottom: 10px;
+      letter-spacing: -0.02em;
+    }}
+
+    p {{
+      color: var(--text-secondary);
+      line-height: 1.6;
+      font-size: 14px;
+    }}
+
+    .meta {{
+      margin-top: 16px;
+      display: grid;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--text-muted);
+    }}
+
+    .meta-item {{
+      padding: 9px 10px;
+      border-radius: 10px;
+      border: 1px solid var(--accent-border);
+      background: var(--accent-bg);
+      color: var(--text-secondary);
+    }}
+
+    .actions {{
+      margin-top: 18px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }}
+
+    .btn {{
+      border: 1px solid var(--border);
+      background: var(--bg-elevated);
+      color: var(--text-primary);
+      text-decoration: none;
+      padding: 8px 12px;
+      border-radius: 10px;
+      font-size: 13px;
+      transition: 160ms ease;
+    }}
+
+    .btn:hover {{
+      background: var(--bg-muted);
+      border-color: #444;
+    }}
+  </style>
+</head>
+<body>
+  <section class="panel">
+    <div class="panel-head">
+      <div class="brand">
+        <span class="brand-dot"></span>
+        <span>Cloudbase</span>
+      </div>
+      <span class="badge">Temporarily Unavailable</span>
+    </div>
+    <div class="panel-body">
+      <h1>Cloudbase is restarting or temporarily offline</h1>
+      <p>The dashboard is currently unavailable while services are recovering. This page refreshes automatically every few seconds.</p>
+      <div class="meta">
+        <div class="meta-item">{domain_line}</div>
+        <div class="meta-item">If this persists, verify nginx and the Cloudbase backend service status.</div>
+      </div>
+      <div class="actions">
+        <a class="btn" href="/">Retry now</a>
+      </div>
+    </div>
+  </section>
+</body>
+</html>
+"""
+
+
 def _render_visual_block(color: str, icon_svg: str, logo_data: str = None) -> str:
     inner = (
         f'<span class="icon-logo"><img src="{logo_data}" alt="Logo" /></span>'

@@ -932,10 +932,12 @@ async def apply_cloudbase_nginx(req: CloudbaseNginxRequest, _: dict = Depends(au
     )
     page_ok, page_msg = nm.write_cloudbase_unavailable_page(unavailable_html)
     if not page_ok:
-        return {"ok": False, "message": f"Failed to write Cloudbase unavailable page: {page_msg}"}
+        raise HTTPException(status_code=500, detail=f"Failed to write Cloudbase unavailable page: {page_msg}")
 
     config = nm.generate_config("cloudbase", req.domain, PORT, req.ssl_cert_path, req.ssl_key_path)
     ok, msg = nm.write_nginx_config("cloudbase", config)
+    if not ok:
+        raise HTTPException(status_code=500, detail=f"Failed to apply nginx config: {msg}")
     return {"ok": ok, "message": msg, "preview": config}
 
 

@@ -39,6 +39,25 @@ def _normalize_domain(value: str) -> str:
   return raw.lower()
 
 
+def _sanitize_ssl_path(value: str | None) -> str | None:
+  """Return a nginx-safe absolute cert/key path or None.
+
+  Rejects values containing quotes, semicolons or newlines to avoid
+  breaking nginx directives.
+  """
+  if not value:
+    return None
+
+  raw = str(value).strip().strip('"\'`').strip()
+  if not raw:
+    return None
+  if any(ch in raw for ch in ('"', "'", "`", ";", "\n", "\r")):
+    return None
+  if not raw.startswith("/"):
+    return None
+  return raw
+
+
 # â"€â"€ Maintenance page HTML generation â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 def generate_maintenance_html(
@@ -642,6 +661,13 @@ def generate_config(
 
     if not domain:
       domain = "localhost"
+
+    ssl_cert = _sanitize_ssl_path(ssl_cert)
+    ssl_key = _sanitize_ssl_path(ssl_key)
+    if bool(ssl_cert) != bool(ssl_key):
+      # Only enable SSL when both paths are valid.
+      ssl_cert = None
+      ssl_key = None
 
     is_cloudbase = (app_name or "").strip().lower() == "cloudbase"
     maint_root = f"{MAINTENANCE_DIR}/{app_id}" if app_id else f"{MAINTENANCE_DIR}/0"

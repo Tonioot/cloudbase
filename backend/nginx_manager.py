@@ -243,14 +243,10 @@ def generate_cloudbase_unavailable_html(domain: str | None = None) -> str:
   <section class="card">
     <div class="brand-row">
       <div class="brand"><span class="brand-dot"></span><span>Cloudbase</span></div>
-      <span class="badge">Temporarily Unavailable</span>
     </div>
     <h1>Cloudbase is restarting or temporarily offline</h1>
     <p>The dashboard is currently unavailable while services are recovering. This page refreshes automatically every few seconds.</p>
     <div class="meta-line">{domain_line}</div>
-    <div class="actions">
-      <a class="btn" href="/">Retry now</a>
-    </div>
   </section>
 </body>
 </html>

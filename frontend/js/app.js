@@ -31,10 +31,10 @@ export async function initApp() {
     app = await api.getApp(APP_ID);
   } catch (err) {
     document.body.innerHTML = `
-      <div style="display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px;color:#8b949e">
+      <div style="display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px;color:#a0a0a0">
         <div style="font-size:18px;color:#f85149">Failed to load application</div>
         <div style="font-size:13px">${err.message}</div>
-        <a href="/" style="color:#58a6ff;font-size:13px;margin-top:8px">← Back to dashboard</a>
+        <a href="/" style="color:#c8c8c8;font-size:13px;margin-top:8px">← Back to dashboard</a>
       </div>`;
     return;
   }
@@ -679,10 +679,10 @@ function _removeStatsLoading() {
 }
 
 function initCharts() {
-  chartCpu  = createChart('chart-cpu',  '#5b9bd5', '%',   { maxLabels: 4 });
-  chartMem  = createChart('chart-mem',  '#9b79c5', ' MB', { maxLabels: 4 });
-  chartNet  = createChart('chart-net',  '#4caf8c', ' MB', { maxLabels: 4 });
-  chartDisk = createChart('chart-disk', '#e3b341', ' MB', { maxLabels: 4 });
+  chartCpu  = createChart('chart-cpu',  '#c8c8c8', '%',   { maxLabels: 4 });
+  chartMem  = createChart('chart-mem',  '#a78bfa', ' MB', { maxLabels: 4 });
+  chartNet  = createChart('chart-net',  '#34d399', ' MB', { maxLabels: 4 });
+  chartDisk = createChart('chart-disk', '#fbbf24', ' MB', { maxLabels: 4 });
 }
 
 let chartCpuHistory = null;
@@ -709,10 +709,10 @@ async function loadStatsHistory(hours) {
     const memPoints  = data.map(r => ({ t: _fmtHistoryTime(r.timestamp, hours), v: r.memory_mb }));
     const netPoints  = data.map(r => ({ t: _fmtHistoryTime(r.timestamp, hours), v: r.net_mb || 0 }));
     const diskPoints = data.map(r => ({ t: _fmtHistoryTime(r.timestamp, hours), v: r.disk_mb || 0 }));
-    if (!chartCpuHistory) chartCpuHistory = createChart('chart-cpu-history', '#5b9bd5', '%');
-    if (!chartMemHistory) chartMemHistory = createChart('chart-mem-history', '#9b79c5', ' MB');
-    if (!chartNetHistory) chartNetHistory = createChart('chart-net-history', '#4caf8c', ' MB');
-    if (!chartDiskHistory) chartDiskHistory = createChart('chart-disk-history', '#e3b341', ' MB');
+    if (!chartCpuHistory) chartCpuHistory = createChart('chart-cpu-history', '#c8c8c8', '%');
+    if (!chartMemHistory) chartMemHistory = createChart('chart-mem-history', '#a78bfa', ' MB');
+    if (!chartNetHistory) chartNetHistory = createChart('chart-net-history', '#34d399', ' MB');
+    if (!chartDiskHistory) chartDiskHistory = createChart('chart-disk-history', '#fbbf24', ' MB');
     updateChart(chartCpuHistory, cpuPoints);
     updateChart(chartMemHistory, memPoints);
     updateChart(chartNetHistory, netPoints);
@@ -964,13 +964,13 @@ async function openFile(entry, el) {
 
   const picker = document.createElement('div');
   picker.className = 'cert-picker';
-  picker.style.cssText = 'position:absolute;z-index:9999;background:#161b22;border:1px solid #30363d;border-radius:6px;max-height:200px;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,.5);font-size:12px;';
+  picker.style.cssText = 'position:absolute;z-index:9999;background:#141414;border:1px solid #2e2e2e;border-radius:6px;max-height:200px;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,.6);font-size:12px;';
 
   items.forEach(path => {
     const row = document.createElement('div');
     row.textContent = path;
-    row.style.cssText = 'padding:8px 12px;cursor:pointer;color:#e6edf3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
-    row.addEventListener('mouseenter', () => row.style.background = '#21262d');
+    row.style.cssText = 'padding:8px 12px;cursor:pointer;color:#f0f0f0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+    row.addEventListener('mouseenter', () => row.style.background = '#222222');
     row.addEventListener('mouseleave', () => row.style.background = '');
     row.addEventListener('click', () => {
       inputEl.value = path;
@@ -1348,7 +1348,7 @@ function _openMaintModal_legacy(type) {
     ? 'Shown automatically whenever the Restart button is pressed — clears when the app is back up'
     : 'Shown when Update Mode is manually enabled — ideal for planned deployments';
 
-  const color = cfg.color || (isDown ? '#f85149' : isRestart ? '#388bfd' : '#f0883e');
+  const color = cfg.color || (isDown ? '#f85149' : isRestart ? '#a0a0a0' : '#f0883e');
   document.getElementById('maint-modal-title-input').value  = cfg.title   || '';
   document.getElementById('maint-modal-message').value      = cfg.message || '';
   document.getElementById('maint-modal-status-url').value   = cfg.status_url || '';
@@ -1398,7 +1398,7 @@ function openMaintModal(type) {
     ? 'Shown automatically whenever the Start button is pressed - clears when the app is online'
     : 'Shown when Update mode is manually enabled - ideal for planned deployments';
 
-  const color = cfg.color || (isDown ? '#f85149' : (isRestart || isStarting) ? '#388bfd' : '#f0883e');
+  const color = cfg.color || (isDown ? '#f85149' : (isRestart || isStarting) ? '#a0a0a0' : '#f0883e');
   document.getElementById('maint-modal-title-input').value  = cfg.title   || '';
   document.getElementById('maint-modal-message').value      = cfg.message || '';
   document.getElementById('maint-modal-status-url').value   = cfg.status_url || '';
@@ -1851,7 +1851,7 @@ async function initInstances() {
         `<div style="margin-bottom:10px">
           <div style="font-size:12px;font-weight:500;color:var(--text-secondary);margin-bottom:4px">${label}</div>
           <input id="${id}" type="${type}" placeholder="${placeholder}"
-            style="width:100%;padding:7px 10px;background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px;font-size:13px;box-sizing:border-box" />
+            style="width:100%;padding:7px 10px;background:#111111;color:#f0f0f0;border:1px solid #2e2e2e;border-radius:6px;font-size:13px;box-sizing:border-box" />
           ${hint ? `<div style="font-size:11px;color:var(--text-muted);margin-top:3px">${hint}</div>` : ''}
         </div>`;
 
@@ -1863,7 +1863,7 @@ async function initInstances() {
             <div class="dialog-title">Add Instance</div>
             <div class="dialog-body" style="color:var(--text-secondary);font-size:13px;line-height:1.5">
               <div style="margin-bottom:12px;font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em">Node</div>
-              <select id="inst-node-select" style="width:100%;padding:7px 10px;background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px;font-size:13px;margin-bottom:16px">
+              <select id="inst-node-select" style="width:100%;padding:7px 10px;background:#111111;color:#f0f0f0;border:1px solid #2e2e2e;border-radius:6px;font-size:13px;margin-bottom:16px">
                 <option value="">Primary node</option>
                 ${available.filter(n => !n.is_local).map(n => `<option value="${n.id}">${n.name} (${n.public_host || n.status})</option>`).join('')}
               </select>
@@ -1874,15 +1874,15 @@ async function initInstances() {
               </div>
               <div style="display:flex;align-items:center;gap:16px;margin-top:4px">
                 <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
-                  <input type="checkbox" id="inst-readonly" ${app.docker_read_only_root ? 'checked' : ''} style="accent-color:#3b82f6" />
+                  <input type="checkbox" id="inst-readonly" ${app.docker_read_only_root ? 'checked' : ''} style="accent-color:#c8c8c8" />
                   Read-only root fs
                 </label>
                 <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
-                  <input type="checkbox" id="inst-tmpfs" ${app.docker_tmpfs_enabled ? 'checked' : ''} style="accent-color:#3b82f6" />
+                  <input type="checkbox" id="inst-tmpfs" ${app.docker_tmpfs_enabled ? 'checked' : ''} style="accent-color:#c8c8c8" />
                   Tmpfs /tmp
                 </label>
                 <input id="inst-tmpfs-size" type="number" placeholder="${app.docker_tmpfs_size_mb || 64}"
-                  style="width:70px;padding:5px 8px;background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px;font-size:12px" />
+                  style="width:70px;padding:5px 8px;background:#111111;color:#f0f0f0;border:1px solid #2e2e2e;border-radius:6px;font-size:12px" />
                 <span style="font-size:11px;color:var(--text-muted)">MB</span>
               </div>
             </div>

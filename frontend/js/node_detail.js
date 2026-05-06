@@ -198,9 +198,9 @@ function _metricBar(label, pct) {
 
 // ── Node sparkline charts ─────────────────────────────────────────────────────
 function _initNodeCharts() {
-    nChartCpu  = _nodeChart('node-chart-cpu',  '#58a6ff');
-    nChartMem  = _nodeChart('node-chart-mem',  '#bc8cff');
-    nChartDisk = _nodeChart('node-chart-disk', '#e3b341');
+    nChartCpu  = _nodeChart('node-chart-cpu',  '#c8c8c8');
+    nChartMem  = _nodeChart('node-chart-mem',  '#a78bfa');
+    nChartDisk = _nodeChart('node-chart-disk', '#fbbf24');
 
     const offline = node.status !== 'online';
     _setChartsOfflineState(offline);

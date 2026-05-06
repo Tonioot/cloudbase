@@ -1,43 +1,43 @@
 :root {
   /* Backgrounds */
-  --bg-base:      #070b14;
-  --bg-surface:   #0f1628;
-  --bg-elevated:  #151f37;
-  --bg-muted:     #1c2944;
+  --bg-base:      #0a0a0a;
+  --bg-surface:   #111111;
+  --bg-elevated:  #1a1a1a;
+  --bg-muted:     #222222;
 
   /* Borders */
-  --border:       #243355;
-  --border-muted: #1a2742;
+  --border:       #2e2e2e;
+  --border-muted: #1f1f1f;
 
   /* Text */
-  --text-primary:   #e8eefc;
-  --text-secondary: #96a6c6;
-  --text-muted:     #60739c;
+  --text-primary:   #f0f0f0;
+  --text-secondary: #a0a0a0;
+  --text-muted:     #606060;
 
   /* Accent */
-  --accent:       #60a5fa;
-  --accent-dark:  #2563eb;
-  --accent-bg:    rgba(37, 99, 235, 0.2);
-  --accent-border: rgba(96, 165, 250, 0.35);
+  --accent:       #c8c8c8;
+  --accent-dark:  #3a3a3a;
+  --accent-bg:    rgba(200, 200, 200, 0.08);
+  --accent-border: rgba(200, 200, 200, 0.18);
 
   /* Status */
   --green:        #34d399;
-  --green-bg:     rgba(52, 211, 153, 0.14);
-  --green-border: rgba(52, 211, 153, 0.32);
+  --green-bg:     rgba(52, 211, 153, 0.10);
+  --green-border: rgba(52, 211, 153, 0.25);
 
   --red:          #f87171;
-  --red-bg:       rgba(248, 113, 113, 0.14);
-  --red-border:   rgba(248, 113, 113, 0.32);
+  --red-bg:       rgba(248, 113, 113, 0.10);
+  --red-border:   rgba(248, 113, 113, 0.25);
 
   --yellow:       #fbbf24;
-  --yellow-bg:    rgba(251, 191, 36, 0.15);
-  --yellow-border: rgba(251, 191, 36, 0.32);
+  --yellow-bg:    rgba(251, 191, 36, 0.10);
+  --yellow-border: rgba(251, 191, 36, 0.25);
 
   --purple:       #a78bfa;
-  --purple-bg:    rgba(167, 139, 250, 0.15);
+  --purple-bg:    rgba(167, 139, 250, 0.10);
 
   --orange:       #fb923c;
-  --orange-bg:    rgba(251, 146, 60, 0.15);
+  --orange-bg:    rgba(251, 146, 60, 0.10);
 
   /* Sizing */
   --sidebar-width: 252px;
@@ -46,8 +46,8 @@
   --radius-lg:  18px;
 
   /* Shadows */
-  --shadow:     0 12px 30px rgba(3, 8, 20, 0.45);
-  --shadow-lg:  0 24px 60px rgba(3, 8, 20, 0.6);
+  --shadow:     0 12px 30px rgba(0, 0, 0, 0.5);
+  --shadow-lg:  0 24px 60px rgba(0, 0, 0, 0.7);
 
   /* Transitions */
   --transition: 180ms ease;

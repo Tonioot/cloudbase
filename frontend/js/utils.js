@@ -42,7 +42,7 @@ export const typeIcon = {
   ruby:    _typeIconSvg(`<rect width="26" height="26" rx="6" fill="#3a0e0e"/><polygon points="13,3.5 21.5,9 18.5,21.5 7.5,21.5 4.5,9" fill="#cc342d"/><polygon points="13,7 18,10.5 15.5,19 10.5,19 8,10.5" fill="#e86060" opacity=".7"/>`),
   go:      _typeIconSvg(`<rect width="26" height="26" rx="6" fill="#062533"/><text x="13" y="17.5" text-anchor="middle" fill="#00ADD8" font-size="11" font-weight="800" font-family="Arial,sans-serif">Go</text>`),
   php:     _typeIconSvg(`<rect width="26" height="26" rx="6" fill="#1e1b4b"/><text x="13" y="16.5" text-anchor="middle" fill="#a5b4fc" font-size="8" font-weight="700" font-family="Arial,sans-serif">PHP</text>`),
-  unknown: _typeIconSvg(`<rect width="26" height="26" rx="6" fill="#21262d"/><path d="M13 8c-2.2 0-4 1.6-4 3.5h2.2c0-.8.8-1.5 1.8-1.5s1.8.6 1.8 1.5c0 1-1.8 2.2-1.8 3.5h2.2c0-1 1.8-2.2 1.8-3.5 0-1.9-1.8-3.5-4-3.5z" fill="#6e7681"/><circle cx="13" cy="18.5" r="1.2" fill="#6e7681"/>`),
+  unknown: _typeIconSvg(`<rect width="26" height="26" rx="6" fill="#1e1e1e"/><path d="M13 8c-2.2 0-4 1.6-4 3.5h2.2c0-.8.8-1.5 1.8-1.5s1.8.6 1.8 1.5c0 1-1.8 2.2-1.8 3.5h2.2c0-1 1.8-2.2 1.8-3.5 0-1.9-1.8-3.5-4-3.5z" fill="#6e7681"/><circle cx="13" cy="18.5" r="1.2" fill="#6e7681"/>`),
 };
 
 /* ─── Status badge HTML ─────────────────────────────────────────────────── */

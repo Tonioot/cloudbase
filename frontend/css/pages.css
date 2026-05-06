@@ -65,10 +65,10 @@
 }
 
 .node-card:hover {
-  border-color: rgba(96, 165, 250, .55);
+  border-color: rgba(200, 200, 200, .2);
   transform: translateY(-2px);
-  box-shadow: 0 12px 24px rgba(37, 99, 235, .18);
-  background: linear-gradient(180deg, rgba(22, 34, 58, .96), rgba(14, 23, 43, .94));
+  box-shadow: 0 12px 24px rgba(0, 0, 0, .35);
+  background: linear-gradient(180deg, rgba(24, 24, 24, .96), rgba(14, 14, 14, .95));
 }
 
 .node-card-header {
@@ -201,10 +201,10 @@
 }
 
 .app-card:hover {
-  border-color: rgba(96, 165, 250, .55);
+  border-color: rgba(200, 200, 200, .2);
   transform: translateY(-2px);
-  box-shadow: 0 12px 24px rgba(37, 99, 235, .18);
-  background: linear-gradient(180deg, rgba(22, 34, 58, .96), rgba(14, 23, 43, .94));
+  box-shadow: 0 12px 24px rgba(0, 0, 0, .35);
+  background: linear-gradient(180deg, rgba(24, 24, 24, .96), rgba(14, 14, 14, .95));
 }
 
 .app-card:active {
@@ -435,7 +435,7 @@
 .log-error   .log-text { color: #f85149; }
 .log-warn    .log-text { color: #d29922; }
 .log-success .log-text { color: #3fb950; }
-.log-info    .log-text { color: #58a6ff; }
+.log-info    .log-text { color: #c8c8c8; }
 .log-default .log-text { color: #c9d1d9; }
 
 .log-action { opacity: .85; margin: 2px 0; }
@@ -885,10 +885,10 @@
 }
 .maint-row-btn--red    { border-color: var(--red-border) !important; color: var(--red) !important; }
 .maint-row-btn--orange { border-color: rgba(255,166,87,0.3) !important; color: var(--orange) !important; }
-.maint-row-btn--blue   { border-color: rgba(56,139,253,0.3) !important; color: #388bfd !important; }
+.maint-row-btn--blue   { border-color: rgba(160,160,160,0.3) !important; color: #a0a0a0 !important; }
 .maint-row-btn--red:hover    { background: var(--red-bg) !important; }
 .maint-row-btn--orange:hover { background: var(--orange-bg) !important; }
-.maint-row-btn--blue:hover   { background: rgba(56,139,253,0.08) !important; }
+.maint-row-btn--blue:hover   { background: rgba(160,160,160,0.06) !important; }
 
 /* Small status badge inside the row button */
 .maint-row-badge {
@@ -902,7 +902,7 @@
 .maint-badge--off    { background: var(--bg-muted); color: var(--text-muted); border: 1px solid var(--border); }
 .maint-badge--red    { background: var(--red-bg);   color: var(--red);   border: 1px solid var(--red-border); }
 .maint-badge--orange { background: var(--orange-bg); color: var(--orange); border: 1px solid rgba(255,166,87,0.3); }
-.maint-badge--blue   { background: rgba(56,139,253,0.1); color: #388bfd; border: 1px solid rgba(56,139,253,0.3); }
+.maint-badge--blue   { background: rgba(160,160,160,0.08); color: #a0a0a0; border: 1px solid rgba(160,160,160,0.22); }
 
 /* Shared color swatch used in modal */
 .maint-color-row {

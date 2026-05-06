@@ -15,11 +15,11 @@
 .btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .btn-primary {
-  background: linear-gradient(135deg, #3b82f6, var(--accent-dark));
-  color: #fff;
-  border-color: transparent;
+  background: linear-gradient(135deg, #3a3a3a, #222222);
+  color: #f0f0f0;
+  border-color: #444444;
 }
-.btn-primary:hover:not(:disabled) { background: #388bfd; border-color: #388bfd; }
+.btn-primary:hover:not(:disabled) { background: #484848; border-color: #555555; }
 
 .btn-secondary {
   background: rgba(28, 41, 68, 0.65);
@@ -55,7 +55,7 @@
 
 /* ─── Cards ─────────────────────────────────────────────────────────────── */
 .card {
-  background: linear-gradient(180deg, rgba(19, 28, 48, 0.95), rgba(13, 20, 37, 0.92));
+  background: linear-gradient(180deg, rgba(20, 20, 20, 0.96), rgba(12, 12, 12, 0.94));
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
@@ -150,8 +150,8 @@
 }
 
 .input:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(88,166,255,.12);
+  border-color: #555555;
+  box-shadow: 0 0 0 3px rgba(200,200,200,.06);
 }
 
 .input::placeholder { color: var(--text-muted); }
@@ -295,7 +295,7 @@
 .dialog.dialog-modern {
   padding: 0;
   border-radius: var(--radius-lg);
-  background: linear-gradient(180deg, rgba(19, 28, 48, 0.97), rgba(12, 20, 36, 0.95));
+  background: linear-gradient(180deg, rgba(22, 22, 22, 0.98), rgba(12, 12, 12, 0.97));
   box-shadow: var(--shadow-lg);
 }
 

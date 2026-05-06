@@ -410,9 +410,9 @@ function _initNodeStatsTab(nodeId, drawer) {
       ${_nodeStatCard('Disk',         'ndd-s-disk', 'ndd-chart-disk', buf.diskData)}
     </div>`;
 
-  _nodeCharts.cpu  = _createNodeChart('ndd-chart-cpu',  '#58a6ff', '%');
-  _nodeCharts.mem  = _createNodeChart('ndd-chart-mem',  '#bc8cff', '%');
-  _nodeCharts.disk = _createNodeChart('ndd-chart-disk', '#3fb950', '%');
+  _nodeCharts.cpu  = _createNodeChart('ndd-chart-cpu',  '#c8c8c8', '%');
+  _nodeCharts.mem  = _createNodeChart('ndd-chart-mem',  '#a78bfa', '%');
+  _nodeCharts.disk = _createNodeChart('ndd-chart-disk', '#34d399', '%');
 
   if (buf.cpuData.length > 0) {
     _updateNodeChart(_nodeCharts.cpu,  buf.cpuData);

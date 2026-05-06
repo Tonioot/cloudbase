@@ -1,4 +1,6 @@
 # Cloudbase
+Original Cloudbase project by Tonioot (2026)  
+This repository is the canonical and original source of Cloudbase.
 
 Cloudbase is a self-hosted deployment and operations panel for running applications across one or more servers.
 
@@ -143,3 +145,24 @@ Cloudbase data is stored in `~/.cloudbase/`.
 - App reachable internally but not externally: verify the service binds to `0.0.0.0` inside its runtime.
 - Node flaps online/offline: check network stability between node and primary and inspect `cloudbase logs`.
 - Temporary missing stats during restarts: short gaps can occur during reconnect and recover automatically when the command pipeline stabilizes.
+
+## License
+
+This project is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0).
+
+This means:
+- You are free to use, modify, and distribute this software
+- If you modify and distribute it, you must also open source your changes
+- If you run this as a service, you must provide the source code to users
+
+See the LICENSE file for full terms.
+
+## Attribution & Origin
+
+Cloudbase was originally created by Tonioot.
+
+If you use or modify this project, you must:
+- Retain the original copyright notice
+- Provide proper attribution to the original author
+
+This repository is considered the canonical upstream source of Cloudbase.

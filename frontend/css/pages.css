@@ -299,7 +299,7 @@
 
 /* ─── App detail — header ───────────────────────────────────────────────── */
 .detail-header {
-  background: linear-gradient(180deg, rgba(11, 17, 32, 0.94), rgba(11, 17, 32, 0.78));
+  background: linear-gradient(180deg, rgba(14, 14, 14, 0.97), rgba(10, 10, 10, 0.90));
   border-bottom: 1px solid var(--border);
   padding: 0 30px;
 }
@@ -394,9 +394,9 @@
 .tab-btn:hover { color: var(--text-primary); background: rgba(255,255,255,.04); }
 
 .tab-btn.active {
-  color: var(--accent);
-  border-color: rgba(88,166,255,.22);
-  background: rgba(88,166,255,.07);
+  color: var(--text-primary);
+  border-color: rgba(200,200,200,.15);
+  background: rgba(200,200,200,.06);
 }
 
 /* ─── Tab panels ────────────────────────────────────────────────────────── */

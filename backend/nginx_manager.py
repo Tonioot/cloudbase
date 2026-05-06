@@ -92,7 +92,7 @@ def generate_maintenance_html(
 
 
 def generate_cloudbase_unavailable_html(domain: str | None = None) -> str:
-    """Return a branded Cloudbase unavailable page in dashboard style."""
+    """Return a branded Cloudbase unavailable page as a single clean card."""
     safe_domain = (domain or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     domain_line = f"Primary domain: {safe_domain}" if safe_domain else "Cloudbase endpoint is temporarily unavailable"
 
@@ -136,45 +136,39 @@ def generate_cloudbase_unavailable_html(domain: str | None = None) -> str:
       padding: 24px;
     }}
 
-    .panel {{
-      width: min(700px, 100%);
+    .card {{
+      width: min(460px, 100%);
       background: linear-gradient(180deg, rgba(20,20,20,0.96), rgba(12,12,12,0.94));
       border: 1px solid var(--border);
       border-radius: 18px;
       box-shadow: 0 24px 60px rgba(0,0,0,0.7);
-      overflow: hidden;
+      padding: 30px 28px 24px;
     }}
 
-    .panel-head {{
+    .brand-row {{
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 12px;
-      padding: 16px 18px;
-      border-bottom: 1px solid var(--border);
-      background: var(--bg-surface);
+      gap: 10px;
+      margin-bottom: 18px;
     }}
 
     .brand {{
-      display: flex;
+      display: inline-flex;
       align-items: center;
-      gap: 10px;
+      gap: 8px;
+      font-size: 15px;
       font-weight: 700;
       letter-spacing: .01em;
+      color: var(--text-primary);
     }}
 
     .brand-dot {{
-      width: 11px;
-      height: 11px;
+      width: 8px;
+      height: 8px;
       border-radius: 50%;
       background: var(--red);
-      box-shadow: 0 0 0 4px var(--red-bg);
-      animation: pulse 1.8s ease-in-out infinite;
-    }}
-
-    @keyframes pulse {{
-      0%, 100% {{ transform: scale(1); opacity: 1; }}
-      50% {{ transform: scale(0.85); opacity: 0.55; }}
+      box-shadow: 0 0 0 3px var(--red-bg);
     }}
 
     .badge {{
@@ -188,14 +182,10 @@ def generate_cloudbase_unavailable_html(domain: str | None = None) -> str:
       white-space: nowrap;
     }}
 
-    .panel-body {{
-      padding: 22px 18px 18px;
-    }}
-
     h1 {{
-      font-size: 24px;
+      font-size: 22px;
       line-height: 1.2;
-      margin-bottom: 10px;
+      margin-bottom: 9px;
       letter-spacing: -0.02em;
     }}
 
@@ -205,26 +195,20 @@ def generate_cloudbase_unavailable_html(domain: str | None = None) -> str:
       font-size: 14px;
     }}
 
-    .meta {{
-      margin-top: 16px;
-      display: grid;
-      gap: 8px;
-      font-size: 12px;
-      color: var(--text-muted);
-    }}
-
-    .meta-item {{
+    .meta-line {{
+      margin-top: 14px;
       padding: 9px 10px;
       border-radius: 10px;
       border: 1px solid var(--accent-border);
       background: var(--accent-bg);
       color: var(--text-secondary);
+      font-size: 12px;
+      line-height: 1.45;
     }}
 
     .actions {{
-      margin-top: 18px;
+      margin-top: 16px;
       display: flex;
-      flex-wrap: wrap;
       gap: 8px;
     }}
 
@@ -243,27 +227,29 @@ def generate_cloudbase_unavailable_html(domain: str | None = None) -> str:
       background: var(--bg-muted);
       border-color: #444;
     }}
+
+    @media (max-width: 540px) {{
+      .card {{
+        padding: 24px 18px 18px;
+      }}
+
+      h1 {{
+        font-size: 20px;
+      }}
+    }}
   </style>
 </head>
 <body>
-  <section class="panel">
-    <div class="panel-head">
-      <div class="brand">
-        <span class="brand-dot"></span>
-        <span>Cloudbase</span>
-      </div>
+  <section class="card">
+    <div class="brand-row">
+      <div class="brand"><span class="brand-dot"></span><span>Cloudbase</span></div>
       <span class="badge">Temporarily Unavailable</span>
     </div>
-    <div class="panel-body">
-      <h1>Cloudbase is restarting or temporarily offline</h1>
-      <p>The dashboard is currently unavailable while services are recovering. This page refreshes automatically every few seconds.</p>
-      <div class="meta">
-        <div class="meta-item">{domain_line}</div>
-        <div class="meta-item">If this persists, verify nginx and the Cloudbase backend service status.</div>
-      </div>
-      <div class="actions">
-        <a class="btn" href="/">Retry now</a>
-      </div>
+    <h1>Cloudbase is restarting or temporarily offline</h1>
+    <p>The dashboard is currently unavailable while services are recovering. This page refreshes automatically every few seconds.</p>
+    <div class="meta-line">{domain_line}</div>
+    <div class="actions">
+      <a class="btn" href="/">Retry now</a>
     </div>
   </section>
 </body>

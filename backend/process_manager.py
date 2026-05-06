@@ -284,8 +284,9 @@ def find_process_by_port(port: int) -> Optional[int]:
 def get_process_stats(pid: int) -> dict:
     try:
         proc = psutil.Process(pid)
-        # cpu_percent must be called outside oneshot(); interval=0.5 gives a real measurement
-        cpu = proc.cpu_percent(interval=0.5)
+        # interval=None is non-blocking: returns delta since last call (or 0.0 on first call).
+        # The background stats loop calls this periodically, so values stay fresh without blocking.
+        cpu = proc.cpu_percent(interval=None)
         mem = proc.memory_info()
         uptime = int(time.time() - proc.create_time())
 

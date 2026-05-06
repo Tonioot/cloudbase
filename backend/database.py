@@ -108,6 +108,11 @@ async def init_db():
                 f"ALTER TABLE node_commands ADD COLUMN {col} {definition}"
             )
 
+        # nodes — index auth_token for fast per-request token lookups
+        await conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_nodes_auth_token ON nodes (auth_token)"
+        )
+
         # audit_logs — new table, created by create_all above; ensure composite index
         await conn.exec_driver_sql(
             "CREATE INDEX IF NOT EXISTS ix_audit_logs_app_ts "

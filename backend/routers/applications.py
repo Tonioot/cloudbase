@@ -3413,7 +3413,7 @@ async def get_stats(app_id: int, db: AsyncSession = Depends(get_db)):
             return {"status": "running", "docker": True, **stats}
         return {"status": "stopped", "docker": True}
     if app.pid and pm.is_process_running(app.pid, app.id):
-        stats = pm.get_process_stats(app.pid)
+        stats = await asyncio.to_thread(pm.get_process_stats, app.pid)
         return {"status": "running", **stats}
     return {"status": "stopped"}
 

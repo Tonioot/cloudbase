@@ -64,7 +64,7 @@ class Node(Base):
     status = Column(String(20), default="online")  # online | offline | unknown
     api_base_url = Column(String(500), nullable=True)
     public_host = Column(String(255), nullable=True)
-    auth_token = Column(String(200), nullable=True)
+    auth_token = Column(String(200), nullable=True, index=True)
     is_local = Column(Boolean, default=False)
     enabled = Column(Boolean, default=True)
     capabilities = Column(Text, nullable=True)  # JSON dict

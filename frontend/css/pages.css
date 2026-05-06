@@ -238,7 +238,7 @@
   transition: color var(--transition);
 }
 
-.app-card:hover .app-name { color: var(--accent); transition: color var(--transition); }
+.app-card:hover .app-name { color: var(--text-primary); transition: color var(--transition); }
 
 .app-type-label { font-size: 11px; color: var(--text-secondary); text-transform: capitalize; margin-top: 2px; }
 
@@ -772,7 +772,7 @@
   padding: 11px 28px;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
-  background: rgba(10, 16, 30, 0.7);
+  background: rgba(16, 16, 16, 0.85);
 }
 
 .settings-bar-title {
@@ -986,7 +986,7 @@
   margin-top: 4px;
 }
 
-.add-env-btn:hover { color: #79c0ff; }
+.add-env-btn:hover { color: var(--text-primary); }
 
 .action-grid {
   display: grid;

@@ -599,7 +599,12 @@ def generate_config(
     redirect_domains: list of domains that issue a 301 redirect to the primary domain
     """
     import re as _re
+    is_cloudbase = (app_name or "").strip().lower() == "cloudbase"
     maint_root = f"{MAINTENANCE_DIR}/{app_id}" if app_id else f"{MAINTENANCE_DIR}/0"
+    fallback_filename = "downtime.html"
+    if is_cloudbase and not app_id:
+      maint_root = f"{MAINTENANCE_DIR}/cloudbase"
+      fallback_filename = "unavailable.html"
 
     if mode == "maintenance":
         return _static_page_config(domain, maint_root, "downtime.html", ssl_cert, ssl_key, extra_domains, redirect_domains)
@@ -616,20 +621,20 @@ def generate_config(
             # No running instances — serve 503 maintenance page
             return _static_page_config(domain, maint_root, "downtime.html", ssl_cert, ssl_key, extra_domains, redirect_domains)
         if len(port) == 1:
-            return _proxy_config(domain, f"http://{port[0]}", maint_root, ssl_cert, ssl_key, extra_domains, redirect_domains)
+            return _proxy_config(domain, f"http://{port[0]}", maint_root, ssl_cert, ssl_key, extra_domains, redirect_domains, fallback_filename=fallback_filename)
         safe_name = _re.sub(r"[^a-z0-9_]", "_", app_name.lower())
         upstream_name = f"cloudbase_{safe_name}"
         upstream_block = f"upstream {upstream_name} {{\n"
         for backend in port:
             upstream_block += f"    server {backend};\n"
         upstream_block += "}\n\n"
-        return _proxy_config(domain, f"http://{upstream_name}", maint_root, ssl_cert, ssl_key, extra_domains, redirect_domains, upstream_block=upstream_block)
+        return _proxy_config(domain, f"http://{upstream_name}", maint_root, ssl_cert, ssl_key, extra_domains, redirect_domains, upstream_block=upstream_block, fallback_filename=fallback_filename)
 
     # Legacy single int port
-    return _proxy_config(domain, f"http://127.0.0.1:{port}", maint_root, ssl_cert, ssl_key, extra_domains, redirect_domains)
+    return _proxy_config(domain, f"http://127.0.0.1:{port}", maint_root, ssl_cert, ssl_key, extra_domains, redirect_domains, fallback_filename=fallback_filename)
 
 
-def _proxy_config(domain: str, proxy_target: str, maint_root: str, ssl_cert: str = None, ssl_key: str = None, extra_domains: list = None, redirect_domains: list = None, upstream_block: str = "") -> str:
+  def _proxy_config(domain: str, proxy_target: str, maint_root: str, ssl_cert: str = None, ssl_key: str = None, extra_domains: list = None, redirect_domains: list = None, upstream_block: str = "", fallback_filename: str = "downtime.html") -> str:
     # NOTE: proxy_intercept_errors must be inside the proxying location block.
     # We use a regular 'internal' location (not named @) so that try_files works.
     # Named locations don't support try_files, which caused the file to not be served.
@@ -639,7 +644,7 @@ def _proxy_config(domain: str, proxy_target: str, maint_root: str, ssl_cert: str
     location = /_pdm_maintenance {{
         internal;
         root {maint_root};
-        try_files /downtime.html =503;
+      try_files /{fallback_filename} =503;
         default_type text/html;
         add_header Cache-Control "no-store, no-cache, must-revalidate" always;
         add_header Pragma "no-cache" always;
@@ -690,6 +695,28 @@ server {{
 {server_content}
 }}
 """
+
+
+def write_cloudbase_unavailable_page(html: str) -> tuple[bool, str]:
+  """Write /var/www/cloudbase/maintenance/cloudbase/unavailable.html."""
+  cloudbase_dir = os.path.join(MAINTENANCE_DIR, "cloudbase")
+  page_path = os.path.join(cloudbase_dir, "unavailable.html")
+  try:
+    r = subprocess.run(["sudo", "mkdir", "-p", cloudbase_dir], capture_output=True, text=True)
+    if r.returncode != 0:
+      return False, r.stderr or "Failed to create Cloudbase maintenance directory"
+
+    r = subprocess.run(["sudo", "tee", page_path], input=html, text=True, capture_output=True)
+    if r.returncode != 0:
+      return False, r.stderr or "Failed to write unavailable page"
+
+    r = subprocess.run(["sudo", "chmod", "644", page_path], capture_output=True, text=True)
+    if r.returncode != 0:
+      return False, r.stderr or "Failed to chmod unavailable page"
+    return True, "OK"
+  except Exception as exc:
+    log.exception("[cloudbase-unavailable] unexpected error: %s", exc)
+    return False, str(exc)
 
 
 def _static_page_config(domain: str, maint_root: str, filename: str, ssl_cert: str = None, ssl_key: str = None, extra_domains: list = None, redirect_domains: list = None) -> str:

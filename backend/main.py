@@ -924,6 +924,16 @@ async def get_cloudbase_nginx(_: dict = Depends(auth.require_admin)):
 
 @app.post("/api/system/nginx-config")
 async def apply_cloudbase_nginx(req: CloudbaseNginxRequest, _: dict = Depends(auth.require_admin)):
+    unavailable_html = nm.generate_maintenance_html(
+        "Cloudbase Unavailable",
+        "Cloudbase is temporarily unavailable. Please try again shortly.",
+        "#f85149",
+        page_type="downtime",
+    )
+    page_ok, page_msg = nm.write_cloudbase_unavailable_page(unavailable_html)
+    if not page_ok:
+        return {"ok": False, "message": f"Failed to write Cloudbase unavailable page: {page_msg}"}
+
     config = nm.generate_config("cloudbase", req.domain, PORT, req.ssl_cert_path, req.ssl_key_path)
     ok, msg = nm.write_nginx_config("cloudbase", config)
     return {"ok": ok, "message": msg, "preview": config}

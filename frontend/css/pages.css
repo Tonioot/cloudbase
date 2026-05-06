@@ -1145,13 +1145,14 @@
 
 .deploy-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1.25fr) minmax(0, .95fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
-  align-items: start;
+  align-items: stretch;
 }
 
 .deploy-column {
   display: grid;
+  grid-auto-rows: 1fr;
   gap: 10px;
 }
 
@@ -1161,6 +1162,7 @@
   border: 1px solid var(--border);
   border-radius: 12px;
   background: color-mix(in srgb, var(--bg-elevated) 85%, transparent);
+  height: 100%;
 }
 
 .deploy-grid {
@@ -1215,30 +1217,6 @@
 .deploy-token-btn {
   flex-shrink: 0;
   white-space: nowrap;
-}
-
-.deploy-help-card {
-  border: 1px dashed var(--border);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--bg-base) 78%, transparent);
-  padding: 12px;
-}
-
-.deploy-help-title {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--text-primary);
-  margin-bottom: 8px;
-}
-
-.deploy-help-list {
-  margin: 0;
-  padding-left: 16px;
-  display: grid;
-  gap: 5px;
-  font-size: 11px;
-  line-height: 1.45;
-  color: var(--text-secondary);
 }
 
 .deploy-inline-hint-row {
@@ -1412,7 +1390,7 @@
 @media (max-width: 760px) {
   .modal { max-width: 100%; }
   .deploy-layout { grid-template-columns: 1fr; }
-  .deploy-column { gap: 9px; }
+  .deploy-column { gap: 9px; grid-auto-rows: auto; }
   .deploy-modal .modal-header { padding: 16px 16px 12px; }
   .deploy-modal .modal-body { padding: 12px; }
   .deploy-modal .modal-footer { padding: 12px; }

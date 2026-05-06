@@ -211,14 +211,6 @@ function modalHTML() {
                 </div>
               </div>
 
-              <div class="deploy-help-card">
-                <div class="deploy-help-title">Deploy checklist</div>
-                <ul class="deploy-help-list">
-                  <li>Repository URL and name are required</li>
-                  <li>Leave start command empty for auto-detection</li>
-                  <li>Set limits later if you want quick first deploys</li>
-                </ul>
-              </div>
             </div>
           </div>
 

@@ -344,7 +344,7 @@ function openGitHubTokensModal() {
           <div id="gh-tokens-list" style="margin-bottom:14px"></div>
           <div style="display:flex;gap:8px;margin-bottom:8px">
             <input class="input" id="gh-token-label" placeholder="Label (e.g. my-org)" style="flex:1;min-width:0" />
-            <input class="input input-mono" id="gh-token-value" type="password" placeholder="ghp_..." style="flex:2;min-width:0" />
+            <input class="input input-mono" id="gh-token-value" type="password" placeholder="ghp_..." autocomplete="current-password" style="flex:2;min-width:0" />
           </div>
           <div id="gh-token-err" style="display:none;color:var(--red);font-size:12px;margin-bottom:8px"></div>
         </div>
@@ -824,7 +824,7 @@ function openManageUsersModal() {
             <div style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">Add User</div>
             <div style="display:flex;gap:8px;margin-bottom:8px">
               <input class="input" id="new-user-name" placeholder="Username" style="flex:1;min-width:0" />
-              <input class="input input-mono" id="new-user-pwd" type="password" placeholder="Password (min 8)" style="flex:1;min-width:0" />
+              <input class="input input-mono" id="new-user-pwd" type="password" placeholder="Password (min 8)" autocomplete="new-password" style="flex:1;min-width:0" />
             </div>
             <div style="display:flex;gap:8px;margin-bottom:8px">
               <select class="input" id="new-user-role" style="flex:1;height:42px">
@@ -897,7 +897,7 @@ async function renderUsersList(modal) {
         : `<div class="user-edit-form" style="display:none;background:var(--bg-elevated);border-radius:6px;padding:10px;flex-direction:column;gap:8px">
             <div style="display:flex;gap:8px;flex-wrap:wrap">
               <input class="input user-edit-username" placeholder="Username" style="flex:1;min-width:150px" />
-              <input class="input input-mono user-edit-pwd" type="password" placeholder="New password (leave blank to keep)" style="flex:1;min-width:150px" />
+              <input class="input input-mono user-edit-pwd" type="password" placeholder="New password (leave blank to keep)" autocomplete="new-password" style="flex:1;min-width:150px" />
               <select class="input user-edit-role" style="width:160px;height:38px">
                 <option value="viewer">Viewer</option>
                 <option value="admin">Admin</option>

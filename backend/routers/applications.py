@@ -892,7 +892,14 @@ async def list_apps(request: Request, db: AsyncSession = Depends(get_db)):
     for a in apps:
         app_replicas = replica_map.get(a.id, [])
         replica_dicts = [_replica_to_dict(r, node_map.get(r.node_id)) for r in app_replicas]
-        result_list.append(_app_to_dict(a, include_sensitive=include_sensitive, replicas=replica_dicts))
+        result_list.append(
+            _app_to_dict(
+                a,
+                include_sensitive=include_sensitive,
+                replicas=replica_dicts,
+                include_page_configs=False,
+            )
+        )
     return result_list
 
 
@@ -1050,10 +1057,10 @@ async def get_stats_history(
     )
     rows = result.scalars().all()
     return [
-        {
-            "timestamp":   r.timestamp.isoformat() + "Z",
-            "cpu_percent": r.cpu_percent,
-            "memory_mb":   r.memory_mb,
+            "downtime_page":    downtime_page,
+            "update_page":      update_page,
+            "restart_page":     restart_page,
+            "starting_page":    starting_page,
             "net_mb":      r.net_mb  or 0,
             "disk_mb":     r.disk_mb or 0,
         }
@@ -3455,7 +3462,16 @@ async def _get_or_404(app_id: int, db: AsyncSession) -> Application:
     return app
 
 
-def _app_to_dict(app: Application, include_sensitive: bool = True, replicas: Optional[list] = None) -> dict:
+def _app_to_dict(
+    app: Application,
+    include_sensitive: bool = True,
+    replicas: Optional[list] = None,
+    include_page_configs: bool = True,
+) -> dict:
+    downtime_page = json.loads(app.downtime_page or "{}") if include_page_configs else None
+    update_page = json.loads(app.update_page or "{}") if include_page_configs else None
+    restart_page = json.loads(app.restart_page or "{}") if include_page_configs else None
+    starting_page = json.loads(app.starting_page or "{}") if include_page_configs else None
     return {
         "id": app.id,
         "name": app.name,
@@ -3482,10 +3498,10 @@ def _app_to_dict(app: Application, include_sensitive: bool = True, replicas: Opt
         "docker_tmpfs_size_mb": app.docker_tmpfs_size_mb,
         "maintenance_mode": app.maintenance_mode or False,
         "update_mode":      app.update_mode or False,
-        "downtime_page":    json.loads(app.downtime_page or "{}"),
-        "update_page":      json.loads(app.update_page   or "{}"),
-        "restart_page":     json.loads(app.restart_page  or "{}"),
-        "starting_page":    json.loads(app.starting_page or "{}"),
+        "downtime_page":    downtime_page,
+        "update_page":      update_page,
+        "restart_page":     restart_page,
+        "starting_page":    starting_page,
         "ssl_cert_path": app.ssl_cert_path,
         "ssl_key_path": app.ssl_key_path,
         "github_token": "***" if app.github_token else None,

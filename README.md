@@ -1,60 +1,177 @@
 # Cloudbase
-Original Cloudbase project by Tonioot (2026)  
-This repository is the canonical and original source of Cloudbase.
 
-Cloudbase is a self-hosted deployment and operations panel for running applications across one or more servers.
+**Original Cloudbase project by Tonioot (2026)**
 
-It gives you one place to deploy from Git, scale with instances, manage networking and SSL, monitor runtime metrics, and operate a multi-node setup.
+Cloudbase is a self-hosted deployment and operations platform for managing applications across multiple servers.
+
+It provides a central control plane for deploying applications from Git, distributing workloads across instances, and operating a multi-node infrastructure with integrated networking, load balancing, and observability.
+
+---
+
+## Philosophy
+
+Cloudbase is designed with a focus on simplicity and clarity.
+
+The system prioritizes:
+
+* A minimal and understandable operational model
+* Explicit control over infrastructure behavior
+* Predictable deployment and scaling semantics
+* Avoidance of unnecessary complexity in orchestration
+
+The goal is to keep multi-server application management transparent and easy to reason about.
+
+---
 
 ## Overview
 
-Cloudbase runs on port 7823 by default and includes:
+Cloudbase runs on port 7823 by default and consists of a control plane and distributed execution nodes.
 
-- App deployments from Git repositories
-- Docker-first runtime with optional native process mode
-- Instance-based scaling and load balancing
-- Multi-node orchestration from one primary panel
-- Nginx config management per app (domains, redirects, SSL)
-- Zero-downtime restart flow
-- Live logs, stats, and audit events
-- User roles and access control
+Key capabilities include:
 
-## Core model: App, Instance, Node
+* Deployment of applications from Git repositories
+* Docker-based runtime for application execution
+* Instance-based scaling across multiple servers
+* Centralized orchestration of multi-node environments
+* Automated NGINX configuration per application
+* Domain management and SSL certificate handling
+* Load balancing across healthy instances
+* Live logging, metrics, and audit events
+* Role-based access control
 
-This is the most important concept in Cloudbase:
+---
 
-- An App is a logical service definition. It stores configuration like repository, start command, internal port, domains, environment variables, and runtime limits.
-- An Instance is a running replica of an app. Each instance has its own runtime process/container and its own external host port.
-- A Node is a server that runs instances.
+## System Architecture
 
-Key rule:
+Cloudbase is built around a primary node architecture with optional remote nodes.
 
-- Apps do not run on nodes directly.
-- Instances run on nodes.
+### Primary Node (Control Plane)
 
-So an app can have multiple instances, and those instances can be distributed across different nodes.
+The primary node is the central system component. It hosts the Cloudbase panel and is responsible for:
 
-Example:
+* Storing all application configuration and metadata
+* Managing nodes and their state
+* Orchestrating deployments and updates
+* Handling routing decisions and load balancing configuration
+* Serving as the single entry point for user interaction
 
-- App `web-api`
-- Instance `web-api-1` on node A
-- Instance `web-api-2` on node B
-- Instance `web-api-3` on node B
+The primary node can also function as a regular node and host application instances like any other node.
 
-Nginx routes traffic to healthy instances, not to the app object itself.
+All control operations are managed through the primary node.
+
+### Nodes (Execution Layer)
+
+Nodes are servers that execute workloads. Each node must have Cloudbase installed.
+
+Nodes are responsible for:
+
+* Running application instances
+* Hosting Docker containers for workloads
+* Reporting status and health to the primary node
+* Receiving deployment and runtime instructions
+
+---
+
+## Core Model: App, Instance, Node
+
+Cloudbase uses three core abstractions.
+
+### Application
+
+An application represents a logical service definition.
+
+It does not execute workloads itself. Instead, it defines configuration such as:
+
+* Git repository
+* Build and start commands
+* Internal service port
+* Environment variables
+* Domain and routing configuration
+* Resource limits
+
+The primary node stores the application source code state. When a Pull and Rebuild operation is executed, the latest code is pulled and stored on the primary node.
+
+### Instance
+
+An instance is a running execution of an application.
+
+* Each instance runs as an isolated Docker container
+* Each instance has its own runtime environment
+* Instances can be distributed across multiple nodes
+* At least one instance is required for an application to be active
+
+### Node
+
+A node is a physical or virtual machine that runs instances.
+
+---
+
+## Networking and Routing
+
+Cloudbase uses NGINX as the primary routing layer.
+
+* Each application can define one or more domains
+* SSL certificates can be configured per domain
+* Traffic is automatically distributed across healthy instances
+* Load balancing is handled by Cloudbase via NGINX configuration generation
+
+When instances run on remote nodes, Cloudbase establishes secure tunnels between the primary node and remote nodes. All external traffic is routed through the primary node and forwarded through these tunnels to the appropriate node and instance.
+
+If a node goes offline, all tunnels to that node are terminated and its instances are marked as disconnected. Remaining instances automatically handle traffic through load balancing.
+
+When the node comes back online, Cloudbase restores the tunnel connection. If the instance still exists, the container is restarted and reattached to the routing system, after which load balancing resumes automatically.
+
+---
+
+## Application Lifecycle Pages
+
+Cloudbase provides system-managed NGINX-served pages for application states.
+
+### Downtime
+
+Displayed when an application is not reachable via NGINX or explicitly set to downtime mode from the panel.
+
+### Update
+
+Displayed when an application is in an update state triggered manually via the panel.
+
+### Restart
+
+Displayed automatically during application restarts and removed once the application becomes healthy again.
+
+### Start
+
+Displayed during initial application startup. Similar to restart but specifically for first boot or cold start.
+
+Each lifecycle page uses a standard template with configurable fields. Alternatively, full custom HTML can be used for complete control over rendering.
+
+All lifecycle pages are served via NGINX and managed internally by Cloudbase.
+
+---
+
+## Technology Stack
+
+Cloudbase uses the following core technologies:
+
+* Docker for instance isolation and execution
+* NGINX for routing, SSL termination, and traffic management
+* Python-based control plane for orchestration and CLI
+* Git for source code retrieval and deployments
 
 ## Setup
 
-Requirements:
+### Requirements
 
-- Linux (Ubuntu, Debian, RHEL, Arch, openSUSE)
-- Python 3.10+
-- Git
-- Docker
-- Nginx
-- systemd recommended
+* Linux (Ubuntu, Debian, RHEL, Arch, openSUSE)
+* Python 3.10+
+* Git
+* Docker
+* NGINX
+* systemd (recommended)
 
-Install:
+---
+
+### Installation
 
 ```bash
 git clone https://github.com/Tonioot/Cloudbase
@@ -62,44 +179,51 @@ cd cloudbase
 sudo bash install.sh
 ```
 
-The installer configures dependencies, Python environment, Docker, nginx, systemd service, and Cloudbase CLI commands.
+The installer configures:
 
-After install:
+* System dependencies
+* Python environment
+* Docker
+* NGINX
+* systemd services
+* Cloudbase CLI 
 
-1. Save the generated admin password
-2. Open `http://<server-ip>:7823`
-3. Sign in
+---
 
-## Daily workflow
+### After installation
 
-1. Create an app from a repository
-2. Configure network settings (domain, SSL, DNS target)
-3. Start with one instance
-4. Scale by adding more instances
-5. Optionally place instances on remote nodes
-6. Monitor logs/stats and use zero-downtime restart for updates
+* Store the generated admin password securely
+* Open the panel at: `http://<server-ip>:7823`
+* Log in to the control panel
 
-## Nodes and clustering
+---
 
-Cloudbase supports a primary node with connected remote nodes.
+## Node Management
 
-- Primary node: control plane and central UI
-- Remote nodes: workers that execute instance commands
+### Primary node
 
-Connect a remote node:
+The primary node hosts the control panel and manages orchestration.
+
+### Remote nodes
+
+Remote nodes execute application instances.
+
+### Connect a node
 
 ```bash
 cloudbase connect --main-url <url> --invite-code <code>
 ```
 
-Node modes:
+### Node modes
 
-- `panel+node`: full panel and node agent on same server
-- `node-only`: worker mode for running instances only
+* panel+node: combined control plane and execution node
+* node-only: execution-only worker node
 
-## Operations and CLI
+---
 
-Core commands:
+## CLI Operations
+
+### Core commands
 
 ```bash
 cloudbase start
@@ -111,7 +235,7 @@ cloudbase update
 cloudbase uninstall
 ```
 
-Node commands:
+### Node commands
 
 ```bash
 cloudbase connect --main-url <url> --invite-code <code> --node-name <name> --mode <mode>
@@ -119,50 +243,58 @@ cloudbase disconnect
 cloudbase node-status
 ```
 
-Nginx and cert commands:
+### NGINX management
 
 ```bash
 cloudbase nginx <domain>
 cloudbase nginx show
 cloudbase nginx disable
 cloudbase nginx permissions [user]
+```
+
+### Certificates
+
+```bash
 cloudbase cert add <path> [name]
 cloudbase cert list
 cloudbase cert path
 ```
 
-Backup and restore:
+### Backup and restore
 
 ```bash
 cloudbase export [file]
 cloudbase import <file>
 ```
 
-Cloudbase data is stored in `~/.cloudbase/`.
+---
 
-## Troubleshooting
+## Data Storage
 
-- App reachable internally but not externally: verify the service binds to `0.0.0.0` inside its runtime.
-- Node flaps online/offline: check network stability between node and primary and inspect `cloudbase logs`.
-- Temporary missing stats during restarts: short gaps can occur during reconnect and recover automatically when the command pipeline stabilizes.
+Cloudbase stores all persistent data in:
+
+```
+~/.cloudbase/
+```
+
+---
 
 ## License
 
 This project is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0).
 
-This means:
-- You are free to use, modify, and distribute this software
-- If you modify and distribute it, you must also open source your changes
-- If you run this as a service, you must provide the source code to users
+You are free to use, modify, and distribute this software under the terms of the license.
+If you modify and distribute the software, you must publish your changes.
+If you run it as a service, you must provide source code access to users.
 
 See the LICENSE file for full terms.
 
-## Attribution & Origin
+---
+
+## Attribution
 
 Cloudbase was originally created by Tonioot.
 
-If you use or modify this project, you must:
-- Retain the original copyright notice
-- Provide proper attribution to the original author
+If you use or modify this project, you must retain attribution and preserve the original copyright notice.
 
 This repository is considered the canonical upstream source of Cloudbase.

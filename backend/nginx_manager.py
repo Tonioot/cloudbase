@@ -838,8 +838,8 @@ def generate_config(
 
     # When using auto-subdomain with no explicit SSL, apply base SSL (wildcard cert)
     if _using_auto_sub and not ssl_cert and not ssl_key:
-      _base_cert = _scfg.get_base_ssl_cert_cached()
-      _base_key  = _scfg.get_base_ssl_key_cached()
+        _base_cert = _scfg.get_base_ssl_cert_cached()
+        _base_key  = _scfg.get_base_ssl_key_cached()
         if _base_cert and _base_key:
             ssl_cert = _base_cert
             ssl_key  = _base_key

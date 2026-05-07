@@ -480,7 +480,16 @@ async def cmd_git_pull(client, state, main_id, payload, headers):
 async def cmd_list_git_commits(client, state, main_id, payload, headers):
     local_id = await _resolve_local_id(client, state, main_id, payload, headers)
     limit = payload.get("limit") or 20
-    resp = await client.get(f"{_LOCAL_API_BASE}/api/apps/{local_id}/commits", params={"limit": limit}, headers=headers, timeout=30)
+    refresh = payload.get("refresh")
+    params = {"limit": limit}
+    if refresh is not None:
+        params["refresh"] = bool(refresh)
+    resp = await client.get(
+        f"{_LOCAL_API_BASE}/api/apps/{local_id}/commits",
+        params=params,
+        headers=headers,
+        timeout=30,
+    )
     resp.raise_for_status()
     return resp.json()
 

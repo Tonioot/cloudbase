@@ -976,6 +976,12 @@
 
 .env-row .btn-remove:hover { color: var(--red); background: var(--red-bg); }
 
+.deploy-modal #env-rows {
+  max-height: 176px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
 .add-env-btn {
   display: flex;
   align-items: center;

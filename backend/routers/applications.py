@@ -588,10 +588,14 @@ def _refresh_app_source_revision(app: Application) -> Optional[str]:
     return revision
 
 
-def _recent_git_commits(app_dir: str, limit: int = 20) -> list[dict]:
+def _recent_git_commits(app_dir: str, limit: int = 20, ref: Optional[str] = None) -> list[dict]:
     fmt = "%H%x1f%h%x1f%s%x1f%cr%x1f%an"
+    cmd = ["git", "log"]
+    if ref:
+        cmd.append(ref)
+    cmd.extend([f"-n{limit}", f"--format={fmt}", "--decorate"])
     res = subprocess.run(
-        ["git", "log", f"-n{limit}", f"--format={fmt}", "--decorate"],
+        cmd,
         cwd=app_dir,
         capture_output=True,
         text=True,
@@ -642,7 +646,12 @@ async def get_source_archive(app_id: int, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/{app_id}/commits")
-async def list_git_commits(app_id: int, limit: int = Query(20, ge=1, le=100), db: AsyncSession = Depends(get_db)):
+async def list_git_commits(
+    app_id: int,
+    limit: int = Query(20, ge=1, le=100),
+    refresh: bool = Query(True),
+    db: AsyncSession = Depends(get_db),
+):
     app = await _get_or_404(app_id, db)
     local_node = await ensure_local_node(db)
     node = await _get_app_node(app, db, local_node)
@@ -653,7 +662,7 @@ async def list_git_commits(app_id: int, limit: int = Query(20, ge=1, le=100), db
             node_id=node.id,
             app_id=app.id,
             command_type="list_git_commits",
-            payload={"app_id": app.id, "app_name": app.name, "limit": limit},
+            payload={"app_id": app.id, "app_name": app.name, "limit": limit, "refresh": refresh},
         )
         done = await wait_for_node_command(db, cmd.id, timeout_seconds=30)
         if done.status != "done":
@@ -662,8 +671,17 @@ async def list_git_commits(app_id: int, limit: int = Query(20, ge=1, le=100), db
 
     app_dir = _git_app_dir_or_404(app.name)
     branch = _current_branch(app_dir)
-    _fetch_origin(app_dir, branch)
-    return {"branch": branch, "commits": _recent_git_commits(app_dir, limit)}
+    ref = "HEAD"
+    if refresh:
+        _fetch_origin(app_dir, branch)
+        ref = f"origin/{branch}"
+
+    commits = _recent_git_commits(app_dir, limit, ref=ref)
+    if refresh and not commits:
+        commits = _recent_git_commits(app_dir, limit)
+        ref = "HEAD"
+
+    return {"branch": branch, "ref": ref, "commits": commits}
 
 
 def _run_install(app_dir: str) -> str:

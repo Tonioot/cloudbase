@@ -2129,6 +2129,7 @@ async function openCommitPicker() {
         </div>
         <div class="commit-picker-toolbar">
           <button class="btn btn-secondary btn-sm" id="commit-latest">Latest on current branch</button>
+          <span id="commit-picker-sync" class="commit-picker-sync">Loading recent commits...</span>
         </div>
         <div class="commit-picker-list" id="commit-picker-list">
           <div class="commit-picker-loading">Loading commits…</div>
@@ -2140,7 +2141,31 @@ async function openCommitPicker() {
     </div>`;
   document.body.appendChild(backdrop);
 
+  const renderCommitRows = (listEl, commits) => {
+    if (!commits.length) {
+      listEl.innerHTML = '<div class="commit-picker-empty">No recent commits found.</div>';
+      return;
+    }
+
+    listEl.innerHTML = commits.map(commit => `
+      <button class="commit-row" data-commit="${commit.hash}">
+        <div class="commit-row-top">
+          <span class="commit-hash">${commit.short_hash}</span>
+          <span class="commit-time">${commit.relative_time}</span>
+        </div>
+        <div class="commit-subject">${escHtml(commit.subject)}</div>
+        <div class="commit-author">${escHtml(commit.author)}</div>
+      </button>`).join('');
+
+    listEl.scrollTop = 0;
+    listEl.querySelectorAll('.commit-row').forEach(row => {
+      row.onclick = () => resolve(close(row.dataset.commit));
+    });
+  };
+
+  let closed = false;
   const close = (value) => {
+    closed = true;
     backdrop.remove();
     return value;
   };
@@ -2151,29 +2176,28 @@ async function openCommitPicker() {
     backdrop.querySelector('#commit-latest').onclick = () => resolve(close(''));
 
     try {
-      const data = await api.listCommits(APP_ID, 25);
       const list = backdrop.querySelector('#commit-picker-list');
-      const commits = data.commits || [];
-      if (!commits.length) {
-        list.innerHTML = '<div class="commit-picker-empty">No recent commits found.</div>';
-        return;
+      const sync = backdrop.querySelector('#commit-picker-sync');
+
+      // Fast path: local HEAD history without fetch so the picker opens immediately.
+      const localData = await api.listCommits(APP_ID, 40, false);
+      if (!closed) {
+        renderCommitRows(list, localData.commits || []);
+        sync.textContent = 'Syncing latest from remote...';
       }
 
-      list.innerHTML = commits.map(commit => `
-        <button class="commit-row" data-commit="${commit.hash}">
-          <div class="commit-row-top">
-            <span class="commit-hash">${commit.short_hash}</span>
-            <span class="commit-time">${commit.relative_time}</span>
-          </div>
-          <div class="commit-subject">${escHtml(commit.subject)}</div>
-          <div class="commit-author">${escHtml(commit.author)}</div>
-        </button>`).join('');
-
-      list.querySelectorAll('.commit-row').forEach(row => {
-        row.onclick = () => resolve(close(row.dataset.commit));
-      });
+      // Slow path: fetch origin and render latest remote commits when available.
+      const freshData = await api.listCommits(APP_ID, 40, true);
+      if (!closed) {
+        renderCommitRows(list, freshData.commits || []);
+        sync.textContent = `Showing ${freshData.ref || 'latest'} commits`;
+      }
     } catch (e) {
-      backdrop.querySelector('#commit-picker-list').innerHTML = `<div class="commit-picker-empty" style="color:var(--red)">${escHtml(e.message)}</div>`;
+      if (!closed) {
+        backdrop.querySelector('#commit-picker-list').innerHTML = `<div class="commit-picker-empty" style="color:var(--red)">${escHtml(e.message)}</div>`;
+        const sync = backdrop.querySelector('#commit-picker-sync');
+        if (sync) sync.textContent = 'Failed to load commits';
+      }
     }
   });
 }

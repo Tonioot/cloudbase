@@ -52,7 +52,7 @@ export const api = {
   restart:  (id)       => request('POST',   `/apps/${id}/restart`),
   rebuild:  (id)       => request('POST',   `/apps/${id}/rebuild`),
   pull:     (id, body) => request('POST',   `/apps/${id}/pull`, body),
-  listCommits:(id, limit) => request('GET', `/apps/${id}/commits?limit=${limit || 20}`),
+  listCommits:(id, limit, refresh = true) => request('GET', `/apps/${id}/commits?limit=${limit || 20}&refresh=${refresh ? 1 : 0}`),
 
   /**
    * Consume a Server-Sent Events action stream (pull/rebuild).

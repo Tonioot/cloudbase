@@ -10,12 +10,19 @@ DATABASE_URL = f"sqlite+aiosqlite:///{DATA_DIR}/cloudbase.db"
 from sqlalchemy import event as _sa_event
 from sqlalchemy.pool import NullPool
 
-engine = create_async_engine(DATABASE_URL, echo=False, poolclass=NullPool)
+engine = create_async_engine(
+    DATABASE_URL,
+    echo=False,
+    poolclass=NullPool,
+    connect_args={"timeout": 30},
+)
 
 @_sa_event.listens_for(engine.sync_engine, "connect")
 def _set_sqlite_pragmas(conn, _):
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=30000")
+    cur = conn.cursor()
+    cur.execute("PRAGMA journal_mode=WAL")
+    cur.execute("PRAGMA busy_timeout=30000")
+    cur.close()
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 

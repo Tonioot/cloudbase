@@ -10,7 +10,7 @@ from typing import Optional
 
 import psutil
 
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile, Depends
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile, Depends, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response

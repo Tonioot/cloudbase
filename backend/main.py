@@ -614,26 +614,18 @@ async def lifespan(app: FastAPI):
     # Regenerate nginx configs from live instance state so stale configs on disk
     # (written before the instance-based model) are replaced with correct upstreams.
     async with AsyncSessionLocal() as db:
-        from models import ApplicationReplica as _AR
-        from routers.applications import _get_nginx_backends, _get_nginx_mode, _derive_app_status_from_instances
-        from env_crypto import decrypt_env as _dec
+        from routers.applications import _write_app_nginx_config as _startup_nginx
+        from routers.nodes import ensure_local_node as _startup_local_node
+        _startup_base = _cfg.get_base_domain()
         result = await db.execute(select(Application))
+        _startup_local = await _startup_local_node(db)
         for a in result.scalars().all():
-            if not a.nginx_enabled or not a.domain:
+            has_custom = bool(a.nginx_enabled and a.domain)
+            if not has_custom and not _startup_base:
                 continue
             try:
-                backends = await _get_nginx_backends(a, db)
-                ssl_cert = a.ssl_cert_path
-                ssl_key  = a.ssl_key_path
-                config   = nm.generate_config(
-                    a.name, a.domain, backends,
-                    ssl_cert, ssl_key,
-                    app_id=a.id, mode=_get_nginx_mode(a),
-                    extra_domains=json.loads(a.extra_domains or "[]"),
-                    redirect_domains=json.loads(a.redirect_domains or "[]"),
-                )
-                nm.write_nginx_config(a.name, config)
-                pm._debug(f"STARTUP nginx regenerated for app {a.id} ({a.name}): {len(backends)} backends")
+                await _startup_nginx(a, db, _startup_local)
+                pm._debug(f"STARTUP nginx regenerated for app {a.id} ({a.name})")
             except Exception as exc:
                 pm._debug(f"STARTUP nginx regen failed for app {a.id}: {exc}")
 
@@ -913,20 +905,37 @@ class CloudbaseNginxRequest(BaseModel):
     domain: str
     ssl_cert_path: Optional[str] = None
     ssl_key_path: Optional[str] = None
+    base_domain: Optional[str] = None
+    base_ssl_cert_path: Optional[str] = None
+    base_ssl_key_path: Optional[str] = None
 
 
 @app.get("/api/system/nginx-config")
 async def get_cloudbase_nginx(_: dict = Depends(auth.require_admin)):
     config_path = os.path.join(nm.NGINX_SITES_DIR, "cloudbase")
-    if not os.path.exists(config_path):
-        return {"exists": False, "content": None}
-    with open(config_path) as f:
-        content = f.read()
-    return {"exists": True, "content": content, "path": config_path}
+    exists = os.path.exists(config_path)
+    content = None
+    if exists:
+        with open(config_path) as f:
+            content = f.read()
+    return {
+        "exists": exists,
+        "content": content,
+        "path": config_path,
+        "base_domain": _cfg.get_base_domain(),
+        "base_ssl_cert_path": _cfg.get_base_ssl_cert(),
+        "base_ssl_key_path": _cfg.get_base_ssl_key(),
+    }
 
 
 @app.post("/api/system/nginx-config")
-async def apply_cloudbase_nginx(req: CloudbaseNginxRequest, _: dict = Depends(auth.require_admin)):
+async def apply_cloudbase_nginx(
+    req: CloudbaseNginxRequest,
+    db: AsyncSession = Depends(get_db),
+    _: dict = Depends(auth.require_admin),
+):
+    import re as _re2
+    # --- Cloudbase panel nginx ---
     unavailable_html = nm.generate_cloudbase_unavailable_html(req.domain)
     page_ok, page_msg = nm.write_cloudbase_unavailable_page(unavailable_html)
     if not page_ok:
@@ -936,52 +945,97 @@ async def apply_cloudbase_nginx(req: CloudbaseNginxRequest, _: dict = Depends(au
     ok, msg = nm.write_nginx_config("cloudbase", config)
     if not ok:
         raise HTTPException(status_code=500, detail=f"Failed to apply nginx config: {msg}")
+
+    # --- Base domain for app subdomains ---
+    base_domain = str(req.base_domain or "").strip().strip(".")
+    if base_domain and not _re2.match(r'^[a-zA-Z0-9._-]+$', base_domain):
+        raise HTTPException(400, "Invalid base_domain")
+    base_ssl_cert = str(req.base_ssl_cert_path or "").strip() or None
+    base_ssl_key  = str(req.base_ssl_key_path  or "").strip() or None
+    _cfg.save_server_config({
+        "base_domain":    base_domain,
+        "base_ssl_cert":  base_ssl_cert or "",
+        "base_ssl_key":   base_ssl_key  or "",
+    })
+
+    # Regenerate nginx for all apps in background
+    async def _refresh_apps():
+        from routers.nodes import ensure_local_node as _eln
+        from routers.applications import _write_app_nginx_config as _wanc
+        try:
+            async with AsyncSessionLocal() as _db:
+                _apps = (await _db.execute(select(Application))).scalars().all()
+                _local = await _eln(_db)
+                _bdom  = _cfg.get_base_domain()
+                for _a in _apps:
+                    _has_c = bool(_a.nginx_enabled and _a.domain)
+                    if not _has_c and not _bdom:
+                        continue
+                    try:
+                        await _wanc(_a, _db, _local)
+                    except Exception as _e:
+                        log.warning("nginx refresh failed for app %s: %s", _a.name, _e)
+        except Exception as _e:
+            log.warning("nginx refresh batch failed: %s", _e)
+
+    asyncio.create_task(_refresh_apps())
     return {"ok": ok, "message": msg, "preview": config}
 
 
-# ── System settings (base_domain, etc.) ───────────────────────────────────────
+# ── System settings (ports, limits from config.yaml) ─────────────────────────
 @app.get("/api/system/settings", include_in_schema=False)
 async def get_system_settings(_: dict = Depends(auth.require_admin)):
-    return {"base_domain": _cfg.get_base_domain()}
+    return {
+        "ports": {
+            "instance_min": _cfg.get_port("instance_min"),
+            "instance_max": _cfg.get_port("instance_max"),
+            "tunnel_min":   _cfg.get_port("tunnel_min"),
+            "tunnel_max":   _cfg.get_port("tunnel_max"),
+        },
+        "limits": {
+            "max_apps":                _cfg.get_limit("max_apps"),
+            "max_instances":           _cfg.get_limit("max_instances"),
+            "max_nodes":               _cfg.get_limit("max_nodes"),
+            "max_restarts_per_window": _cfg.get_limit("max_restarts_per_window"),
+            "restart_window_seconds":  _cfg.get_limit("restart_window_seconds"),
+        },
+    }
 
 
 @app.post("/api/system/settings", include_in_schema=False)
 async def save_system_settings(
     body: dict = Body(...),
-    db: AsyncSession = Depends(get_db),
     _: dict = Depends(auth.require_admin),
 ):
-    import re as _re
-    base_domain = str(body.get("base_domain", "")).strip().strip(".")
-    if base_domain and not _re.match(r'^[a-zA-Z0-9._-]+$', base_domain):
-        raise HTTPException(400, "Invalid base_domain — use only letters, digits, dots and hyphens")
-    _cfg.set_base_domain(base_domain)
-
-    # Regenerate nginx for all apps in a background task
-    async def _refresh_all():
-        import re as _re2
-        from routers.nodes import ensure_local_node as _ensure_local
-        from routers.applications import (
-            _write_app_nginx_config,
-            _ensure_maintenance_files,
-            _get_nginx_backends,
-            _get_nginx_mode,
-            _resolve_ssl_paths,
-        )
+    def _int(val, lo, hi, default):
         try:
-            async with AsyncSessionLocal() as _db:
-                result = await _db.execute(select(Application))
-                apps = result.scalars().all()
-                local_node = await _ensure_local(_db)
-                for _app in apps:
-                    try:
-                        await _write_app_nginx_config(_app, _db, local_node)
-                    except Exception as _e:
-                        log.warning("auto-nginx refresh failed for app %s: %s", _app.name, _e)
-        except Exception as _e:
-            log.warning("auto-nginx refresh failed: %s", _e)
+            v = int(val)
+            if lo <= v <= hi:
+                return v
+        except (TypeError, ValueError):
+            pass
+        return default
 
-    asyncio.create_task(_refresh_all())
+    ports  = body.get("ports",  {})
+    limits = body.get("limits", {})
+    sections = {}
+    if ports:
+        sections["ports"] = {
+            "instance_min": _int(ports.get("instance_min"), 1024, 65000, _cfg.get_port("instance_min")),
+            "instance_max": _int(ports.get("instance_max"), 1024, 65000, _cfg.get_port("instance_max")),
+            "tunnel_min":   _int(ports.get("tunnel_min"),   1024, 65000, _cfg.get_port("tunnel_min")),
+            "tunnel_max":   _int(ports.get("tunnel_max"),   1024, 65000, _cfg.get_port("tunnel_max")),
+        }
+    if limits:
+        sections["limits"] = {
+            "max_apps":                _int(limits.get("max_apps"),                1, 100000, _cfg.get_limit("max_apps")),
+            "max_instances":           _int(limits.get("max_instances"),           1, 100000, _cfg.get_limit("max_instances")),
+            "max_nodes":               _int(limits.get("max_nodes"),               1, 10000,  _cfg.get_limit("max_nodes")),
+            "max_restarts_per_window": _int(limits.get("max_restarts_per_window"), 1, 1000,   _cfg.get_limit("max_restarts_per_window")),
+            "restart_window_seconds":  _int(limits.get("restart_window_seconds"),  10, 86400, _cfg.get_limit("restart_window_seconds")),
+        }
+    if sections:
+        _cfg.save_config_sections(sections)
     return {"ok": True}
 
 

@@ -135,9 +135,10 @@ function wirePDManagerNginxButton() {
     const msg = modal.querySelector('#pdm-nginx-msg');
     msg.style.display = 'none';
 
-    // Pre-fill existing config domain if present
+    // Pre-fill existing values
     try {
       const data = await api.getPDManagerNginx();
+      // Cloudbase panel section
       if (data.exists && data.content) {
         const m = data.content.match(/server_name\s+([^\s;]+)/);
         if (m) modal.querySelector('#pdm-domain').value = m[1];
@@ -146,13 +147,17 @@ function wirePDManagerNginxButton() {
         const k = data.content.match(/ssl_certificate_key\s+([^\s;]+)/);
         if (k) setCertDisplay(modal, '#pdm-key-name', '#pdm-key', k[1]);
       }
+      // App subdomains section
+      if (data.base_domain) modal.querySelector('#pdm-base-domain').value = data.base_domain;
+      if (data.base_ssl_cert_path) setCertDisplay(modal, '#pdm-base-cert-name', '#pdm-base-cert', data.base_ssl_cert_path);
+      if (data.base_ssl_key_path)  setCertDisplay(modal, '#pdm-base-key-name',  '#pdm-base-key',  data.base_ssl_key_path);
     } catch {}
   });
 
   modal.querySelector('#pdm-nginx-close').onclick = () => { modal.style.display = 'none'; };
   modal.addEventListener('click', e => { if (e.target === modal) modal.style.display = 'none'; });
 
-  // Upload buttons
+  // Cloudbase panel cert/key uploads
   modal.querySelector('#pdm-upload-cert').addEventListener('click', () => modal.querySelector('#pdm-cert-file').click());
   modal.querySelector('#pdm-cert-file').addEventListener('change', async e => {
     const file = e.target.files[0];
@@ -177,21 +182,60 @@ function wirePDManagerNginxButton() {
     finally { modal.querySelector('#pdm-upload-key').disabled = false; e.target.value = ''; }
   });
 
-  modal.querySelector('#pdm-nginx-apply').addEventListener('click', async () => {
-    const domain = modal.querySelector('#pdm-domain').value.trim();
-    const cert   = modal.querySelector('#pdm-cert').value.trim() || null;
-    const key    = modal.querySelector('#pdm-key').value.trim()  || null;
-    const msg    = modal.querySelector('#pdm-nginx-msg');
+  // App subdomains cert/key uploads
+  modal.querySelector('#pdm-upload-base-cert').addEventListener('click', () => modal.querySelector('#pdm-base-cert-file').click());
+  modal.querySelector('#pdm-base-cert-file').addEventListener('change', async e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    modal.querySelector('#pdm-upload-base-cert').disabled = true;
+    try {
+      const res = await api.uploadSystemCert(file);
+      setCertDisplay(modal, '#pdm-base-cert-name', '#pdm-base-cert', res.path);
+    } catch (err) { toast(err.message, 'error'); }
+    finally { modal.querySelector('#pdm-upload-base-cert').disabled = false; e.target.value = ''; }
+  });
 
-    if (!domain) { showMsg(msg, 'Domain is required', false); return; }
+  modal.querySelector('#pdm-upload-base-key').addEventListener('click', () => modal.querySelector('#pdm-base-key-file').click());
+  modal.querySelector('#pdm-base-key-file').addEventListener('change', async e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    modal.querySelector('#pdm-upload-base-key').disabled = true;
+    try {
+      const res = await api.uploadSystemCert(file);
+      setCertDisplay(modal, '#pdm-base-key-name', '#pdm-base-key', res.path);
+    } catch (err) { toast(err.message, 'error'); }
+    finally { modal.querySelector('#pdm-upload-base-key').disabled = false; e.target.value = ''; }
+  });
+
+  modal.querySelector('#pdm-nginx-apply').addEventListener('click', async () => {
+    const domain     = modal.querySelector('#pdm-domain').value.trim();
+    const cert       = modal.querySelector('#pdm-cert').value.trim()      || null;
+    const key        = modal.querySelector('#pdm-key').value.trim()       || null;
+    const baseDomain = modal.querySelector('#pdm-base-domain').value.trim() || null;
+    const baseCert   = modal.querySelector('#pdm-base-cert').value.trim() || null;
+    const baseKey    = modal.querySelector('#pdm-base-key').value.trim()  || null;
+    const msg        = modal.querySelector('#pdm-nginx-msg');
+
+    if (!domain) { showMsg(msg, 'Cloudbase panel domain is required', false); return; }
 
     const applyBtn = modal.querySelector('#pdm-nginx-apply');
     applyBtn.disabled = true;
+    applyBtn.textContent = 'Saving…';
 
     try {
-      const res = await api.applyPDManagerNginx({ domain, ssl_cert_path: cert, ssl_key_path: key });
+      const res = await api.applyPDManagerNginx({
+        domain,
+        ssl_cert_path:      cert,
+        ssl_key_path:       key,
+        base_domain:        baseDomain,
+        base_ssl_cert_path: baseCert,
+        base_ssl_key_path:  baseKey,
+      });
       if (res.ok) {
-        showMsg(msg, `Nginx configured — Cloudbase reachable at ${cert ? 'https' : 'http'}://${domain}`, true);
+        const proto = cert ? 'https' : 'http';
+        let detail = `Cloudbase reachable at ${proto}://${domain}`;
+        if (baseDomain) detail += `. App subdomains enabled on ${baseDomain}`;
+        showMsg(msg, detail, true);
       } else {
         showMsg(msg, res.message, false);
       }
@@ -199,6 +243,7 @@ function wirePDManagerNginxButton() {
       showMsg(msg, e.message, false);
     } finally {
       applyBtn.disabled = false;
+      applyBtn.textContent = 'Save & Apply';
     }
   });
 }
@@ -1014,7 +1059,7 @@ async function renderUsersList(modal) {
   }
 }
 
-// ── System Settings (base_domain etc.) ────────────────────────────────────────
+// ── System Settings (ports, limits from config.yaml) ─────────────────────────
 function wireSystemSettingsButton() {
   const btn = document.getElementById('btn-system-settings');
   if (!btn) return;
@@ -1026,26 +1071,62 @@ function wireSystemSettingsButton() {
       modal.id = 'system-settings-modal-global';
       modal.className = 'dialog-backdrop';
       modal.innerHTML = `
-        <div class="dialog dialog-modern" style="max-width:480px;width:90%">
+        <div class="dialog dialog-modern" style="max-width:500px;width:90%">
           <div class="dialog-title">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="margin-right:8px;vertical-align:-2px"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
             System Settings
           </div>
-          <div class="dialog-body">
-            <label class="field-label" style="margin-bottom:6px">
-              App Base Domain
-              <span style="font-weight:400;color:var(--text-muted);font-size:11px;margin-left:4px">(optional)</span>
-            </label>
-            <input class="input" id="sys-base-domain-input" placeholder="apps.example.com" autocomplete="off" style="margin-bottom:8px" />
-            <p style="font-size:12px;color:var(--text-muted);margin:0 0 4px;line-height:1.6">
-              Gives every app an automatic URL before you set a custom domain —
-              like <code style="background:var(--bg-muted);padding:1px 4px;border-radius:3px">myapp.apps.example.com</code>.
+          <div class="dialog-body" style="display:flex;flex-direction:column;gap:14px">
+            <p style="margin:0;font-size:13px;color:var(--text-secondary)">
+              These settings update <code style="background:var(--bg-muted);padding:1px 4px;border-radius:3px">config.yaml</code> on disk.
+              A restart of Cloudbase is required for port range changes to take effect.
             </p>
-            <p style="font-size:12px;color:var(--text-muted);margin:0;line-height:1.6">
-              Requires a wildcard DNS record:
-              <code style="background:var(--bg-muted);padding:1px 4px;border-radius:3px">*.apps.example.com → server IP</code>
-            </p>
-            <div id="sys-settings-msg" style="display:none;margin-top:12px;padding:8px 10px;border-radius:6px;font-size:12px"></div>
+
+            <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted)">Port Ranges</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+              <div class="field" style="margin:0">
+                <label class="field-label">Instance Port Min</label>
+                <input class="input" id="sys-inst-min" type="number" min="1024" max="65000" />
+              </div>
+              <div class="field" style="margin:0">
+                <label class="field-label">Instance Port Max</label>
+                <input class="input" id="sys-inst-max" type="number" min="1024" max="65000" />
+              </div>
+              <div class="field" style="margin:0">
+                <label class="field-label">Tunnel Port Min</label>
+                <input class="input" id="sys-tun-min" type="number" min="1024" max="65000" />
+              </div>
+              <div class="field" style="margin:0">
+                <label class="field-label">Tunnel Port Max</label>
+                <input class="input" id="sys-tun-max" type="number" min="1024" max="65000" />
+              </div>
+            </div>
+
+            <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted)">Limits</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+              <div class="field" style="margin:0">
+                <label class="field-label">Max Apps</label>
+                <input class="input" id="sys-max-apps" type="number" min="1" />
+              </div>
+              <div class="field" style="margin:0">
+                <label class="field-label">Max Instances</label>
+                <input class="input" id="sys-max-inst" type="number" min="1" />
+              </div>
+              <div class="field" style="margin:0">
+                <label class="field-label">Max Nodes</label>
+                <input class="input" id="sys-max-nodes" type="number" min="1" />
+              </div>
+              <div class="field" style="margin:0">
+                <label class="field-label">Max Restarts / Window</label>
+                <input class="input" id="sys-max-restarts" type="number" min="1" />
+              </div>
+              <div class="field" style="margin:0">
+                <label class="field-label">Restart Window (sec)</label>
+                <input class="input" id="sys-restart-window" type="number" min="10" />
+              </div>
+            </div>
+
+            <div id="sys-settings-msg" style="display:none;padding:8px 10px;border-radius:6px;font-size:12px"></div>
           </div>
           <div class="dialog-actions">
             <button class="btn btn-secondary" id="sys-settings-cancel">Cancel</button>
@@ -1059,15 +1140,29 @@ function wireSystemSettingsButton() {
 
       modal.querySelector('#sys-settings-save').addEventListener('click', async () => {
         const saveBtn = modal.querySelector('#sys-settings-save');
-        const input   = modal.querySelector('#sys-base-domain-input');
         const msg     = modal.querySelector('#sys-settings-msg');
         msg.style.display = 'none';
         saveBtn.disabled  = true;
         saveBtn.textContent = 'Saving…';
         try {
-          await api.saveSystemSettings({ base_domain: input.value.trim() });
-          showMsg(msg, 'Saved — nginx configs are being updated in the background.', true);
-          setTimeout(() => { modal.style.display = 'none'; }, 1800);
+          const v = id => parseInt(modal.querySelector(id).value, 10);
+          await api.saveSystemSettings({
+            ports: {
+              instance_min: v('#sys-inst-min'),
+              instance_max: v('#sys-inst-max'),
+              tunnel_min:   v('#sys-tun-min'),
+              tunnel_max:   v('#sys-tun-max'),
+            },
+            limits: {
+              max_apps:                v('#sys-max-apps'),
+              max_instances:           v('#sys-max-inst'),
+              max_nodes:               v('#sys-max-nodes'),
+              max_restarts_per_window: v('#sys-max-restarts'),
+              restart_window_seconds:  v('#sys-restart-window'),
+            },
+          });
+          showMsg(msg, 'Saved. Restart Cloudbase for port range changes to take effect.', true);
+          setTimeout(() => { modal.style.display = 'none'; }, 2200);
         } catch (e) {
           showMsg(msg, e.message || 'Failed to save', false);
         } finally {
@@ -1077,15 +1172,21 @@ function wireSystemSettingsButton() {
       });
     }
 
-    // Pre-fill current value each time modal opens
-    const input = modal.querySelector('#sys-base-domain-input');
-    const msg   = modal.querySelector('#sys-settings-msg');
+    // Pre-fill current values each time modal opens
+    const msg = modal.querySelector('#sys-settings-msg');
     msg.style.display = 'none';
-    input.value = '';
     modal.style.display = 'flex';
     try {
       const data = await api.getSystemSettings();
-      input.value = data.base_domain || '';
+      modal.querySelector('#sys-inst-min').value    = data.ports?.instance_min ?? '';
+      modal.querySelector('#sys-inst-max').value    = data.ports?.instance_max ?? '';
+      modal.querySelector('#sys-tun-min').value     = data.ports?.tunnel_min   ?? '';
+      modal.querySelector('#sys-tun-max').value     = data.ports?.tunnel_max   ?? '';
+      modal.querySelector('#sys-max-apps').value    = data.limits?.max_apps    ?? '';
+      modal.querySelector('#sys-max-inst').value    = data.limits?.max_instances ?? '';
+      modal.querySelector('#sys-max-nodes').value   = data.limits?.max_nodes   ?? '';
+      modal.querySelector('#sys-max-restarts').value = data.limits?.max_restarts_per_window ?? '';
+      modal.querySelector('#sys-restart-window').value = data.limits?.restart_window_seconds ?? '';
     } catch {}
   });
 }

@@ -63,58 +63,57 @@ def get_base_domain() -> str:
     return str(_config.get("server", {}).get("base_domain", "")).strip()
 
 
-def set_base_domain(value: str) -> None:
-    """Update base_domain in config.yaml and reload the in-memory config."""
+def get_base_ssl_cert() -> str:
+    """Return the wildcard SSL cert path for app auto-subdomains, or ''."""
+    return str(_config.get("server", {}).get("base_ssl_cert", "")).strip()
+
+
+def get_base_ssl_key() -> str:
+    """Return the wildcard SSL key path for app auto-subdomains, or ''."""
+    return str(_config.get("server", {}).get("base_ssl_key", "")).strip()
+
+
+def save_server_config(fields: dict) -> None:
+    """Update one or more fields under server: in config.yaml and reload."""
     global _config
-    value = (value or "").strip()
     try:
-        with open(_CONFIG_PATH, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-
-        # Replace existing base_domain line inside [server:] section
-        new_lines = []
-        found = False
-        in_server = False
-        for line in lines:
-            stripped = line.strip()
-            if stripped.startswith("server:"):
-                in_server = True
-            elif in_server and stripped and not stripped.startswith("#") and not line.startswith(" ") and not line.startswith("\t"):
-                in_server = False
-            if in_server and stripped.startswith("base_domain:"):
-                new_lines.append(f'  base_domain: "{value}"\n')
-                found = True
-            else:
-                new_lines.append(line)
-
-        if not found:
-            # Insert base_domain after the port: line
-            final = []
-            for line in new_lines:
-                final.append(line)
-                if line.strip().startswith("port:") and in_server is False:
-                    # Check we're still in server section by scanning previous lines
-                    pass
-            # Fallback: append to end of server section by inserting after first `port:` line
-            final2 = []
-            in_srv = False
-            inserted = False
-            for line in new_lines:
-                final2.append(line)
-                if line.strip().startswith("server:"):
-                    in_srv = True
-                elif in_srv and line.strip().startswith("port:") and not inserted:
-                    final2.append(f'  base_domain: "{value}"\n')
-                    inserted = True
-            new_lines = final2
-
+        try:
+            with open(_CONFIG_PATH, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+        except FileNotFoundError:
+            data = {}
+        data.setdefault("server", {}).update(fields)
         with open(_CONFIG_PATH, "w", encoding="utf-8") as f:
-            f.writelines(new_lines)
+            yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
     except Exception as e:
         raise RuntimeError(f"Failed to update config.yaml: {e}")
-
-    # Reload in-memory config
     _config = _load()
+
+
+def save_config_sections(sections: dict) -> None:
+    """Update arbitrary config sections and reload. E.g. {'limits': {'max_apps': 500}}."""
+    global _config
+    try:
+        try:
+            with open(_CONFIG_PATH, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+        except FileNotFoundError:
+            data = {}
+        for section, values in sections.items():
+            if isinstance(values, dict):
+                data.setdefault(section, {}).update(values)
+            else:
+                data[section] = values
+        with open(_CONFIG_PATH, "w", encoding="utf-8") as f:
+            yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+    except Exception as e:
+        raise RuntimeError(f"Failed to update config.yaml: {e}")
+    _config = _load()
+
+
+def set_base_domain(value: str) -> None:
+    """Update base_domain in config.yaml and reload the in-memory config."""
+    save_server_config({"base_domain": (value or "").strip()})
 
 
 def validate() -> None:

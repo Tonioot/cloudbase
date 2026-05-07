@@ -916,6 +916,13 @@ def get_container_stats_by_name(container_name_str: str) -> dict:
             "disk_read_mb": round(disk_read / 1024 / 1024, 2),
             "disk_write_mb": round(disk_write / 1024 / 1024, 2),
         }
-    except Exception:
+    except Exception as _e:
+        try:
+            import docker as _docker  # type: ignore
+            if isinstance(_e, _docker.errors.NotFound):
+                log.debug("get_container_stats_by_name: container not found: %s", container_name_str)
+                return {}
+        except ImportError:
+            pass
         log.warning("get_container_stats_by_name failed for %s", container_name_str, exc_info=True)
         return {}

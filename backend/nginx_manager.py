@@ -821,6 +821,19 @@ def generate_config(
       if d and d != domain
     ]
 
+    # Auto-subdomain: if base_domain is configured, include {slug}.{base_domain}
+    # as the primary domain (when no custom domain is set) or as an extra server_name.
+    import config as _cfgn
+    _base = _cfgn.get_base_domain()
+    if _base and (app_name or "").strip().lower() != "cloudbase":
+        _slug = _re.sub(r"[^a-z0-9]+", "-", (app_name or "").lower()).strip("-")
+        if _slug:
+            _auto_sub = f"{_slug}.{_base}"
+            if not domain:
+                domain = _auto_sub
+            elif _auto_sub != domain and _auto_sub not in extra_domains:
+                extra_domains = list(extra_domains) + [_auto_sub]
+
     if not domain:
       domain = "localhost"
 

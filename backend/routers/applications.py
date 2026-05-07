@@ -655,17 +655,20 @@ async def list_git_commits(
 ):
     app = await _get_or_404(app_id, db)
     app_dir = _git_app_dir_or_404(app.name)
-    branch = _current_branch(app_dir)
-    ref = "HEAD"
-    if refresh:
-        _fetch_origin(app_dir, branch)
-        ref = f"origin/{branch}"
 
-    commits = _recent_git_commits(app_dir, limit, ref=ref)
-    if refresh and not commits:
-        commits = _recent_git_commits(app_dir, limit)
+    def _get_commits() -> tuple[str, str, list]:
+        branch = _current_branch(app_dir)
         ref = "HEAD"
+        if refresh:
+            _fetch_origin(app_dir, branch)
+            ref = f"origin/{branch}"
+        commits = _recent_git_commits(app_dir, limit, ref=ref)
+        if refresh and not commits:
+            commits = _recent_git_commits(app_dir, limit)
+            ref = "HEAD"
+        return branch, ref, commits
 
+    branch, ref, commits = await asyncio.to_thread(_get_commits)
     return {"branch": branch, "ref": ref, "commits": commits}
 
 
@@ -1447,7 +1450,7 @@ async def move_app(app_id: int, req: MoveRequest, db: AsyncSession = Depends(get
     app.node_id = None if target_node.is_local else target_node.id
     env_vars = decrypt_env(app.env_vars or "")
     node_map = await _load_node_map(db)
-    source_revision = _refresh_app_source_revision(app)
+    source_revision = await asyncio.to_thread(_refresh_app_source_revision, app)
 
     if target_node.is_local:
         if not app.working_dir:
@@ -1521,7 +1524,7 @@ async def move_app(app_id: int, req: MoveRequest, db: AsyncSession = Depends(get
 
 async def _start_instance_local(app: "Application", replica: "ApplicationReplica", env_vars: dict, app_id: int) -> str:
     """Start a local replica container, building the Docker image first if needed."""
-    desired_revision = _refresh_app_source_revision(app)
+    desired_revision = await asyncio.to_thread(_refresh_app_source_revision, app)
     docker_opts = _docker_runtime_options(app)
     # Per-instance overrides
     if replica.docker_cpu_limit is not None:
@@ -1556,7 +1559,7 @@ async def _start_instance_local(app: "Application", replica: "ApplicationReplica
             app.app_type or "unknown", app.start_command or "", app.port or 8000,
         )
         app.docker_image = dm.image_name(app_id, app.name)
-        built_revision = _refresh_app_source_revision(app)
+        built_revision = await asyncio.to_thread(_refresh_app_source_revision, app)
         if built_revision:
             app.image_revision = built_revision
 
@@ -1805,7 +1808,7 @@ async def start_app(app_id: int, db: AsyncSession = Depends(get_db), actor: str 
     await _best_effort_stop_legacy_app_container(app_id)
 
     env_vars = decrypt_env(app.env_vars or "")
-    source_revision = _refresh_app_source_revision(app)
+    source_revision = await asyncio.to_thread(_refresh_app_source_revision, app)
     node_map = await _load_node_map(db)
     for replica in replicas:
         if replica.status in ("running", "starting", "restarting"):
@@ -2538,27 +2541,25 @@ async def git_pull(app_id: int, payload: PullRequest | None = Body(default=None)
             raise HTTPException(500, f"App directory was missing and re-clone failed: {e}")
 
     github_token = _decrypt_github_token(app.github_token)
-    if github_token:
-        url = _build_clone_url(app.repo_url, github_token)
-        subprocess.run(["git", "remote", "set-url", "origin", url], cwd=app_dir, capture_output=True)
 
-    branch = _current_branch(app_dir)
-    _fetch_origin(app_dir, branch)
+    def _git_ops() -> tuple[str, str, str, Optional[str]]:
+        if github_token:
+            url = _build_clone_url(app.repo_url, github_token)
+            subprocess.run(["git", "remote", "set-url", "origin", url], cwd=app_dir, capture_output=True)
+        branch = _current_branch(app_dir)
+        _fetch_origin(app_dir, branch)
+        target = target_commit or f"origin/{branch}"
+        reset = subprocess.run(["git", "reset", "--hard", target], cwd=app_dir, capture_output=True, text=True)
+        if reset.returncode != 0 and not target_commit:
+            reset = subprocess.run(["git", "reset", "--hard", "@{u}"], cwd=app_dir, capture_output=True, text=True)
+        if reset.returncode != 0:
+            raise HTTPException(500, f"Git reset failed: {reset.stderr}")
+        log_res = subprocess.run(["git", "log", "-1", "--format=%h - %s (%cr)"], cwd=app_dir, capture_output=True, text=True)
+        commit_info = log_res.stdout.strip() if log_res.returncode == 0 else "Unknown"
+        rev = _resolve_source_revision(app_dir)
+        return branch, reset.stdout.strip(), commit_info, rev
 
-    # 3. Reset to selected commit or latest origin branch
-    target = target_commit or f"origin/{branch}"
-    reset = subprocess.run(["git", "reset", "--hard", target], cwd=app_dir, capture_output=True, text=True)
-    if reset.returncode != 0 and not target_commit:
-        # Final fallback to @{u}
-        reset = subprocess.run(["git", "reset", "--hard", "@{u}"], cwd=app_dir, capture_output=True, text=True)
-    
-    if reset.returncode != 0:
-        raise HTTPException(500, f"Git reset failed: {reset.stderr}")
-
-    # 4. Get latest commit info for confirmation
-    log_res = subprocess.run(["git", "log", "-1", "--format=%h - %s (%cr)"], cwd=app_dir, capture_output=True, text=True)
-    commit_info = log_res.stdout.strip() if log_res.returncode == 0 else "Unknown"
-    source_revision = _resolve_source_revision(app_dir)
+    branch, reset_stdout, commit_info, source_revision = await asyncio.to_thread(_git_ops)
     if source_revision:
         app.source_revision = source_revision
 
@@ -2631,7 +2632,7 @@ async def git_pull(app_id: int, payload: PullRequest | None = Body(default=None)
     await db.commit()
     return {
         "message": f"Updated code to {target_commit or branch}",
-        "output": f"{reset.stdout.strip()}\nLatest commit: {commit_info}\n\nNote: You may need to RESTART the app to apply changes.",
+        "output": f"{reset_stdout}\nLatest commit: {commit_info}\n\nNote: You may need to RESTART the app to apply changes.",
         "commit": commit_info,
         "source_revision": source_revision,
     }
@@ -2659,7 +2660,7 @@ async def rebuild_docker_image(app_id: int, db: AsyncSession = Depends(get_db), 
             app_id, app.name, app.working_dir, _push,
             app.app_type or "unknown", app.start_command or "", app.port or 8000,
         )
-        source_revision = _refresh_app_source_revision(app)
+        source_revision = await asyncio.to_thread(_refresh_app_source_revision, app)
         app.status = "running" if was_running else "stopped"
         app.docker_image = img
         if source_revision:
@@ -3341,10 +3342,22 @@ def _app_to_dict(
     replicas: Optional[list] = None,
     include_page_configs: bool = True,
 ) -> dict:
+    import re as _re
     downtime_page = json.loads(app.downtime_page or "{}") if include_page_configs else None
     update_page = json.loads(app.update_page or "{}") if include_page_configs else None
     restart_page = json.loads(app.restart_page or "{}") if include_page_configs else None
     starting_page = json.loads(app.starting_page or "{}") if include_page_configs else None
+    # Compute the app's accessible URL: custom domain first, then auto-subdomain
+    _app_url: Optional[str] = None
+    if app.domain:
+        _proto = "https" if (app.ssl_cert_path and app.ssl_key_path) else "http"
+        _app_url = f"{_proto}://{app.domain}"
+    else:
+        _base = _cfg.get_base_domain()
+        if _base:
+            _slug = _re.sub(r"[^a-z0-9]+", "-", (app.name or "").lower()).strip("-")
+            if _slug:
+                _app_url = f"https://{_slug}.{_base}"
     return {
         "id": app.id,
         "name": app.name,
@@ -3382,6 +3395,7 @@ def _app_to_dict(
         "github_token": "***" if app.github_token else None,
         "created_at": app.created_at.isoformat() if app.created_at else None,
         "updated_at": app.updated_at.isoformat() if app.updated_at else None,
+        "app_url": _app_url,
         "replicas": replicas if replicas is not None else [],
         "replica_count": len(replicas) if replicas is not None else 0,
     }

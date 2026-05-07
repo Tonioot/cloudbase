@@ -1052,6 +1052,96 @@ app.include_router(logs.router)
 app.include_router(stats.router)
 app.include_router(audit_router.router)
 
+
+# ── App preview reverse proxy ────────────────────────────────────────────────────────────────
+# Proxy authenticated requests to a running app's local port without needing
+# a public domain.  URL: /preview/{app_id}/{any/path}?query=...
+_preview_hop_headers = frozenset([
+    "host", "connection", "keep-alive", "proxy-authenticate",
+    "proxy-authorization", "te", "trailers", "transfer-encoding", "upgrade",
+])
+
+
+@app.api_route(
+    "/preview/{app_id}/{path:path}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
+    include_in_schema=False,
+)
+async def preview_app(
+    app_id: int,
+    path: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    _user: dict = Depends(auth.require_admin),
+):
+    """Reverse-proxy to a running app instance — no domain required."""
+    from models import ApplicationReplica
+    app_row = await db.execute(
+        select(Application).where(Application.id == app_id)
+    )
+    application = app_row.scalar_one_or_none()
+    if not application:
+        raise HTTPException(404, "App not found")
+
+    # Find a running local replica and its external port
+    rep_result = await db.execute(
+        select(ApplicationReplica).where(
+            ApplicationReplica.app_id == app_id,
+            ApplicationReplica.status == "running",
+        )
+    )
+    replicas = rep_result.scalars().all()
+    local_port: Optional[int] = None
+    for replica in replicas:
+        if replica.external_port:
+            local_port = replica.external_port
+            break
+    if local_port is None:
+        # Fallback: use app's own external_port or port
+        local_port = application.external_port or application.port
+    if not local_port:
+        raise HTTPException(503, "App has no running instance with a known port")
+
+    target_url = f"http://127.0.0.1:{local_port}/{path}"
+    query = str(request.url.query)
+    if query:
+        target_url += f"?{query}"
+
+    # Forward headers, strip hop-by-hop
+    fwd_headers = {
+        k: v for k, v in request.headers.items()
+        if k.lower() not in _preview_hop_headers
+    }
+    fwd_headers["host"] = f"127.0.0.1:{local_port}"
+
+    body = await request.body()
+
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
+            upstream = await client.request(
+                method=request.method,
+                url=target_url,
+                headers=fwd_headers,
+                content=body,
+            )
+    except httpx.ConnectError:
+        raise HTTPException(503, f"App is not reachable on port {local_port} — is it running?")
+    except httpx.TimeoutException:
+        raise HTTPException(504, "App did not respond in time")
+
+    resp_headers = {
+        k: v for k, v in upstream.headers.items()
+        if k.lower() not in _preview_hop_headers
+    }
+
+    return Response(
+        content=upstream.content,
+        status_code=upstream.status_code,
+        headers=resp_headers,
+        media_type=upstream.headers.get("content-type"),
+    )
+
 # ── Static / SPA ──────────────────────────────────────────────────────────────
 if os.path.isdir(FRONTEND_DIR):
     app.mount("/css", StaticFiles(directory=os.path.join(FRONTEND_DIR, "css")), name="css")

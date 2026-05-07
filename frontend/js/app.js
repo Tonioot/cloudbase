@@ -89,6 +89,15 @@ function renderHeader() {
   document.getElementById('app-meta').textContent =
     `${app.app_type || 'unknown'} · ${formatPortSummary(app)}`;
 
+  // App URL link (custom domain or auto-subdomain)
+  const urlLink = document.getElementById('app-url-link');
+  const urlText = document.getElementById('app-url-text');
+  if (app.app_url && urlLink && urlText) {
+    urlLink.href = app.app_url;
+    urlText.textContent = app.app_url.replace(/^https?:\/\//, '');
+    urlLink.style.display = 'flex';
+  }
+
   const typeIconEl = document.getElementById('app-type-icon');
   if (typeIconEl) typeIconEl.innerHTML = typeIcon[app.app_type] || typeIcon.unknown;
 

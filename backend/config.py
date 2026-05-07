@@ -58,6 +58,11 @@ def get_server_port() -> int:
     return int(_config.get("server", {}).get("port", _DEFAULTS["server"]["port"]))
 
 
+def get_base_domain() -> str:
+    """Return the base domain for auto-subdomains, or empty string if not configured."""
+    return str(_config.get("server", {}).get("base_domain", "")).strip()
+
+
 def validate() -> None:
     """Log warnings for any configuration problems detected at startup."""
     import logging

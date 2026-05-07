@@ -5,6 +5,11 @@ server:
   # Port Cloudbase listens on
   port: 7823
 
+  # Base domain for automatic app subdomains (leave empty to disable).
+  # Each app will be reachable at {app-slug}.{base_domain} via nginx.
+  # Example: base_domain: apps.example.com → myapp.apps.example.com
+  base_domain: ""
+
 ports:
   # Host port range assigned to app instances (Docker external ports)
   # Must have at least as many ports as limits.max_instances

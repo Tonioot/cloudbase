@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database import get_db
+from database import get_db, AsyncSessionLocal
 import datetime as _dt
 from models import Application, ApplicationReplica, Node, StatsHistory
 import process_manager as pm
@@ -54,6 +54,8 @@ class DeployRequest(BaseModel):
     node_id: Optional[int] = None
     auto_start: Optional[bool] = None
     restart_policy: Optional[str] = None   # no | always | on-failure
+    source_revision: Optional[str] = None
+    image_revision: Optional[str] = None
 
 
 class UpdateRequest(BaseModel):
@@ -76,6 +78,8 @@ class UpdateRequest(BaseModel):
     auto_start:     Optional[bool] = None
     restart_policy: Optional[str] = None   # no | always | on-failure
     working_dir:    Optional[str] = None   # set by node agents after source extraction
+    source_revision: Optional[str] = None
+    image_revision: Optional[str] = None
 
 
 class MaintenancePageConfig(BaseModel):
@@ -171,7 +175,196 @@ def _docker_runtime_options(app: Application) -> dict:
     }
 
 
+def _is_internal_agent_request(request: Optional[Request]) -> bool:
+    token = request.headers.get("X-Agent-Token", "") if request else ""
+    return bool(token and _auth.verify_agent_token(token))
+
+
+async def _load_app_replicas(app_id: int, db: AsyncSession) -> list[ApplicationReplica]:
+    result = await db.execute(
+        select(ApplicationReplica).where(ApplicationReplica.app_id == app_id)
+    )
+    return result.scalars().all()
+
+
+async def _preferred_replica_node(
+    app: Application,
+    db: AsyncSession,
+    local_node: Node,
+) -> Node:
+    if app.node_id:
+        node_result = await db.execute(
+            select(Node).where(Node.id == app.node_id)
+        )
+        node = node_result.scalar_one_or_none()
+        if node:
+            return node
+    return local_node
+
+
+def _resolve_replica_node(
+    replica: ApplicationReplica,
+    node_map: dict[int, Node],
+    local_node: Node,
+) -> Optional[Node]:
+    if replica.node_id is None or replica.node_id == local_node.id:
+        return local_node
+    return node_map.get(replica.node_id)
+
+
+async def _ensure_default_replica(
+    app: Application,
+    db: AsyncSession,
+    local_node: Node,
+) -> tuple[list[ApplicationReplica], Optional[ApplicationReplica]]:
+    replicas = await _load_app_replicas(app.id, db)
+    if replicas:
+        return replicas, None
+
+    target_node = await _preferred_replica_node(app, db, local_node)
+    external_port = app.external_port
+    if external_port is None:
+        external_port = await _assign_external_port(None, target_node.id, None, db)
+        app.external_port = external_port
+
+    replica = ApplicationReplica(
+        app_id=app.id,
+        node_id=target_node.id,
+        external_port=external_port,
+        status="stopped",
+    )
+    db.add(replica)
+    await db.flush()
+    return [replica], replica
+
+
+async def _best_effort_stop_legacy_app_container(app_id: int) -> None:
+    if await asyncio.to_thread(pm.is_docker_app_running, app_id):
+        await asyncio.to_thread(pm.stop_docker_app, app_id)
+
+
+async def _write_app_nginx_config(
+    app: Application,
+    db: AsyncSession,
+    local_node: Node,
+    *,
+    mode: Optional[str] = None,
+) -> None:
+    if not (app.nginx_enabled and app.domain):
+        return
+
+    maint_ok, maint_msg = _ensure_maintenance_files(app, app.id)
+    if not maint_ok:
+        raise HTTPException(500, f"Maintenance files failed: {maint_msg}")
+
+    ssl_cert, ssl_key = _resolve_ssl_paths(app.ssl_cert_path, app.ssl_key_path)
+    backends = await _get_nginx_backends(app, db, local_node)
+    config = nm.generate_config(
+        app.name,
+        app.domain,
+        backends,
+        ssl_cert,
+        ssl_key,
+        app_id=app.id,
+        mode=mode or _get_nginx_mode(app),
+        extra_domains=json.loads(app.extra_domains or "[]"),
+        redirect_domains=json.loads(app.redirect_domains or "[]"),
+    )
+    ok, msg = nm.write_nginx_config(app.name, config)
+    if not ok:
+        raise HTTPException(500, f"Nginx config failed: {msg}")
+
+
+async def _wait_for_app_backends_ready(
+    app_id: int,
+    timeout_seconds: int = RESTART_READY_TIMEOUT_SECONDS,
+) -> tuple[bool, str]:
+    deadline = asyncio.get_running_loop().time() + timeout_seconds
+    last_reason = "no running instance backends yet"
+
+    while asyncio.get_running_loop().time() < deadline:
+        async with AsyncSessionLocal() as db:
+            app = await db.get(Application, app_id)
+            if not app:
+                return False, "app was removed before nginx restore"
+            backends = await _get_nginx_backends(app, db)
+
+        if not backends:
+            last_reason = "no running instance backends yet"
+            await asyncio.sleep(RESTART_READY_POLL_SECONDS)
+            continue
+
+        ready = 0
+        checked = 0
+        for backend in backends:
+            try:
+                port = int(str(backend).rsplit(":", 1)[1])
+            except (IndexError, TypeError, ValueError):
+                continue
+            checked += 1
+            if await asyncio.to_thread(_local_http_service_ready, port):
+                ready += 1
+
+        if checked and ready:
+            return True, f"{ready}/{checked} backend(s) ready"
+
+        last_reason = f"{len(backends)} backend(s) registered but not healthy yet"
+        await asyncio.sleep(RESTART_READY_POLL_SECONDS)
+
+    return False, last_reason
+
+
+async def _restore_nginx_after_transition(
+    app_id: int,
+    started_at: float,
+    transition_label: str,
+) -> None:
+    ready, reason = await _wait_for_app_backends_ready(app_id)
+    elapsed = max(asyncio.get_running_loop().time() - started_at, 0)
+
+    async with AsyncSessionLocal() as db:
+        app = await db.get(Application, app_id)
+        if not app or not app.nginx_enabled or not app.domain:
+            return
+
+        local_node = await ensure_local_node(db)
+        backends = await _get_nginx_backends(app, db, local_node)
+        ssl_cert, ssl_key = _resolve_ssl_paths(app.ssl_cert_path, app.ssl_key_path)
+        config = nm.generate_config(
+            app.name,
+            app.domain,
+            backends,
+            ssl_cert,
+            ssl_key,
+            app_id=app.id,
+            mode=_get_nginx_mode(app),
+            extra_domains=json.loads(app.extra_domains or "[]"),
+            redirect_domains=json.loads(app.redirect_domains or "[]"),
+        )
+        ok, msg = nm.write_nginx_config(app.name, config)
+
+    log.info(
+        "[nginx-transition] app_id=%d label=%s ready=%s elapsed=%.1fs reason=%r nginx_ok=%s msg=%r",
+        app_id,
+        transition_label,
+        ready,
+        elapsed,
+        reason,
+        ok,
+        msg,
+    )
+    if ok:
+        status_text = "cleared" if ready else "timed out"
+        pm._push_line(
+            app_id,
+            f"{transition_label.capitalize()} page {status_text} after {elapsed:.1f}s ({reason}).",
+        )
+    else:
+        pm._push_line(app_id, f"Failed to restore nginx after {transition_label}: {msg}")
+
+
 def _remote_replica_command_payload(app: Application, env_vars: dict, external_port: int) -> dict:
+    source_revision = _refresh_app_source_revision(app)
     return {
         "app_id": app.id,
         "app_name": app.name,
@@ -188,6 +381,7 @@ def _remote_replica_command_payload(app: Application, env_vars: dict, external_p
         "docker_tmpfs_enabled": bool(app.docker_tmpfs_enabled),
         "docker_tmpfs_size_mb": app.docker_tmpfs_size_mb,
         "docker_options": _docker_runtime_options(app),
+        "source_revision": source_revision,
     }
 
 
@@ -251,54 +445,6 @@ def _ensure_maintenance_files(app: Application, app_id: int) -> tuple[bool, str]
     return ok, msg
 
 
-async def _wait_for_restart_ready(app_id: int, pid: Optional[int], port: Optional[int], use_docker: bool = False) -> tuple[bool, str]:
-    deadline = asyncio.get_running_loop().time() + RESTART_READY_TIMEOUT_SECONDS
-
-    while asyncio.get_running_loop().time() < deadline:
-        if use_docker:
-            if not pm.is_docker_app_running(app_id):
-                return False, "container exited before becoming ready"
-
-            if port:
-                ready = await asyncio.to_thread(_local_http_service_ready, port)
-                if ready:
-                    return True, f"host port {port} responds to HTTP requests"
-            else:
-                return True, "container is running"
-        else:
-            if pid and not pm.is_process_running(pid, app_id):
-                return False, "process exited before becoming ready"
-
-            if port:
-                listening_pid = await asyncio.to_thread(pm.find_process_by_port, port)
-                if listening_pid:
-                    return True, f"port {port} is accepting connections"
-            elif pid and pm.is_process_running(pid, app_id):
-                return True, "process is running"
-
-        await asyncio.sleep(RESTART_READY_POLL_SECONDS)
-
-    if use_docker:
-        if port:
-            return False, f"timed out waiting for host port {port}"
-        return False, "timed out waiting for container to start"
-    if port:
-        return False, f"timed out waiting for port {port}"
-    return False, "timed out waiting for process readiness"
-
-
-async def _wait_for_host_port(port: Optional[int], timeout_seconds: int = 10) -> bool:
-    if not port:
-        return True
-
-    deadline = asyncio.get_running_loop().time() + timeout_seconds
-    while asyncio.get_running_loop().time() < deadline:
-        if await asyncio.to_thread(_local_http_service_ready, port):
-            return True
-        await asyncio.sleep(0.5)
-    return False
-
-
 def _local_port_accepts_connections(port: int) -> bool:
     """Return True when localhost:port accepts TCP connections."""
     try:
@@ -324,54 +470,6 @@ def _local_http_service_ready(port: int) -> bool:
         return 100 <= status < 500
     except Exception:
         return False
-
-
-async def _restore_nginx_after_restart(
-    app_id: int,
-    app_name: str,
-    domain: str,
-    port: int,
-    ssl_cert_path: Optional[str],
-    ssl_key_path: Optional[str],
-    pid: Optional[int],
-    started_at: float,
-    extra_domains: list = None,
-    redirect_domains: list = None,
-    use_docker: bool = False,
-) -> None:
-    ready, reason = await _wait_for_restart_ready(app_id, pid, port, use_docker=use_docker)
-    elapsed = max(asyncio.get_running_loop().time() - started_at, 0)
-
-    ssl_cert_path, ssl_key_path = _resolve_ssl_paths(ssl_cert_path, ssl_key_path)
-    # Fetch live backends from DB so we don't clobber multi-instance nginx config
-    from database import AsyncSessionLocal
-    async with AsyncSessionLocal() as _db:
-        _app_result = await _db.execute(select(Application).where(Application.id == app_id))
-        _app = _app_result.scalar_one_or_none()
-        if _app:
-            backends = await _get_nginx_backends(_app, _db)
-        else:
-            backends = [f"127.0.0.1:{port}"] if port else []
-    normal_cfg = nm.generate_config(
-        app_name, domain, backends,
-        ssl_cert_path, ssl_key_path,
-        app_id=app_id, mode="normal",
-        extra_domains=extra_domains,
-        redirect_domains=redirect_domains,
-    )
-    ok, msg = nm.write_nginx_config(app_name, normal_cfg)
-    log.info(
-        "[restart-restore] app_id=%d ready=%s elapsed=%.1fs reason=%r nginx_ok=%s msg=%r",
-        app_id, ready, elapsed, reason, ok, msg,
-    )
-
-    if ok:
-        if ready:
-            pm._push_line(app_id, f"Restart page cleared after {elapsed:.1f}s ({reason}).")
-        else:
-            pm._push_line(app_id, f"Restart page timed out after {elapsed:.1f}s; switched back to normal proxy ({reason}).")
-    else:
-        pm._push_line(app_id, f"Failed to restore nginx after restart: {msg}")
 
 
 def _resolve_token(req_token: Optional[str], req_token_id: Optional[str]) -> Optional[str]:
@@ -449,6 +547,45 @@ def _fetch_origin(app_dir: str, branch: str) -> None:
 def _current_branch(app_dir: str) -> str:
     br_res = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=app_dir, capture_output=True, text=True)
     return br_res.stdout.strip() if br_res.returncode == 0 else "main"
+
+
+def _git_head_commit(app_dir: str) -> Optional[str]:
+    res = subprocess.run(["git", "rev-parse", "HEAD"], cwd=app_dir, capture_output=True, text=True)
+    if res.returncode != 0:
+        return None
+    value = (res.stdout or "").strip()
+    return value or None
+
+
+def _git_worktree_dirty(app_dir: str) -> bool:
+    res = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=all"],
+        cwd=app_dir,
+        capture_output=True,
+        text=True,
+    )
+    if res.returncode != 0:
+        return False
+    return bool((res.stdout or "").strip())
+
+
+def _resolve_source_revision(app_dir: str) -> Optional[str]:
+    head = _git_head_commit(app_dir)
+    if not head:
+        return None
+    if _git_worktree_dirty(app_dir):
+        return f"{head}-dirty"
+    return head
+
+
+def _refresh_app_source_revision(app: Application) -> Optional[str]:
+    app_dir = app.working_dir
+    if not app_dir or not os.path.exists(os.path.join(app_dir, ".git")):
+        return app.source_revision
+    revision = _resolve_source_revision(app_dir)
+    if revision:
+        app.source_revision = revision
+    return revision
 
 
 def _recent_git_commits(app_dir: str, limit: int = 20) -> list[dict]:
@@ -593,6 +730,8 @@ async def _deploy_app(app: Application):
         raise HTTPException(400, _friendly_git_clone_error(result.stderr))
 
     app.working_dir = app_dir
+    app.source_revision = _resolve_source_revision(app_dir)
+    app.image_revision = None
     app_type, default_cmd, default_port = pm.detect_app_type(app_dir)
 
     if not app.start_command:
@@ -904,7 +1043,13 @@ async def list_apps(request: Request, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("")
-async def deploy_app(req: DeployRequest, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db), actor: str = Depends(_auth.get_current_actor)):
+async def deploy_app(
+    req: DeployRequest,
+    background_tasks: BackgroundTasks,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    actor: str = Depends(_auth.get_current_actor),
+):
     existing = await db.execute(select(Application).where(Application.name == req.name))
     if existing.scalar_one_or_none():
         raise HTTPException(400, f"App '{req.name}' already exists")
@@ -946,6 +1091,8 @@ async def deploy_app(req: DeployRequest, background_tasks: BackgroundTasks, db: 
         docker_read_only_root=bool(req.docker_read_only_root) if req.docker_read_only_root is not None else False,
         docker_tmpfs_enabled=bool(req.docker_tmpfs_enabled) if req.docker_tmpfs_enabled is not None else False,
         docker_tmpfs_size_mb=req.docker_tmpfs_size_mb,
+        source_revision=req.source_revision,
+        image_revision=req.image_revision,
         status="deploying",
         node_id=target_node.id if not target_node.is_local else None,
     )
@@ -953,8 +1100,9 @@ async def deploy_app(req: DeployRequest, background_tasks: BackgroundTasks, db: 
     await db.commit()
     await db.refresh(app)
 
-    if not target_node.is_local:
-        # Create the first instance row immediately so the UI can track it
+    create_primary_replica = not _is_internal_agent_request(request)
+    first_replica: Optional[ApplicationReplica] = None
+    if create_primary_replica:
         first_replica = ApplicationReplica(
             app_id=app.id,
             node_id=target_node.id,
@@ -964,6 +1112,7 @@ async def deploy_app(req: DeployRequest, background_tasks: BackgroundTasks, db: 
         db.add(first_replica)
         await db.flush()
 
+    if not target_node.is_local:
         await queue_node_command(
             db,
             node_id=target_node.id,
@@ -990,7 +1139,7 @@ async def deploy_app(req: DeployRequest, background_tasks: BackgroundTasks, db: 
                 "auto_start": req.auto_start,
                 "restart_policy": req.restart_policy,
                 "use_docker": True,
-                "first_replica_id": first_replica.id,
+                "first_replica_id": first_replica.id if first_replica else None,
             },
         )
         await db.commit()
@@ -1000,24 +1149,13 @@ async def deploy_app(req: DeployRequest, background_tasks: BackgroundTasks, db: 
     try:
         await _deploy_app(app)
         app.status = "stopped"
+        if first_replica is not None:
+            first_replica.status = "stopped"
+            first_replica.last_error = None
 
         if app.domain:
-            maint_ok, maint_msg = _ensure_maintenance_files(app, app.id)
-            if not maint_ok:
-                raise HTTPException(500, f"Maintenance files failed: {maint_msg}")
-            ssl_cert, ssl_key = _resolve_ssl_paths(app.ssl_cert_path, app.ssl_key_path)
-            backends = await _get_nginx_backends(app, db)
-            config = nm.generate_config(
-                app.name, app.domain, backends,
-                ssl_cert, ssl_key,
-                app_id=app.id, mode=_get_nginx_mode(app),
-                extra_domains=json.loads(app.extra_domains or "[]"),
-                redirect_domains=json.loads(app.redirect_domains or "[]"),
-            )
-            ok, msg = nm.write_nginx_config(app.name, config)
-            app.nginx_enabled = ok
-            if not ok:
-                raise HTTPException(500, f"Nginx config failed: {msg}")
+            app.nginx_enabled = True
+            await _write_app_nginx_config(app, db, local_node)
 
         await log_audit(db, "app.deploy", actor=actor, app_id=app.id, detail={"name": app.name})
         await db.commit()
@@ -1025,6 +1163,9 @@ async def deploy_app(req: DeployRequest, background_tasks: BackgroundTasks, db: 
         return _app_to_dict(app)
     except Exception as e:
         app.status = "error"
+        if first_replica is not None:
+            first_replica.status = "error"
+            first_replica.last_error = str(e)
         await db.commit()
         raise HTTPException(500, str(e))
 
@@ -1113,6 +1254,10 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
         app.restart_policy = req.restart_policy
     if req.working_dir is not None:
         app.working_dir = req.working_dir
+    if req.source_revision is not None:
+        app.source_revision = req.source_revision
+    if req.image_revision is not None:
+        app.image_revision = req.image_revision
 
     if not node.is_local:
         # If domain and port are provided, we assume the user wants Nginx enabled.
@@ -1144,6 +1289,9 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
                 "env_vars": req.env_vars,
                 "auto_start": req.auto_start,
                 "restart_policy": req.restart_policy,
+                "working_dir": req.working_dir,
+                "source_revision": req.source_revision,
+                "image_revision": req.image_revision,
             },
         )
         await db.refresh(app)
@@ -1242,11 +1390,8 @@ async def delete_app(app_id: int, db: AsyncSession = Depends(get_db), actor: str
                     payload={"app_id": app_id, "replica_id": replica.id, "app_name": app.name},
                 )
 
-    if app.use_docker:
-        await asyncio.to_thread(pm.stop_docker_app, app_id)
-        await asyncio.to_thread(dm.remove_image, app_id, app.name)
-    elif app.status == "running" and app.pid:
-        pm.stop_app(app_id, app.pid)
+    await _best_effort_stop_legacy_app_container(app_id)
+    await asyncio.to_thread(dm.remove_image, app_id, app.name)
 
     if app.nginx_enabled:
         nm.remove_nginx_config(app.name)
@@ -1293,6 +1438,8 @@ async def export_apps(req: ExportRequest, db: AsyncSession = Depends(get_db)):
             "docker_read_only_root": bool(app.docker_read_only_root),
             "docker_tmpfs_enabled": bool(app.docker_tmpfs_enabled),
             "docker_tmpfs_size_mb": app.docker_tmpfs_size_mb,
+            "source_revision": app.source_revision,
+            "image_revision": app.image_revision,
             "external_port": None,
             "maintenance_mode": app.maintenance_mode,
             "update_mode": app.update_mode,
@@ -1344,6 +1491,8 @@ async def import_apps(req: ImportRequest, background_tasks: BackgroundTasks, db:
             docker_read_only_root=bool(app_data.get("docker_read_only_root")) if app_data.get("docker_read_only_root") is not None else False,
             docker_tmpfs_enabled=bool(app_data.get("docker_tmpfs_enabled")) if app_data.get("docker_tmpfs_enabled") is not None else False,
             docker_tmpfs_size_mb=app_data.get("docker_tmpfs_size_mb"),
+            source_revision=app_data.get("source_revision"),
+            image_revision=app_data.get("image_revision"),
             status="deploying",
             node_id=target_node.id if not target_node.is_local else None,
             maintenance_mode=app_data.get("maintenance_mode", False),
@@ -1357,15 +1506,16 @@ async def import_apps(req: ImportRequest, background_tasks: BackgroundTasks, db:
         await db.commit()
         await db.refresh(app)
 
+        first_replica = ApplicationReplica(
+            app_id=app.id,
+            node_id=target_node.id,
+            external_port=import_external_port,
+            status="deploying",
+        )
+        db.add(first_replica)
+        await db.flush()
+
         if not target_node.is_local:
-            first_replica = ApplicationReplica(
-                app_id=app.id,
-                node_id=target_node.id,
-                external_port=import_external_port,
-                status="deploying",
-            )
-            db.add(first_replica)
-            await db.flush()
             await queue_node_command(
                 db,
                 node_id=target_node.id,
@@ -1399,20 +1549,15 @@ async def import_apps(req: ImportRequest, background_tasks: BackgroundTasks, db:
             try:
                 await _deploy_app(app)
                 app.status = "stopped"
+                first_replica.status = "stopped"
+                first_replica.last_error = None
                 if app.domain:
-                    _ensure_maintenance_files(app, app.id)
-                    backends = await _get_nginx_backends(app, db)
-                    config = nm.generate_config(
-                        app.name, app.domain, backends,
-                        app.ssl_cert_path, app.ssl_key_path,
-                        app_id=app.id, mode=_get_nginx_mode(app),
-                        extra_domains=json.loads(app.extra_domains or "[]"),
-                        redirect_domains=json.loads(app.redirect_domains or "[]"),
-                    )
-                    ok, _ = nm.write_nginx_config(app.name, config)
-                    app.nginx_enabled = ok
+                    app.nginx_enabled = True
+                    await _write_app_nginx_config(app, db, local_node)
             except Exception as e:
                 app.status = "error"
+                first_replica.status = "error"
+                first_replica.last_error = str(e)
                 app.last_error = str(e)
         await db.commit()
         imported_count += 1
@@ -1427,14 +1572,9 @@ class MoveRequest(BaseModel):
 
 
 @router.post("/{app_id}/move")
-async def move_app(app_id: int, req: MoveRequest, db: AsyncSession = Depends(get_db)):
+async def move_app(app_id: int, req: MoveRequest, db: AsyncSession = Depends(get_db), actor: str = Depends(_auth.get_current_actor)):
     app = await _get_or_404(app_id, db)
     local_node = await ensure_local_node(db)
-    old_node = await _get_app_node(app, db, local_node)
-
-    if old_node.id == req.target_node_id:
-        raise HTTPException(400, "App is already on that node")
-
     target_node_result = await db.execute(
         select(Node).where(Node.id == req.target_node_id, Node.enabled == True)
     )
@@ -1445,198 +1585,25 @@ async def move_app(app_id: int, req: MoveRequest, db: AsyncSession = Depends(get
     chosen_port = req.port if req.port is not None else app.port
     if chosen_port is not None and (chosen_port < 1 or chosen_port > 65535):
         raise HTTPException(400, "Port must be between 1 and 65535")
+    replicas, created_replica = await _ensure_default_replica(app, db, local_node)
+    if created_replica is not None:
+        replicas = [created_replica]
 
-    # Check port availability on target node
-    if chosen_port:
-        conflict_result = await db.execute(
-            select(Application).where(
-                Application.node_id == req.target_node_id,
-                Application.port == chosen_port,
-                Application.id != app.id,
-            )
-        )
-        conflict = conflict_result.scalars().first()
-        if conflict:
-            raise HTTPException(
-                409,
-                f"Port {chosen_port} is already used by app '{conflict.name}' on the target node",
-            )
-        if target_node.is_local:
-            existing_pid = pm.find_process_by_port(chosen_port)
-            if existing_pid:
-                raise HTTPException(
-                    409,
-                    f"Port {chosen_port} is already occupied by process {existing_pid} on the local node",
-                )
+    if replicas and all(replica.node_id == target_node.id for replica in replicas) and req.port is None:
+        raise HTTPException(400, "All instances are already on that node")
 
-    was_running = app.status == "running"
-    if old_node.is_local:
-        if app.use_docker:
-            was_running = await asyncio.to_thread(pm.is_docker_app_running, app_id)
-        elif app.pid:
-            was_running = await asyncio.to_thread(pm.is_process_running, app.pid, app.id)
-
-    # Stop app on old node first
-    if was_running:
-        if old_node.is_local:
-            if app.use_docker:
-                await asyncio.to_thread(pm.stop_docker_app, app_id)
-            else:
-                pm.stop_app(app_id, app.pid)
-            app.pid = None
-        elif old_node.status == "online":
-            stop_cmd = await queue_node_command(
-                db, node_id=old_node.id, app_id=app.id,
-                command_type="stop_app", payload={"app_id": app.id, "app_name": app.name},
-            )
-            try:
-                await wait_for_node_command(db, stop_cmd.id, timeout_seconds=30)
-            except Exception:
-                pass  # Continue with migration even if stop times out
-
-    # Remove from old node — wait so the old container is gone before we deploy on the new one
-    if not old_node.is_local and old_node.status == "online":
-        del_cmd = await queue_node_command(
-            db, node_id=old_node.id, app_id=app.id,
-            command_type="delete_app", payload={"app_id": app.id, "app_name": app.name},
-        )
-        try:
-            await wait_for_node_command(db, del_cmd.id, timeout_seconds=30)
-        except Exception:
-            pass
-    elif old_node.is_local:
-        if app.use_docker:
-            await asyncio.to_thread(pm.stop_docker_app, app_id)
-        app_dir = pm.get_app_dir(app.name)
-        if os.path.exists(app_dir):
-            shutil.rmtree(app_dir, ignore_errors=True)
-        if app.nginx_enabled:
-            nm.remove_nginx_config(app.name)
-            app.nginx_enabled = False
-
-    # Reassign to target node and reset state
-    app.node_id = target_node.id
     app.port = chosen_port
-    app.external_port = await _assign_external_port(app.external_port, target_node.id, app.id, db)
-    app.status = "stopped"
-    app.pid = None
-    app.working_dir = None
-    await db.commit()
-
-    # Deploy on new node
-    # --- Transfer SSL certs to the target node if they exist on the source ---
-    # Certs are only readable locally when the old node was the local node.
-    import base64 as _b64
-    _cert_content: bytes | None = None
-    _key_content:  bytes | None = None
-    _cert_filename: str | None  = None
-    _key_filename:  str | None  = None
-
-    if old_node.is_local and app.ssl_cert_path and app.ssl_key_path:
-        try:
-            with open(app.ssl_cert_path, "rb") as f:
-                _cert_content = f.read()
-            _cert_filename = os.path.basename(app.ssl_cert_path)
-        except Exception:
-            pass
-        try:
-            with open(app.ssl_key_path, "rb") as f:
-                _key_content = f.read()
-            _key_filename = os.path.basename(app.ssl_key_path)
-        except Exception:
-            pass
+    app.node_id = None if target_node.is_local else target_node.id
+    env_vars = decrypt_env(app.env_vars or "")
+    node_map = await _load_node_map(db)
+    source_revision = _refresh_app_source_revision(app)
 
     if target_node.is_local:
-        try:
+        if not app.working_dir:
             await _deploy_app(app)
-            app.status = "stopped"
-
-            if was_running:
-                env_vars = decrypt_env(app.env_vars or "")
-                if app.use_docker:
-                    try:
-                        await asyncio.to_thread(
-                            pm.start_docker_app,
-                            app_id,
-                            app.name,
-                            app.working_dir,
-                            app.port or 8000,
-                            app.external_port or app.port or 8000,
-                            env_vars,
-                            app.app_type or "unknown",
-                            app.start_command or "",
-                            _docker_runtime_options(app),
-                            False,
-                        )
-                    except Exception:
-                        await asyncio.to_thread(
-                            pm.start_docker_app,
-                            app_id,
-                            app.name,
-                            app.working_dir,
-                            app.port or 8000,
-                            app.external_port or app.port or 8000,
-                            env_vars,
-                            app.app_type or "unknown",
-                            app.start_command or "",
-                            _docker_runtime_options(app),
-                            True,
-                        )
-                    app.status = "running"
-                    app.pid = None
-                else:
-                    final_cmd, prepared_env = pm.prepare_app_env(app.start_command or "", app.working_dir, env_vars)
-                    pid = pm.start_app(app_id, app.name, final_cmd, app.working_dir, prepared_env)
-                    app.pid = pid
-                    app.status = "running"
-
-            await db.commit()
-        except Exception as exc:
-            app.status = "error"
-            app.last_error = str(exc)
-            await db.commit()
     else:
-        # Queue cert uploads before deploy so nginx config can reference them
-        new_cert_path: str | None = None
-        new_key_path:  str | None = None
-        if _cert_content and _cert_filename:
-            cert_cmd = await queue_node_command(
-                db, node_id=target_node.id, app_id=app.id,
-                command_type="upload_cert",
-                payload={
-                    "app_id": app.id, "app_name": app.name,
-                    "filename": _cert_filename,
-                    "content_b64": _b64.b64encode(_cert_content).decode(),
-                },
-            )
-            try:
-                cert_done = await wait_for_node_command(db, cert_cmd.id, timeout_seconds=30)
-                if cert_done.status == "done":
-                    new_cert_path = (json.loads(cert_done.result or "{}") or {}).get("path")
-            except Exception:
-                pass
-        if _key_content and _key_filename:
-            key_cmd = await queue_node_command(
-                db, node_id=target_node.id, app_id=app.id,
-                command_type="upload_cert",
-                payload={
-                    "app_id": app.id, "app_name": app.name,
-                    "filename": _key_filename,
-                    "content_b64": _b64.b64encode(_key_content).decode(),
-                },
-            )
-            try:
-                key_done = await wait_for_node_command(db, key_cmd.id, timeout_seconds=30)
-                if key_done.status == "done":
-                    new_key_path = (json.loads(key_done.result or "{}") or {}).get("path")
-            except Exception:
-                pass
-
-        # Update db with new cert paths on target (or clear them if transfer failed)
-        app.ssl_cert_path = new_cert_path
-        app.ssl_key_path  = new_key_path
-        await db.commit()
-
+        if target_node.status != "online":
+            raise HTTPException(400, f"Target node '{target_node.name}' is offline")
         deploy_cmd = await queue_node_command(
             db,
             node_id=target_node.id,
@@ -1649,53 +1616,93 @@ async def move_app(app_id: int, req: MoveRequest, db: AsyncSession = Depends(get
                 "domain": app.domain,
                 "extra_domains": json.loads(app.extra_domains or "[]"),
                 "redirect_domains": json.loads(app.redirect_domains or "[]"),
-                "ssl_cert_path": new_cert_path,
-                "ssl_key_path": new_key_path,
+                "ssl_cert_path": app.ssl_cert_path,
+                "ssl_key_path": app.ssl_key_path,
                 "start_command": app.start_command,
                 "port": app.port,
-                "external_port": app.external_port,
+                "external_port": None,
                 "docker_cpu_limit": app.docker_cpu_limit,
                 "docker_memory_limit_mb": app.docker_memory_limit_mb,
                 "docker_read_only_root": bool(app.docker_read_only_root),
                 "docker_tmpfs_enabled": bool(app.docker_tmpfs_enabled),
                 "docker_tmpfs_size_mb": app.docker_tmpfs_size_mb,
-                "env_vars": decrypt_env(app.env_vars or ""),
+                "env_vars": env_vars,
                 "auto_start": False,
                 "restart_policy": app.restart_policy,
                 "use_docker": True,
+                "source_revision": source_revision,
             },
         )
-        app.status = "deploying"
-        await db.commit()
+        deploy_done = await wait_for_node_command(db, deploy_cmd.id, timeout_seconds=180)
+        if deploy_done.status != "done":
+            raise HTTPException(500, f"Move failed during deploy on target node: {deploy_done.error_message or 'unknown error'}")
 
-        # If the app was running before the move, start it on the new node after deploy
-        if was_running:
+    live_statuses = {"running", "starting", "restarting", "stopping", "node_offline"}
+    live_replica_ids = {replica.id for replica in replicas if replica.status in live_statuses}
+
+    await _best_effort_stop_legacy_app_container(app_id)
+
+    for replica in replicas:
+        current_node = _resolve_replica_node(replica, node_map, local_node)
+        if replica.id not in live_replica_ids:
+            continue
+        if current_node is None or current_node.is_local:
+            await asyncio.to_thread(pm.stop_docker_replica, app_id, replica.id)
+            continue
+
+        if current_node.status == "online" and current_node.enabled:
+            stop_cmd = await queue_node_command(
+                db,
+                node_id=current_node.id,
+                app_id=app.id,
+                command_type="stop_replica",
+                payload={"app_id": app.id, "replica_id": replica.id, "app_name": app.name},
+            )
             try:
-                deploy_done = await wait_for_node_command(db, deploy_cmd.id, timeout_seconds=180)
-                if deploy_done.status != "done":
-                    app.status = "error"
-                    app.last_error = f"Move failed during deploy on target node: {deploy_done.error_message or 'unknown error'}"
-                else:
-                    await queue_node_command(
-                        db,
-                        node_id=target_node.id,
-                        app_id=app.id,
-                        command_type="start_app",
-                        payload={"app_id": app.id, "app_name": app.name},
-                    )
-                    app.status = "starting"
-                    app.last_error = None
-            except Exception as exc:
-                app.status = "error"
-                app.last_error = f"Move failed while waiting for target deploy: {exc}"
-            await db.commit()
+                await wait_for_node_command(db, stop_cmd.id, timeout_seconds=60)
+            except Exception:
+                pass
+
+    for index, replica in enumerate(replicas):
+        replica.node_id = target_node.id
+        replica.external_port = await _assign_external_port(None, target_node.id, None, db)
+        replica.container_id = None
+        replica.tunnel_port = None
+        replica.last_error = None
+        replica.status = "stopped"
+        if index == 0:
+            app.external_port = replica.external_port
+
+    target_node_map = {target_node.id: target_node}
+    for replica in replicas:
+        if replica.id not in live_replica_ids:
+            continue
+        replica_node = _resolve_replica_node(replica, target_node_map, local_node)
+        await _start_replica_runtime(app, replica, replica_node, env_vars, db)
+
+    app.status = _derive_app_status_from_instances(replicas)
+    app.pid = None
+    app.last_error = None
+    if app.nginx_enabled and app.domain:
+        await _write_app_nginx_config(app, db, local_node)
+
+    await log_audit(
+        db,
+        "app.move",
+        actor=actor,
+        app_id=app.id,
+        detail={"name": app.name, "target_node_id": target_node.id, "replica_count": len(replicas)},
+    )
+    await db.commit()
 
     await db.refresh(app)
-    return _app_to_dict(app)
+    node_map = await _load_node_map(db)
+    return _app_to_dict(app, replicas=[_replica_to_dict(r, node_map.get(r.node_id)) for r in replicas])
 
 
 async def _start_instance_local(app: "Application", replica: "ApplicationReplica", env_vars: dict, app_id: int) -> str:
     """Start a local replica container, building the Docker image first if needed."""
+    desired_revision = _refresh_app_source_revision(app)
     docker_opts = _docker_runtime_options(app)
     # Per-instance overrides
     if replica.docker_cpu_limit is not None:
@@ -1730,8 +1737,13 @@ async def _start_instance_local(app: "Application", replica: "ApplicationReplica
             app.app_type or "unknown", app.start_command or "", app.port or 8000,
         )
         app.docker_image = dm.image_name(app_id, app.name)
+        built_revision = _refresh_app_source_revision(app)
+        if built_revision:
+            app.image_revision = built_revision
 
     ext_port = replica.external_port or app.port or 8000
+    if desired_revision and app.image_revision != desired_revision:
+        await _build_image()
     try:
         return await _run_replica(ext_port)
     except Exception as first_exc:
@@ -1800,10 +1812,208 @@ def _derive_app_status_from_instances(replicas: list) -> str:
     return "stopped"
 
 
+async def _start_replica_runtime(
+    app: Application,
+    replica: ApplicationReplica,
+    replica_node: Optional[Node],
+    env_vars: dict,
+    db: AsyncSession,
+) -> None:
+    if replica_node is None:
+        replica.status = "error"
+        replica.last_error = "Replica node not found"
+        return
+
+    if replica_node.is_local:
+        cid = await _start_instance_local(app, replica, env_vars, app.id)
+        replica.status = "running"
+        replica.container_id = cid
+        replica.last_error = None
+        return
+
+    if replica_node.status != "online" or not replica_node.enabled:
+        replica.status = "error"
+        replica.last_error = f"Node '{replica_node.name}' is offline"
+        return
+
+    remote_payload = _remote_replica_command_payload(
+        app,
+        env_vars,
+        replica.external_port or app.port or 8000,
+    )
+    await queue_node_command(
+        db,
+        node_id=replica_node.id,
+        app_id=app.id,
+        command_type="start_replica",
+        payload={**remote_payload, "replica_id": replica.id},
+    )
+    replica.status = "starting"
+    replica.last_error = None
+
+
+async def _stop_replica_runtime(
+    app: Application,
+    replica: ApplicationReplica,
+    replica_node: Optional[Node],
+    db: AsyncSession,
+) -> None:
+    if replica_node is None or replica_node.is_local:
+        await asyncio.to_thread(pm.stop_docker_replica, app.id, replica.id)
+        replica.status = "stopped"
+        replica.container_id = None
+        replica.tunnel_port = None
+        replica.last_error = None
+        return
+
+    if replica_node.status == "online" and replica_node.enabled:
+        await queue_node_command(
+            db,
+            node_id=replica_node.id,
+            app_id=app.id,
+            command_type="stop_replica",
+            payload={"app_id": app.id, "replica_id": replica.id, "app_name": app.name},
+        )
+        replica.status = "stopping"
+        replica.last_error = None
+        return
+
+    replica.status = "stopped"
+    replica.container_id = None
+    replica.tunnel_port = None
+    replica.last_error = None
+
+
+def _has_live_replicas(replicas: list[ApplicationReplica]) -> bool:
+    return any(r.status in ("running", "starting", "restarting") for r in replicas)
+
+
+def _aggregate_replica_stats_frames(frames: list[dict]) -> dict:
+    if not frames:
+        return {"status": "stopped", "docker": True}
+
+    def _sum(key: str) -> float:
+        return round(sum((frame.get(key) or 0) for frame in frames), 2)
+
+    def _avg(key: str) -> float:
+        values = [frame.get(key) for frame in frames if frame.get(key) is not None]
+        return round(sum(values) / len(values), 2) if values else 0.0
+
+    def _max(key: str) -> Optional[float]:
+        values = [frame.get(key) for frame in frames if frame.get(key) is not None]
+        return max(values) if values else None
+
+    return {
+        "status": "running",
+        "docker": True,
+        "cpu_percent": _avg("cpu_percent"),
+        "memory_mb": _sum("memory_mb"),
+        "memory_vms_mb": _sum("memory_vms_mb"),
+        "net_rx_mb": _sum("net_rx_mb"),
+        "net_tx_mb": _sum("net_tx_mb"),
+        "disk_read_mb": _sum("disk_read_mb"),
+        "disk_write_mb": _sum("disk_write_mb"),
+        "uptime_seconds": _max("uptime_seconds"),
+    }
+
+
+async def _get_local_replica_stats(
+    app: Application,
+    db: AsyncSession,
+    local_node: Node,
+) -> dict:
+    replicas = await _load_app_replicas(app.id, db)
+    frames: list[dict] = []
+    for replica in replicas:
+        replica_node = _resolve_replica_node(replica, {}, local_node)
+        if replica_node is None or not replica_node.is_local:
+            continue
+        if replica.status != "running":
+            continue
+        stats = await asyncio.to_thread(
+            dm.get_container_stats_by_name,
+            dm.replica_container_name(app.id, replica.id),
+        )
+        if stats:
+            frames.append(stats)
+    return _aggregate_replica_stats_frames(frames)
+
+
+async def _get_local_replica_logs(
+    app: Application,
+    db: AsyncSession,
+    local_node: Node,
+    limit: int,
+) -> list[str]:
+    buffered = list(pm.log_buffers.get(app.id, []))
+    if buffered:
+        return buffered[-limit:]
+
+    replicas = await _load_app_replicas(app.id, db)
+    lines: list[str] = []
+    for replica in replicas:
+        replica_node = _resolve_replica_node(replica, {}, local_node)
+        if replica_node is None or not replica_node.is_local:
+            continue
+        lines.extend(
+            await asyncio.to_thread(
+                dm.get_recent_container_logs_by_name,
+                dm.replica_container_name(app.id, replica.id),
+                limit,
+            )
+        )
+    return lines[-limit:]
+
+
 @router.post("/{app_id}/start")
 async def start_app(app_id: int, db: AsyncSession = Depends(get_db), actor: str = Depends(_auth.get_current_actor)):
     app = await _get_or_404(app_id, db)
     local_node = await ensure_local_node(db)
+    replicas, created_replica = await _ensure_default_replica(app, db, local_node)
+    had_live_replicas = _has_live_replicas(replicas if created_replica is None else [])
+    show_start_page = (
+        not had_live_replicas
+        and app.nginx_enabled
+        and app.domain
+        and not app.maintenance_mode
+        and not app.update_mode
+    )
+
+    if show_start_page:
+        await _write_app_nginx_config(app, db, local_node, mode="starting")
+        pm._push_line(app_id, "Starting instances...")
+
+    await _best_effort_stop_legacy_app_container(app_id)
+
+    env_vars = decrypt_env(app.env_vars or "")
+    source_revision = _refresh_app_source_revision(app)
+    node_map = await _load_node_map(db)
+    for replica in replicas:
+        if replica.status in ("running", "starting", "restarting"):
+            continue
+        if replica.status not in ("stopped", "error", "pending", "node_offline"):
+            continue
+        replica_node = _resolve_replica_node(replica, node_map, local_node)
+        await _start_replica_runtime(app, replica, replica_node, env_vars, db)
+
+    app.status = _derive_app_status_from_instances(replicas)
+    app.pid = None
+    if app.nginx_enabled and app.domain and not show_start_page:
+        await _write_app_nginx_config(app, db, local_node)
+
+    await log_audit(db, "app.start", actor=actor, app_id=app_id, detail={"name": app.name})
+    await db.commit()
+
+    if show_start_page:
+        asyncio.create_task(
+            _restore_nginx_after_transition(
+                app_id,
+                asyncio.get_running_loop().time(),
+                "start",
+            )
+        )
+
+    return {"status": app.status, "instance_count": len(replicas)}
 
     # ── Instance-based model ──────────────────────────────────────────────
     replica_result = await db.execute(
@@ -1875,6 +2085,34 @@ async def start_app(app_id: int, db: AsyncSession = Depends(get_db), actor: str 
 async def stop_app(app_id: int, db: AsyncSession = Depends(get_db), actor: str = Depends(_auth.get_current_actor)):
     app = await _get_or_404(app_id, db)
     local_node = await ensure_local_node(db)
+    replicas = await _load_app_replicas(app_id, db)
+
+    await _best_effort_stop_legacy_app_container(app_id)
+
+    if not replicas:
+        app.status = "stopped"
+        app.pid = None
+        if app.nginx_enabled and app.domain:
+            await _write_app_nginx_config(app, db, local_node)
+        await log_audit(db, "app.stop", actor=actor, app_id=app_id, detail={"name": app.name})
+        await db.commit()
+        return {"status": "stopped", "instance_count": 0}
+
+    node_map = await _load_node_map(db)
+    for replica in replicas:
+        if replica.status not in ("running", "starting", "restarting", "stopping", "node_offline"):
+            continue
+        replica_node = _resolve_replica_node(replica, node_map, local_node)
+        await _stop_replica_runtime(app, replica, replica_node, db)
+
+    app.status = _derive_app_status_from_instances(replicas)
+    app.pid = None
+    if app.nginx_enabled and app.domain:
+        await _write_app_nginx_config(app, db, local_node)
+
+    await log_audit(db, "app.stop", actor=actor, app_id=app_id, detail={"name": app.name})
+    await db.commit()
+    return {"status": app.status, "instance_count": len(replicas)}
 
     # ── Instance-based model ──────────────────────────────────────────────
     replica_result = await db.execute(
@@ -1921,6 +2159,88 @@ async def stop_app(app_id: int, db: AsyncSession = Depends(get_db), actor: str =
 async def restart_app(app_id: int, db: AsyncSession = Depends(get_db), actor: str = Depends(_auth.get_current_actor)):
     app = await _get_or_404(app_id, db)
     local_node = await ensure_local_node(db)
+    replicas, _created_replica = await _ensure_default_replica(app, db, local_node)
+    env_vars = decrypt_env(app.env_vars or "")
+    node_map = await _load_node_map(db)
+
+    show_restart_page = (
+        _has_live_replicas(replicas)
+        and app.nginx_enabled
+        and app.domain
+        and not app.maintenance_mode
+        and not app.update_mode
+    )
+    transition_started_at: Optional[float] = None
+    if show_restart_page:
+        await _write_app_nginx_config(app, db, local_node, mode="restart")
+        transition_started_at = asyncio.get_running_loop().time()
+        pm._push_line(app_id, "Restarting instances...")
+
+    await _best_effort_stop_legacy_app_container(app_id)
+
+    for replica in replicas:
+        replica_node = _resolve_replica_node(replica, node_map, local_node)
+        if replica_node is None:
+            replica.status = "error"
+            replica.last_error = "Replica node not found"
+            continue
+
+        is_live = replica.status in ("running", "starting", "restarting", "stopping", "node_offline")
+        if replica_node.is_local:
+            if is_live:
+                await asyncio.to_thread(pm.stop_docker_replica, app_id, replica.id)
+            replica.status = "stopped"
+            replica.container_id = None
+            replica.tunnel_port = None
+            await _start_replica_runtime(app, replica, replica_node, env_vars, db)
+            continue
+
+        if replica_node.status != "online" or not replica_node.enabled:
+            replica.status = "error"
+            replica.last_error = f"Node '{replica_node.name}' is offline"
+            continue
+
+        if is_live:
+            await queue_node_command(
+                db,
+                node_id=replica_node.id,
+                app_id=app.id,
+                command_type="stop_replica",
+                payload={"app_id": app.id, "replica_id": replica.id, "app_name": app.name},
+            )
+        remote_payload = _remote_replica_command_payload(
+            app,
+            env_vars,
+            replica.external_port or app.port or 8000,
+        )
+        await queue_node_command(
+            db,
+            node_id=replica_node.id,
+            app_id=app.id,
+            command_type="start_replica",
+            payload={**remote_payload, "replica_id": replica.id},
+        )
+        replica.status = "starting"
+        replica.last_error = None
+
+    app.status = _derive_app_status_from_instances(replicas)
+    app.pid = None
+    if app.nginx_enabled and app.domain and not show_restart_page:
+        await _write_app_nginx_config(app, db, local_node)
+
+    await log_audit(db, "app.restart", actor=actor, app_id=app_id, detail={"name": app.name})
+    await db.commit()
+
+    if show_restart_page and transition_started_at is not None:
+        asyncio.create_task(
+            _restore_nginx_after_transition(
+                app_id,
+                transition_started_at,
+                "restart",
+            )
+        )
+
+    return {"status": app.status, "instance_count": len(replicas)}
 
     # ── Instance-based model ──────────────────────────────────────────────
     replica_result = await db.execute(
@@ -2514,12 +2834,12 @@ async def scale_app(app_id: int, req: ScaleRequest, db: AsyncSession = Depends(g
 
     if target_node.is_local:
         try:
-            container_id = await asyncio.to_thread(
-                pm.start_docker_replica,
-                app_id, replica.id, app.name,
-                app.port or 8000, external_port,
-                env_vars, _instance_docker_options(),
-            )
+            replica.docker_cpu_limit = req.docker_cpu_limit
+            replica.docker_memory_limit_mb = req.docker_memory_limit_mb
+            replica.docker_read_only_root = bool(req.docker_read_only_root) if req.docker_read_only_root is not None else False
+            replica.docker_tmpfs_enabled = bool(req.docker_tmpfs_enabled) if req.docker_tmpfs_enabled is not None else False
+            replica.docker_tmpfs_size_mb = req.docker_tmpfs_size_mb
+            container_id = await _start_instance_local(app, replica, env_vars, app_id)
             replica.status = "running"
             replica.container_id = container_id
         except Exception as e:
@@ -2590,7 +2910,13 @@ async def git_pull(app_id: int, payload: PullRequest | None = Body(default=None)
         done = await wait_for_node_command(db, cmd.id, timeout_seconds=180)
         if done.status != "done":
             raise HTTPException(500, f"Failed to pull on node '{node.name}': {done.error_message}")
-        return json.loads(done.result or "{}")
+        result = json.loads(done.result or "{}")
+        pulled_revision = result.get("source_revision")
+        if pulled_revision:
+            app.source_revision = pulled_revision
+            app.image_revision = pulled_revision
+            await db.commit()
+        return result
 
     app_dir = pm.get_app_dir(app.name)
 
@@ -2599,7 +2925,12 @@ async def git_pull(app_id: int, payload: PullRequest | None = Body(default=None)
         log.warning("[git-pull] Directory %s missing for app %s, attempting re-clone", app_dir, app.name)
         try:
             await _deploy_app(app)
-            return {"message": "App directory was missing; performed a fresh clone successfully", "output": "Fresh clone completed."}
+            await db.commit()
+            return {
+                "message": "App directory was missing; performed a fresh clone successfully",
+                "output": "Fresh clone completed.",
+                "source_revision": app.source_revision,
+            }
         except Exception as e:
             raise HTTPException(500, f"App directory was missing and re-clone failed: {e}")
 
@@ -2624,6 +2955,9 @@ async def git_pull(app_id: int, payload: PullRequest | None = Body(default=None)
     # 4. Get latest commit info for confirmation
     log_res = subprocess.run(["git", "log", "-1", "--format=%h - %s (%cr)"], cwd=app_dir, capture_output=True, text=True)
     commit_info = log_res.stdout.strip() if log_res.returncode == 0 else "Unknown"
+    source_revision = _resolve_source_revision(app_dir)
+    if source_revision:
+        app.source_revision = source_revision
 
     if app.use_docker:
         was_running = pm.is_docker_app_running(app_id)
@@ -2645,13 +2979,16 @@ async def git_pull(app_id: int, payload: PullRequest | None = Body(default=None)
             raise HTTPException(500, f"Failed to rebuild Docker image: {e}") from e
 
         app.docker_image = dm.image_name(app_id, app.name)
+        if source_revision:
+            app.image_revision = source_revision
         await log_audit(db, "app.pull", actor=actor, app_id=app_id, detail={"name": app.name, "commit": commit_info})
 
-        # Push updated source to all remote nodes that have instances for this app
+        # Push updated source to all remote nodes that have instances for this app.
+        # Offline nodes keep the queued refresh and catch up when they reconnect.
         remote_replica_result = await db.execute(
             select(ApplicationReplica, Node)
             .join(Node, ApplicationReplica.node_id == Node.id)
-            .where(ApplicationReplica.app_id == app_id, Node.is_local == False, Node.status == "online")
+            .where(ApplicationReplica.app_id == app_id, Node.is_local == False)
         )
         remote_nodes_notified: set[int] = set()
         for _, r_node in remote_replica_result.all():
@@ -2659,7 +2996,12 @@ async def git_pull(app_id: int, payload: PullRequest | None = Body(default=None)
                 await queue_node_command(
                     db, node_id=r_node.id, app_id=app_id,
                     command_type="refresh_source",
-                    payload={"app_id": app_id, "app_name": app.name, "commit": commit_info},
+                    payload={
+                        "app_id": app_id,
+                        "app_name": app.name,
+                        "commit": commit_info,
+                        "source_revision": source_revision,
+                    },
                 )
                 action_logs.append(f"[Remote] Queued source refresh on node '{r_node.name}'.")
                 remote_nodes_notified.add(r_node.id)
@@ -2678,13 +3020,17 @@ async def git_pull(app_id: int, payload: PullRequest | None = Body(default=None)
                 else f"Latest commit: {commit_info}\n\nImage rebuilt. Start the app to apply changes."
             ),
             "commit": commit_info,
+            "source_revision": source_revision,
             "action_logs": action_logs,
         }
 
+    app.image_revision = None
+    await db.commit()
     return {
         "message": f"Updated code to {target_commit or branch}",
         "output": f"{reset.stdout.strip()}\nLatest commit: {commit_info}\n\nNote: You may need to RESTART the app to apply changes.",
-        "commit": commit_info
+        "commit": commit_info,
+        "source_revision": source_revision,
     }
 
 
@@ -2722,8 +3068,11 @@ async def rebuild_docker_image(app_id: int, db: AsyncSession = Depends(get_db), 
             app_id, app.name, app.working_dir, _push,
             app.app_type or "unknown", app.start_command or "", app.port or 8000,
         )
+        source_revision = _refresh_app_source_revision(app)
         app.status = "running" if was_running else "stopped"
         app.docker_image = img
+        if source_revision:
+            app.image_revision = source_revision
         await log_audit(db, "app.rebuild", actor=actor, app_id=app_id, detail={"name": app.name, "image": img})
         await db.commit()
         if was_running:
@@ -2732,6 +3081,7 @@ async def rebuild_docker_image(app_id: int, db: AsyncSession = Depends(get_db), 
                 "status": "running",
                 "message": "Image rebuilt. Running container was not restarted.",
                 "output": "Image rebuilt. Running container was not restarted. Restart manually to switch to the new image.",
+                "source_revision": source_revision,
                 "action_logs": action_logs,
             }
         action_logs.append("[Docker] Image rebuilt. Start the app to run it.")
@@ -2739,6 +3089,7 @@ async def rebuild_docker_image(app_id: int, db: AsyncSession = Depends(get_db), 
             "status": "rebuilt",
             "message": "Image rebuilt. Start the app to run it.",
             "output": "Image rebuilt. Start the app to run it.",
+            "source_revision": source_revision,
             "action_logs": action_logs,
         }
     except RuntimeError as e:
@@ -2817,6 +3168,8 @@ async def deploy_zero_downtime(app_id: int, db: AsyncSession = Depends(get_db), 
             except Exception as e:
                 raise HTTPException(500, f"Failed to build image: {e}")
             app.docker_image = new_img
+            if source_revision:
+                app.image_revision = source_revision
         else:
             if tnode.status != "online":
                 raise HTTPException(400, f"Node '{tnode.name}' is offline")
@@ -2832,6 +3185,7 @@ async def deploy_zero_downtime(app_id: int, db: AsyncSession = Depends(get_db), 
                     "internal_port": app.port or 8000,
                     "env_vars": env_vars,
                     "docker_options": _docker_runtime_options(app),
+                    "source_revision": source_revision,
                 },
             )
             refresh_done = await wait_for_node_command(db, refresh_cmd.id, timeout_seconds=300)
@@ -2949,6 +3303,8 @@ async def deploy_zero_downtime(app_id: int, db: AsyncSession = Depends(get_db), 
         app.docker_image = new_img
     else:
         app.docker_image = dm.image_name(app_id, app.name)
+    if source_revision:
+        app.image_revision = source_revision
     await db.flush()
 
     ssl_cert, ssl_key = _resolve_ssl_paths(app.ssl_cert_path, app.ssl_key_path)
@@ -3049,6 +3405,11 @@ async def git_pull_stream(app_id: int, payload: PullRequest | None = Body(defaul
                 yield "data: __FAILED__\n\n"
                 return
             result = json.loads(done.result or "{}")
+            pulled_revision = result.get("source_revision")
+            if pulled_revision:
+                app.source_revision = pulled_revision
+                app.image_revision = pulled_revision
+                await db.commit()
             for line in result.get("action_logs", []):
                 yield _sse_line(str(line))
             yield f"event: result\ndata: {json.dumps(result)}\n\n"
@@ -3117,6 +3478,9 @@ async def git_pull_stream(app_id: int, payload: PullRequest | None = Body(defaul
             )
             commit_info = log_res.stdout.strip() if log_res.returncode == 0 else "Unknown"
             _q(f"[Git] Updated to: {commit_info}")
+            source_revision = _resolve_source_revision(app_dir)
+            if source_revision:
+                app.source_revision = source_revision
 
             if app.use_docker:
                 was_running = pm.is_docker_app_running(app_id)
@@ -3132,6 +3496,8 @@ async def git_pull_stream(app_id: int, payload: PullRequest | None = Body(defaul
                     app.port or 8000,
                 )
                 app.docker_image = dm.image_name(app_id, app.name)
+                if source_revision:
+                    app.image_revision = source_revision
                 await db.commit()
 
                 if was_running:
@@ -3142,6 +3508,7 @@ async def git_pull_stream(app_id: int, payload: PullRequest | None = Body(defaul
                 result_holder["result"] = {
                     "message": f"Updated and rebuilt Docker image from {target_commit or branch}",
                     "commit": commit_info,
+                    "source_revision": source_revision,
                     "output": (
                         "Image rebuilt. Restart manually to switch to the new image."
                         if was_running else
@@ -3149,10 +3516,13 @@ async def git_pull_stream(app_id: int, payload: PullRequest | None = Body(defaul
                     ),
                 }
             else:
+                app.image_revision = None
+                await db.commit()
                 result_holder["result"] = {
                     "message": f"Updated code to {target_commit or branch}",
                     "output": f"Latest commit: {commit_info}\n\nRestart the app to apply changes.",
                     "commit": commit_info,
+                    "source_revision": source_revision,
                 }
         except HTTPException as exc:
             result_holder["error"] = exc.detail
@@ -3205,6 +3575,11 @@ async def rebuild_docker_image_stream(app_id: int, db: AsyncSession = Depends(ge
                 done = await wait_for_node_command(db, cmd.id, timeout_seconds=900)
                 if done.status == "done":
                     result = json.loads(done.result or "{}")
+                    rebuilt_revision = result.get("source_revision")
+                    if rebuilt_revision:
+                        app.source_revision = rebuilt_revision
+                        app.image_revision = rebuilt_revision
+                        await db.commit()
                     for line in result.get("action_logs", []):
                         yield _sse_line(str(line))
                     yield f"event: result\ndata: {json.dumps(result)}\n\n"
@@ -3246,8 +3621,11 @@ async def rebuild_docker_image_stream(app_id: int, db: AsyncSession = Depends(ge
                 app_id, app.name, app.working_dir, _push,
                 app.app_type or "unknown", app.start_command or "", app.port or 8000,
             )
+            source_revision = _refresh_app_source_revision(app)
             app.status = "running" if was_running else "stopped"
             app.docker_image = img
+            if source_revision:
+                app.image_revision = source_revision
             await db.commit()
 
             if was_running:
@@ -3256,6 +3634,7 @@ async def rebuild_docker_image_stream(app_id: int, db: AsyncSession = Depends(ge
                     "status": "running",
                     "message": "Image rebuilt. Running container was not restarted.",
                     "output": "Image rebuilt. Restart manually to switch to the new image.",
+                    "source_revision": source_revision,
                 }
             else:
                 _q("[Docker] Image rebuilt. Start the app to run it.")
@@ -3263,6 +3642,7 @@ async def rebuild_docker_image_stream(app_id: int, db: AsyncSession = Depends(ge
                     "status": "rebuilt",
                     "message": "Image rebuilt. Start the app to run it.",
                     "output": "Image rebuilt. Start the app to run it.",
+                    "source_revision": source_revision,
                 }
         except Exception as exc:
             result_holder["error"] = str(exc)
@@ -3414,6 +3794,11 @@ async def get_stats(app_id: int, db: AsyncSession = Depends(get_db)):
             "is_local": bool(node.is_local),
         }
         return data
+
+    replica_stats = await _get_local_replica_stats(app, db, local_node)
+    if replica_stats.get("status") == "running":
+        return replica_stats
+
     if app.use_docker:
         if pm.is_docker_app_running(app_id):
             stats = await asyncio.to_thread(pm.get_docker_stats, app_id)
@@ -3446,6 +3831,10 @@ async def get_logs_tail(app_id: int, limit: int = Query(200, ge=1, le=2000), db:
             return {"lines": [], "remote": True, "error": done.error_message}
         result_payload = json.loads(done.result or "{}") if done.result else {}
         return {"lines": result_payload.get("lines", []) or [], "remote": True}
+
+    replica_lines = await _get_local_replica_logs(app, db, local_node, limit)
+    if replica_lines:
+        return {"lines": replica_lines, "remote": False}
 
     if app.use_docker:
         lines = pm.get_recent_docker_logs(app_id, limit)
@@ -3491,6 +3880,8 @@ def _app_to_dict(
         "restart_policy": app.restart_policy or "no",
         "use_docker":     True,
         "docker_image":   app.docker_image,
+        "source_revision": app.source_revision,
+        "image_revision": app.image_revision,
         "docker_cpu_limit": app.docker_cpu_limit,
         "docker_memory_limit_mb": app.docker_memory_limit_mb,
         "docker_read_only_root": bool(app.docker_read_only_root),

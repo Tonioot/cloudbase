@@ -56,6 +56,8 @@ async def init_db():
             ("redirect_domains",  "TEXT"),
             ("node_id",           "INTEGER"),
             ("last_error",        "TEXT"),
+            ("source_revision",   "VARCHAR(120)"),
+            ("image_revision",    "VARCHAR(120)"),
         ]:
             if col in existing_columns:
                 continue

@@ -350,11 +350,11 @@ def _restart_policy_config(policy: str | None) -> dict:
 # ── Port allocation ───────────────────────────────────────────────────────────
 
 EXTERNAL_PORT_START = 8000
-EXTERNAL_PORT_END   = 9999
+EXTERNAL_PORT_END   = 8999
 
 
 def pick_free_external_port(used_ports: set[int]) -> int:
-    """Return the lowest unused host port in [8000, 9999] that is also free on the OS."""
+    """Return the lowest unused host port in [8000, 8999] that is also free on the OS."""
     import psutil
     try:
         active = {c.laddr.port for c in psutil.net_connections(kind="inet") if c.laddr}
@@ -607,6 +607,16 @@ def get_recent_container_logs(app_id: int, lines: int = 300) -> list[str]:
     try:
         client = _get_client()
         c = client.containers.get(container_name(app_id))
+        raw = c.logs(tail=lines, timestamps=False)
+        return [l.decode("utf-8", errors="replace").rstrip() for l in raw.splitlines()]
+    except Exception:
+        return []
+
+
+def get_recent_container_logs_by_name(container_name_str: str, lines: int = 300) -> list[str]:
+    try:
+        client = _get_client()
+        c = client.containers.get(container_name_str)
         raw = c.logs(tail=lines, timestamps=False)
         return [l.decode("utf-8", errors="replace").rstrip() for l in raw.splitlines()]
     except Exception:

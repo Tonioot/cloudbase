@@ -30,8 +30,8 @@ from typing import Optional
 
 log = logging.getLogger("cloudbase.tunnel")
 
-TUNNEL_PORT_MIN = 9100
-TUNNEL_PORT_MAX = 9999
+TUNNEL_PORT_MIN = 10000
+TUNNEL_PORT_MAX = 20000
 
 # replica_id → _TunnelEntry
 _tunnels: dict[int, "_TunnelEntry"] = {}

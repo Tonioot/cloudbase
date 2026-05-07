@@ -546,44 +546,6 @@ async def cmd_get_file_content(client, state, main_id, payload, headers):
     resp.raise_for_status()
     return resp.json()
 
-async def cmd_app_lifecycle(client, state, main_id, payload, headers, action):
-    local_id = await _resolve_local_id(client, state, main_id, payload, headers)
-    url = f"{_LOCAL_API_BASE}/api/apps/{local_id}/{action}"
-    retry_delays = (0.2, 0.5, 1.0)
-
-    for attempt in range(len(retry_delays) + 1):
-        resp = await client.post(url, headers=headers, timeout=120)
-        if 200 <= resp.status_code < 300:
-            body: dict[str, Any] = {}
-            try:
-                parsed = resp.json()
-                if isinstance(parsed, dict):
-                    body = parsed
-            except Exception:
-                body = {}
-
-            result = {"local_app_id": local_id, "action": action}
-            result.update(body)
-            return result
-
-        body_text = (resp.text or "").strip().lower()
-
-        # Treat idempotent lifecycle conflicts as success.
-        if resp.status_code == 400:
-            if action == "start" and "already running" in body_text:
-                return {"local_app_id": local_id, "action": action, "note": "already running"}
-            if action == "stop" and "not running" in body_text:
-                return {"local_app_id": local_id, "action": action, "note": "already stopped"}
-
-        # Retry transient server-side failures.
-        if 500 <= resp.status_code < 600 and attempt < len(retry_delays):
-            await asyncio.sleep(retry_delays[attempt])
-            continue
-
-        raise RuntimeError(f"{action} request failed: HTTP {resp.status_code}: {(resp.text or '').strip()[:400]}")
-
-    raise RuntimeError(f"{action} request failed after retries")
-
 async def cmd_delete_app(client, state, main_id, payload, headers):
     local_id = await _resolve_local_id(client, state, main_id, payload, headers)
     resp = await client.delete(f"{_LOCAL_API_BASE}/api/apps/{local_id}", headers=headers, timeout=60)
@@ -649,6 +611,8 @@ async def cmd_deploy_app(client, state, main_id, payload, headers):
                 "github_token": payload.get("github_token"),
                 "auto_start": payload.get("auto_start"),
                 "restart_policy": payload.get("restart_policy"),
+                "source_revision": payload.get("source_revision"),
+                "image_revision": payload.get("image_revision"),
             }
             # Drop keys that are intentionally absent; keep explicit False/0 values.
             update_payload = {k: v for k, v in update_payload.items() if v is not None}
@@ -859,6 +823,30 @@ async def _build_image_local(local_id: int, app_name: str, app_dir: str, payload
     return img
 
 
+async def _update_local_app_revision(
+    client: httpx.AsyncClient,
+    local_id: int,
+    headers,
+    *,
+    source_revision: Optional[str],
+    image_revision: Optional[str],
+) -> None:
+    update_payload: dict[str, str] = {}
+    if source_revision is not None:
+        update_payload["source_revision"] = source_revision
+    if image_revision is not None:
+        update_payload["image_revision"] = image_revision
+    if not update_payload:
+        return
+    resp = await client.put(
+        f"{_LOCAL_API_BASE}/api/apps/{local_id}",
+        json=update_payload,
+        headers=headers,
+        timeout=30,
+    )
+    resp.raise_for_status()
+
+
 async def _ensure_replica_app_deployed(client: httpx.AsyncClient, state, main_id, payload, headers) -> int:
     """Ensure source + image are ready on this node. Only downloads/builds when needed.
     Returns local_app_id."""
@@ -867,13 +855,20 @@ async def _ensure_replica_app_deployed(client: httpx.AsyncClient, state, main_id
     app_name = payload.get("app_name") or payload.get("name") or ""
     if not app_name:
         raise RuntimeError("Missing app_name")
+    desired_revision = payload.get("source_revision")
 
     # Check if we already have a valid image for this architecture
     local_app = await _find_local_app_by_name(client, headers, app_name)
     if local_app:
         local_id = int(local_app["id"])
         img = dm.image_name(local_id, app_name)
-        if _local_image_ok(img):
+        local_source_revision = local_app.get("source_revision")
+        local_image_revision = local_app.get("image_revision")
+        revision_matches = (
+            not desired_revision
+            or (local_source_revision == desired_revision and local_image_revision == desired_revision)
+        )
+        if _local_image_ok(img) and revision_matches:
             # Image present and correct arch — just make sure state map is current
             if main_id:
                 state.app_id_map[str(main_id)] = local_id
@@ -881,12 +876,29 @@ async def _ensure_replica_app_deployed(client: httpx.AsyncClient, state, main_id
             _agent_log(f"[deploy] Image {img} already present, skipping build")
             return local_id
         else:
-            _agent_log(f"[deploy] Image {img} missing or wrong arch, rebuilding…")
+            if desired_revision and local_image_revision != desired_revision:
+                _agent_log(f"[deploy] Image {img} exists but revision is stale ({local_image_revision} != {desired_revision}), rebuilding...")
+            else:
+                _agent_log(f"[deploy] Image {img} missing or wrong arch, rebuilding...")
 
     # Image missing or wrong arch — fetch source from primary and build
     app_dir = await _download_and_extract_source(client, state, main_id, app_name, headers)
     local_id = await _register_local_app(client, state, main_id, payload, app_dir, headers)
+    await _update_local_app_revision(
+        client,
+        local_id,
+        headers,
+        source_revision=desired_revision,
+        image_revision=None,
+    )
     await _build_image_local(local_id, app_name, app_dir, payload)
+    await _update_local_app_revision(
+        client,
+        local_id,
+        headers,
+        source_revision=desired_revision,
+        image_revision=desired_revision,
+    )
     return local_id
 
 
@@ -946,7 +958,22 @@ async def cmd_refresh_source(client, state, main_id, payload, headers):
 
     app_dir = await _download_and_extract_source(client, state, main_id, app_name, headers)
     local_id = await _register_local_app(client, state, main_id, payload, app_dir, headers)
+    desired_revision = payload.get("source_revision")
+    await _update_local_app_revision(
+        client,
+        local_id,
+        headers,
+        source_revision=desired_revision,
+        image_revision=None,
+    )
     await _build_image_local(local_id, app_name, app_dir, payload)
+    await _update_local_app_revision(
+        client,
+        local_id,
+        headers,
+        source_revision=desired_revision,
+        image_revision=desired_revision,
+    )
     _agent_log(f"[refresh_source] app='{app_name}' rebuilt from updated source")
     return {"ok": True, "local_app_id": local_id, "app_dir": app_dir}
 
@@ -966,9 +993,6 @@ COMMAND_HANDLERS: Dict[str, Callable] = {
     "toggle_update_mode": cmd_toggle_update_mode,
     "list_files": cmd_list_files,
     "get_file_content": cmd_get_file_content,
-    "start_app": lambda c, s, m, p, h: cmd_app_lifecycle(c, s, m, p, h, "start"),
-    "stop_app": lambda c, s, m, p, h: cmd_app_lifecycle(c, s, m, p, h, "stop"),
-    "restart_app": lambda c, s, m, p, h: cmd_app_lifecycle(c, s, m, p, h, "restart"),
     "get_logs_tail": cmd_get_logs_tail,
     "get_replica_logs": cmd_get_replica_logs,
     "get_stats": cmd_get_stats,

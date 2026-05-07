@@ -1120,16 +1120,25 @@ async def delete_node(node_id: int, db: AsyncSession = Depends(get_db), actor: s
     node = await get_node_or_404(node_id, db)
     if node.is_local:
         raise HTTPException(400, "Local node cannot be deleted")
-    from models import Application
+    from models import Application, ApplicationReplica
     app_count_result = await db.execute(
         select(func.count()).where(Application.node_id == node_id)
     )
     app_count = app_count_result.scalar() or 0
-    if app_count > 0:
+    replica_count_result = await db.execute(
+        select(func.count()).where(ApplicationReplica.node_id == node_id)
+    )
+    replica_count = replica_count_result.scalar() or 0
+    if app_count > 0 or replica_count > 0:
+        details = []
+        if app_count > 0:
+            details.append(f"{app_count} app{'s' if app_count != 1 else ''}")
+        if replica_count > 0:
+            details.append(f"{replica_count} instance{'s' if replica_count != 1 else ''}")
         raise HTTPException(
             400,
-            f"Cannot remove node: {app_count} app{'s' if app_count != 1 else ''} still assigned to it. "
-            "Move or delete all apps first."
+            f"Cannot remove node: {', '.join(details)} still assigned to it. "
+            "Move or delete all apps and instances first."
         )
     node_name = node.name
     await db.execute(delete(NodeCommand).where(NodeCommand.node_id == node_id))

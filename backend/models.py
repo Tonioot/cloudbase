@@ -40,6 +40,8 @@ class Application(Base):
     restart_policy = Column(String(20), default="no")   # no | always | on-failure
     use_docker     = Column(Boolean, default=True)
     docker_image   = Column(String(500), nullable=True)
+    source_revision = Column(String(120), nullable=True)
+    image_revision  = Column(String(120), nullable=True)
     docker_cpu_limit = Column(Float, nullable=True)
     docker_memory_limit_mb = Column(Integer, nullable=True)
     docker_read_only_root = Column(Boolean, default=False)

@@ -1,0 +1,30 @@
+# Cloudbase configuration
+# All settings can be adjusted here. Restart Cloudbase for changes to take effect.
+
+server:
+  # Port Cloudbase listens on
+  port: 7823
+
+ports:
+  # Host port range assigned to app instances (Docker external ports)
+  # Must have at least as many ports as limits.max_instances
+  instance_min: 10000
+  instance_max: 19999
+
+  # Port range for reverse tunnels (remote node → primary)
+  tunnel_min: 20000
+  tunnel_max: 29999
+
+limits:
+  # Maximum number of apps that can be deployed
+  max_apps: 1000
+
+  # Maximum total number of instances (replicas) across all apps and nodes
+  max_instances: 10000
+
+  # Maximum number of nodes (primary + remote) that can be registered
+  max_nodes: 100
+
+  # Restart-loop protection: max restarts per window per app
+  max_restarts_per_window: 5
+  restart_window_seconds: 60

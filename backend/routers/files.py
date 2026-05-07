@@ -1,15 +1,13 @@
 import logging
 import os
 import mimetypes
-import json
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
-from models import Application, ApplicationReplica, Node
+from models import Application
 import process_manager as pm
-from routers.nodes import ensure_local_node, queue_node_command, wait_for_node_command
 
 log = logging.getLogger("cloudbase.files")
 
@@ -35,30 +33,6 @@ async def list_files(
     db: AsyncSession = Depends(get_db),
 ):
     app = await _get_or_404(app_id, db)
-    local_node = await ensure_local_node(db)
-    node = await _get_app_node(app, db, local_node)
-
-    if not node.is_local:
-        if node.status != "online":
-            raise HTTPException(503, "Node is offline")
-        log.info("list_files: app_id=%d node_id=%d path=%r", app.id, node.id, path)
-        cmd = await queue_node_command(
-            db,
-            node_id=node.id,
-            app_id=app.id,
-            command_type="list_files",
-            payload={"app_id": app.id, "app_name": app.name, "path": path},
-        )
-        done = await wait_for_node_command(db, cmd.id, timeout_seconds=20)
-        if done.status != "done":
-            log.warning("list_files: cmd=%d failed: %s", cmd.id, done.error_message)
-            raise HTTPException(502, done.error_message or "Remote file listing failed")
-        result = json.loads(done.result or "{}") if done.result else {}
-        log.info("list_files: cmd=%d done, %d entries", cmd.id, len(result.get("entries", [])))
-        return {
-            "path": result.get("path", path or "."),
-            "entries": result.get("entries", []) or [],
-        }
 
     base_dir, target = _resolve_target_path(app.working_dir or pm.get_app_dir(app.name), path)
 
@@ -90,32 +64,6 @@ async def get_file_content(
     db: AsyncSession = Depends(get_db),
 ):
     app = await _get_or_404(app_id, db)
-    local_node = await ensure_local_node(db)
-    node = await _get_app_node(app, db, local_node)
-
-    if not node.is_local:
-        if node.status != "online":
-            raise HTTPException(503, "Node is offline")
-        log.info("get_file_content: app_id=%d node_id=%d path=%r", app.id, node.id, path)
-        cmd = await queue_node_command(
-            db,
-            node_id=node.id,
-            app_id=app.id,
-            command_type="get_file_content",
-            payload={"app_id": app.id, "app_name": app.name, "path": path},
-        )
-        done = await wait_for_node_command(db, cmd.id, timeout_seconds=20)
-        if done.status != "done":
-            log.warning("get_file_content: cmd=%d failed: %s", cmd.id, done.error_message)
-            raise HTTPException(502, done.error_message or "Remote file read failed")
-        result = json.loads(done.result or "{}") if done.result else {}
-        log.info("get_file_content: cmd=%d done, binary=%s", cmd.id, result.get("binary"))
-        return {
-            "path": result.get("path", path),
-            "content": result.get("content"),
-            "binary": bool(result.get("binary", False)),
-            "mime": result.get("mime") or "text/plain",
-        }
 
     base_dir, target = _resolve_target_path(app.working_dir or pm.get_app_dir(app.name), path)
 
@@ -170,17 +118,3 @@ async def _get_or_404(app_id: int, db: AsyncSession) -> Application:
     return app
 
 
-async def _get_app_node(app: Application, db: AsyncSession, local_node: Node) -> Node:
-    rep_result = await db.execute(
-        select(ApplicationReplica).where(ApplicationReplica.app_id == app.id)
-        .order_by(ApplicationReplica.status.desc()).limit(5)
-    )
-    replicas = rep_result.scalars().all()
-    running = next((r for r in replicas if r.status in ("running", "starting") and r.node_id), None)
-    candidate = running or next((r for r in replicas if r.node_id), None)
-    if candidate and candidate.node_id:
-        node_result = await db.execute(select(Node).where(Node.id == candidate.node_id))
-        node = node_result.scalar_one_or_none()
-        if node:
-            return node
-    return local_node

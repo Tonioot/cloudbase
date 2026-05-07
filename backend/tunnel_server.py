@@ -28,10 +28,12 @@ import logging
 import secrets
 from typing import Optional
 
+import config as _cfg
+
 log = logging.getLogger("cloudbase.tunnel")
 
-TUNNEL_PORT_MIN = 10000
-TUNNEL_PORT_MAX = 20000
+TUNNEL_PORT_MIN = _cfg.get_port("tunnel_min")
+TUNNEL_PORT_MAX = _cfg.get_port("tunnel_max")
 
 # replica_id → _TunnelEntry
 _tunnels: dict[int, "_TunnelEntry"] = {}

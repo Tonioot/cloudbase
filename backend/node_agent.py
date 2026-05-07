@@ -449,114 +449,13 @@ async def _resolve_local_id(client, state, main_app_id, payload, headers) -> int
                     return found
     raise ValueError(f"Unknown app (id={main_app_id}, name={app_name or '?'})")
 
-async def cmd_get_nginx_config(client, state, main_id, payload, headers):
-    local_id = await _resolve_local_id(client, state, main_id, payload, headers)
-    resp = await client.get(f"{_LOCAL_API_BASE}/api/apps/{local_id}/nginx-config", headers=headers, timeout=20)
-    resp.raise_for_status()
-    return resp.json()
-
-async def cmd_save_nginx_config(client, state, main_id, payload, headers):
-    local_id = await _resolve_local_id(client, state, main_id, payload, headers)
-    resp = await client.put(f"{_LOCAL_API_BASE}/api/apps/{local_id}/nginx-config", json=payload, headers=headers, timeout=20)
-    resp.raise_for_status()
-    return resp.json()
-
-async def cmd_update_app(client, state, main_id, payload, headers):
-    local_id = await _resolve_local_id(client, state, main_id, payload, headers)
-    update_payload = dict(payload or {})
-    update_payload.pop("app_id", None)
-    update_payload.pop("app_name", None)
-    resp = await client.put(f"{_LOCAL_API_BASE}/api/apps/{local_id}", json=update_payload, headers=headers, timeout=60)
-    resp.raise_for_status()
-    return resp.json()
-
-async def cmd_git_pull(client, state, main_id, payload, headers):
-    local_id = await _resolve_local_id(client, state, main_id, payload, headers)
-    body = {"commit": payload.get("commit")} if payload and payload.get("commit") else None
-    resp = await client.post(f"{_LOCAL_API_BASE}/api/apps/{local_id}/pull", json=body, headers=headers, timeout=180)
-    resp.raise_for_status()
-    return resp.json()
-
-async def cmd_list_git_commits(client, state, main_id, payload, headers):
-    local_id = await _resolve_local_id(client, state, main_id, payload, headers)
-    limit = payload.get("limit") or 20
-    refresh = payload.get("refresh")
-    params = {"limit": limit}
-    if refresh is not None:
-        params["refresh"] = bool(refresh)
-    resp = await client.get(
-        f"{_LOCAL_API_BASE}/api/apps/{local_id}/commits",
-        params=params,
-        headers=headers,
-        timeout=30,
-    )
-    resp.raise_for_status()
-    return resp.json()
-
-async def cmd_rebuild_app(client, state, main_id, payload, headers):
-    local_id = await _resolve_local_id(client, state, main_id, payload, headers)
-    url = f"{_LOCAL_API_BASE}/api/apps/{local_id}/rebuild"
-    # Rebuild can briefly return 5xx during overlapping local operations; retry a few times.
-    retry_delays = (0.2, 0.5, 1.0)
-    last_error: Optional[str] = None
-
-    for attempt in range(len(retry_delays) + 1):
-        resp = await client.post(url, headers=headers, timeout=900)
-        if 200 <= resp.status_code < 300:
-            return resp.json()
-
-        body_text = (resp.text or "").strip()
-        last_error = f"HTTP {resp.status_code}: {body_text[:400]}"
-
-        is_retryable = 500 <= resp.status_code < 600 and attempt < len(retry_delays)
-        if is_retryable:
-            await asyncio.sleep(retry_delays[attempt])
-            continue
-
-        raise RuntimeError(f"Rebuild request failed: {last_error}")
-
-    raise RuntimeError(f"Rebuild request failed: {last_error or 'unknown error'}")
-
-async def cmd_discover_app_certs(client, state, main_id, payload, headers):
-    local_id = await _resolve_local_id(client, state, main_id, payload, headers)
-    resp = await client.get(f"{_LOCAL_API_BASE}/api/apps/{local_id}/certs", headers=headers, timeout=20)
-    resp.raise_for_status()
-    return resp.json()
-
-async def cmd_save_maintenance_pages(client, state, main_id, payload, headers):
-    local_id = await _resolve_local_id(client, state, main_id, payload, headers)
-    resp = await client.put(f"{_LOCAL_API_BASE}/api/apps/{local_id}/maintenance-pages", json=payload, headers=headers, timeout=30)
-    resp.raise_for_status()
-    return resp.json()
-
-async def cmd_toggle_maintenance_mode(client, state, main_id, payload, headers):
-    local_id = await _resolve_local_id(client, state, main_id, payload, headers)
-    resp = await client.post(f"{_LOCAL_API_BASE}/api/apps/{local_id}/maintenance-mode/toggle", headers=headers, timeout=30)
-    resp.raise_for_status()
-    return resp.json()
-
-async def cmd_toggle_update_mode(client, state, main_id, payload, headers):
-    local_id = await _resolve_local_id(client, state, main_id, payload, headers)
-    resp = await client.post(f"{_LOCAL_API_BASE}/api/apps/{local_id}/update-mode/toggle", headers=headers, timeout=30)
-    resp.raise_for_status()
-    return resp.json()
-
-async def cmd_list_files(client, state, main_id, payload, headers):
-    local_id = await _resolve_local_id(client, state, main_id, payload, headers)
-    path = payload.get("path") or ""
-    resp = await client.get(f"{_LOCAL_API_BASE}/api/apps/{local_id}/files", params={"path": path}, headers=headers, timeout=20)
-    resp.raise_for_status()
-    return resp.json()
-
-async def cmd_get_file_content(client, state, main_id, payload, headers):
-    local_id = await _resolve_local_id(client, state, main_id, payload, headers)
-    path = payload.get("path") or ""
-    resp = await client.get(f"{_LOCAL_API_BASE}/api/apps/{local_id}/files/content", params={"path": path}, headers=headers, timeout=20)
-    resp.raise_for_status()
-    return resp.json()
-
 async def cmd_delete_app(client, state, main_id, payload, headers):
-    local_id = await _resolve_local_id(client, state, main_id, payload, headers)
+    try:
+        local_id = await _resolve_local_id(client, state, main_id, payload, headers)
+    except ValueError:
+        # App was never deployed to this node (e.g. created but never started) — nothing to delete.
+        _agent_log(f"[delete_app] No local record for main_id={main_id}, skipping")
+        return {"message": "App not found locally, nothing to delete"}
     resp = await client.delete(f"{_LOCAL_API_BASE}/api/apps/{local_id}", headers=headers, timeout=60)
     resp.raise_for_status()
     return resp.json()
@@ -589,73 +488,6 @@ async def cmd_get_replica_stats(client, state, main_id, payload, headers):
         headers=headers,
         timeout=20,
     )
-    resp.raise_for_status()
-    return resp.json()
-
-async def cmd_deploy_app(client, state, main_id, payload, headers):
-    resp = await client.post(f"{_LOCAL_API_BASE}/api/apps", json=payload, headers=headers, timeout=300)
-    if resp.status_code == 400 and "already exists" in resp.text:
-        list_resp = await client.get(f"{_LOCAL_API_BASE}/api/apps", headers=headers, timeout=20)
-        local_app = next((a for a in list_resp.json() if a.get("name") == payload.get("name")), None)
-        if not local_app:
-            resp.raise_for_status()
-        else:
-            # Keep existing app config in sync with main payload. This prevents
-            # stale local settings (like old external ports) from breaking start.
-            update_payload = {
-                "domain": payload.get("domain"),
-                "extra_domains": payload.get("extra_domains"),
-                "redirect_domains": payload.get("redirect_domains"),
-                "ssl_cert_path": payload.get("ssl_cert_path"),
-                "ssl_key_path": payload.get("ssl_key_path"),
-                "start_command": payload.get("start_command"),
-                "port": payload.get("port"),
-                "external_port": payload.get("external_port"),
-                "docker_cpu_limit": payload.get("docker_cpu_limit"),
-                "docker_memory_limit_mb": payload.get("docker_memory_limit_mb"),
-                "docker_read_only_root": payload.get("docker_read_only_root"),
-                "docker_tmpfs_enabled": payload.get("docker_tmpfs_enabled"),
-                "docker_tmpfs_size_mb": payload.get("docker_tmpfs_size_mb"),
-                "env_vars": payload.get("env_vars"),
-                "github_token": payload.get("github_token"),
-                "auto_start": payload.get("auto_start"),
-                "restart_policy": payload.get("restart_policy"),
-                "source_revision": payload.get("source_revision"),
-                "image_revision": payload.get("image_revision"),
-            }
-            # Drop keys that are intentionally absent; keep explicit False/0 values.
-            update_payload = {k: v for k, v in update_payload.items() if v is not None}
-            if update_payload:
-                upd = await client.put(
-                    f"{_LOCAL_API_BASE}/api/apps/{int(local_app['id'])}",
-                    json=update_payload,
-                    headers=headers,
-                    timeout=120,
-                )
-                upd.raise_for_status()
-                local_app = upd.json()
-    else:
-        resp.raise_for_status()
-        local_app = resp.json()
-    
-    local_id = int(local_app["id"])
-    if main_id:
-        state.app_id_map[str(main_id)] = local_id
-        _save_state(state)
-    return {
-        "local_app_id": local_id,
-        "status": local_app.get("status"),
-        "working_dir": local_app.get("working_dir"),
-        "nginx_enabled": local_app.get("nginx_enabled"),
-    }
-
-async def cmd_upload_cert(client, state, main_id, payload, headers):
-    local_id = await _resolve_local_id(client, state, main_id, payload, headers)
-    import base64
-    content = base64.b64decode(payload["content_b64"])
-    files = {"file": (payload["filename"], content)}
-    multipart_headers = {"X-Agent-Token": headers["X-Agent-Token"]}
-    resp = await client.post(f"{_LOCAL_API_BASE}/api/apps/{local_id}/certs/upload", files=files, headers=multipart_headers, timeout=30)
     resp.raise_for_status()
     return resp.json()
 
@@ -990,24 +822,10 @@ async def cmd_refresh_source(client, state, main_id, payload, headers):
 # ─── Command Dispatcher ───────────────────────────────────────────────────────
 
 COMMAND_HANDLERS: Dict[str, Callable] = {
-    "get_nginx_config": cmd_get_nginx_config,
-    "save_nginx_config": cmd_save_nginx_config,
-    "update_app": cmd_update_app,
-    "git_pull": cmd_git_pull,
-    "list_git_commits": cmd_list_git_commits,
-    "rebuild_app": cmd_rebuild_app,
-    "discover_app_certs": cmd_discover_app_certs,
-    "save_maintenance_pages": cmd_save_maintenance_pages,
-    "toggle_maintenance_mode": cmd_toggle_maintenance_mode,
-    "toggle_update_mode": cmd_toggle_update_mode,
-    "list_files": cmd_list_files,
-    "get_file_content": cmd_get_file_content,
     "get_logs_tail": cmd_get_logs_tail,
     "get_replica_logs": cmd_get_replica_logs,
     "get_stats": cmd_get_stats,
     "get_replica_stats": cmd_get_replica_stats,
-    "deploy_app": cmd_deploy_app,
-    "upload_cert": cmd_upload_cert,
     "get_agent_logs": cmd_get_agent_logs,
     "delete_app": cmd_delete_app,
     "start_replica": cmd_start_replica,

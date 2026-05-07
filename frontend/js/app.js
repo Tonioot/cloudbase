@@ -95,8 +95,14 @@ function renderHeader() {
   updateHeaderStatus();
 
   document.getElementById('btn-start').addEventListener('click',   () => quickAction('start'));
-  document.getElementById('btn-stop').addEventListener('click',    () => quickAction('stop'));
-  document.getElementById('btn-restart').addEventListener('click', () => quickAction('restart'));
+  document.getElementById('btn-stop').addEventListener('click',    async () => {
+    const ok = await confirm('Stop App', `This will stop all running instances of <strong>${app.name}</strong>.`);
+    if (ok) quickAction('stop');
+  });
+  document.getElementById('btn-restart').addEventListener('click', async () => {
+    const ok = await confirm('Restart App', `This will restart all running instances of <strong>${app.name}</strong>.`);
+    if (ok) quickAction('restart');
+  });
 
   document.getElementById('btn-maintenance-mode').addEventListener('click', () => toggleMode('maintenance'));
   document.getElementById('btn-update-mode').addEventListener('click',      () => toggleMode('update'));
@@ -114,7 +120,7 @@ function _syncZeroDowntimeButton() {
   zdBtn.dataset.bound = '1';
   zdBtn.onclick = async () => {
     const ok = await confirm(
-      'Zero-downtime Restart',
+      'Rolling Restart',
       'Builds a new image for every running instance, starts each on a new port, verifies health, then atomically swaps nginx. Old containers stop only after the new ones are live.'
     );
     if (!ok) return;
@@ -123,11 +129,11 @@ function _syncZeroDowntimeButton() {
     zdBtn.textContent = 'Restarting…';
     try {
       const res = await api.deployZeroDowntime(APP_ID);
-      toast(`Zero-downtime restart complete — instance ${res.instance_id}`, 'success');
+      toast(`Rolling restart complete — instance ${res.instance_id}`, 'success');
       app = await api.getApp(APP_ID);
       updateHeaderStatus();
     } catch (e) {
-      toast(e.message || 'Zero-downtime restart failed', 'error');
+      toast(e.message || 'Rolling restart failed', 'error');
     } finally {
       zdBtn.disabled = false;
       zdBtn.innerHTML = orig;

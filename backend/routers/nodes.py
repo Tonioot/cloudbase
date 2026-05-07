@@ -16,6 +16,7 @@ from database import get_db, AsyncSessionLocal
 from models import Node, NodeCommand, NodeInvite
 from audit import log_audit
 import auth as _auth
+import config as _cfg
 
 log = logging.getLogger("cloudbase.nodes")
 
@@ -752,6 +753,10 @@ async def register_node(req: RegisterNodeRequest, db: AsyncSession = Depends(get
     existing = await db.execute(select(Node).where(Node.name == req.name))
     if existing.scalar_one_or_none():
         raise HTTPException(400, f"Node '{req.name}' already exists")
+
+    node_count_result = await db.execute(select(func.count()).select_from(Node))
+    if node_count_result.scalar() >= _cfg.get_limit("max_nodes"):
+        raise HTTPException(400, f"Node limit reached ({_cfg.get_limit('max_nodes')} nodes maximum). Adjust limits.max_nodes in config.yaml to increase.")
 
     auth_token = secrets.token_urlsafe(40)
     node = Node(

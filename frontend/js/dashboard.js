@@ -24,7 +24,7 @@ export async function initDashboard() {
   document.getElementById('btn-deploy').addEventListener('click', () => {
     openDeployModal(app => {
       toast(`"${app.name}" deployed successfully`);
-      window.location.href = `app.html?id=${app.id}`;
+      window.location.href = `/app?id=${app.id}`;
     });
   });
 
@@ -87,7 +87,7 @@ function renderNodes() {
     card.addEventListener('click', (e) => {
       if (e.target.closest('button')) return;
       const id = card.dataset.nodeId;
-      if (id) window.location.href = `node.html?id=${id}`;
+      if (id) window.location.href = `/node?id=${id}`;
     });
   });
 
@@ -302,7 +302,7 @@ function openAddNodeModal() {
     modal.querySelector('#node-modal-cancel').onclick = closeHandler;
     modal.querySelector('#node-modal-done').onclick = () => {
       closeHandler();
-      if (modal._connectedId) window.location.href = `node.html?id=${modal._connectedId}`;
+      if (modal._connectedId) window.location.href = `/node?id=${modal._connectedId}`;
     };
     modal.querySelector('#node-copy-cmd').onclick = () => {
       const cmd = modal.querySelector('#node-invite-cmd').textContent || '';
@@ -404,7 +404,7 @@ function renderApps() {
         <button class="btn btn-primary" id="empty-deploy-btn">${icon.plus} Deploy Application</button>
       </div>`;
     document.getElementById('empty-deploy-btn')?.addEventListener('click', () => {
-      openDeployModal(app => { window.location.href = `app.html?id=${app.id}`; });
+      openDeployModal(app => { window.location.href = `/app?id=${app.id}`; });
     });
     return;
   }
@@ -416,7 +416,7 @@ function renderApps() {
     if (!card) return;
 
     card.addEventListener('click', () => {
-      window.location.href = `app.html?id=${app.id}`;
+      window.location.href = `/app?id=${app.id}`;
     });
 
     card.querySelector('.btn-start')?.addEventListener('click', e => {

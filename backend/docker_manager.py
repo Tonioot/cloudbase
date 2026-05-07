@@ -8,6 +8,8 @@ import time
 from collections import deque
 from typing import Optional
 
+import config as _cfg
+
 log = logging.getLogger("pdm.docker")
 
 # ── Lazy Docker client ────────────────────────────────────────────────────────
@@ -25,7 +27,7 @@ def _get_client():
     with _docker_lock:
         if _docker_client is not None:
             return _docker_client
-        import docker
+        import docker # type: ignore
         _docker_client = docker.from_env()
         return _docker_client
 
@@ -33,7 +35,7 @@ def _get_client():
 def _assert_image_local(client, img: str) -> None:
     """Raise RuntimeError if the image is not present locally, preventing docker-py
     from silently falling through to a Docker Hub pull attempt."""
-    import docker
+    import docker # type: ignore
     try:
         client.images.get(img)
     except docker.errors.ImageNotFound:
@@ -349,12 +351,12 @@ def _restart_policy_config(policy: str | None) -> dict:
 
 # ── Port allocation ───────────────────────────────────────────────────────────
 
-EXTERNAL_PORT_START = 8000
-EXTERNAL_PORT_END   = 8999
+EXTERNAL_PORT_START = _cfg.get_port("instance_min")
+EXTERNAL_PORT_END   = _cfg.get_port("instance_max")
 
 
 def pick_free_external_port(used_ports: set[int]) -> int:
-    """Return the lowest unused host port in [8000, 8999] that is also free on the OS."""
+    """Return the lowest unused host port in the configured instance range that is also free on the OS."""
     import psutil
     try:
         active = {c.laddr.port for c in psutil.net_connections(kind="inet") if c.laddr}
@@ -819,7 +821,7 @@ def run_replica_container(
     # Retry once on port-already-allocated errors: Docker's network stack
     # sometimes holds a port briefly after force-removing the old container.
     import time as _time
-    import docker as _docker_mod
+    import docker as _docker_mod # type: ignore
     for attempt in (1, 2):
         try:
             container = client.containers.run(img, **run_kwargs)

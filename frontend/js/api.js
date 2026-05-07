@@ -2,7 +2,7 @@ const BASE = '/api';
 
 function redirectToLogin() {
   const next = encodeURIComponent(location.pathname + location.search);
-  location.href = `/login.html?next=${next}`;
+  location.href = `/login?next=${next}`;
 }
 
 async function request(method, path, body) {

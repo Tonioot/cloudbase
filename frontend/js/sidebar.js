@@ -51,8 +51,8 @@ async function loadSidebarTree() {
     const nodeMap = new Map(nodes.map(n => [n.id, n]));
     const localNode = nodes.find(n => n.is_local);
 
-    const onAppPage     = location.pathname.includes('app.html');
-    const onNodePage    = location.pathname.includes('node.html');
+    const onAppPage     = location.pathname.startsWith('/app');
+    const onNodePage    = location.pathname.startsWith('/node');
     const currentAppId  = onAppPage  ? parseInt(new URLSearchParams(location.search).get('id')) : NaN;
     const currentNodeId = onNodePage ? parseInt(new URLSearchParams(location.search).get('id')) : NaN;
 
@@ -66,7 +66,7 @@ async function loadSidebarTree() {
           const dot = n.status === 'online' ? 'var(--green)' : n.status === 'offline' ? 'var(--red)' : 'var(--yellow)';
           const active = n.id === currentNodeId ? ' active' : '';
           const label = n.is_local ? 'Primary Node' : n.name;
-          return `<a href="/node.html?id=${n.id}" class="sidebar-app-item${active}">
+          return `<a href="/node?id=${n.id}" class="sidebar-app-item${active}">
             <span class="sidebar-app-dot" style="background:${dot}"></span>
             <span class="sidebar-app-name">${label}</span>
           </a>`;
@@ -92,7 +92,7 @@ async function loadSidebarTree() {
               })()
             : '';
 
-          return `<a href="/app.html?id=${app.id}" class="sidebar-app-item${active}">
+          return `<a href="/app?id=${app.id}" class="sidebar-app-item${active}">
             <span class="sidebar-app-dot" style="background:${appDot}"></span>
             <span class="sidebar-app-name">${app.name}</span>
             ${instanceLabel}

@@ -31,6 +31,7 @@ import process_manager as pm
 import docker_manager as dm
 import token_vault
 import node_agent
+import config as _cfg
 
 _LOG_DIR  = os.path.expanduser("~/.cloudbase/logs")
 _LOG_FILE = os.path.join(_LOG_DIR, "server.log")
@@ -47,15 +48,17 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(), _log_file_handler],
 )
 
-PORT = 7823
+PORT = _cfg.get_server_port()
 FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "..", "frontend")
 _COOKIE_NAME = "pdm_token"
 _COOKIE_OPTS = dict(httponly=True, samesite="strict", path="/")
 
 # Restart-loop protection: max 5 restarts per 60s per app
 _restart_history: dict[int, list[float]] = {}
-MAX_RESTARTS_PER_WINDOW = 5
-RESTART_WINDOW_SECONDS = 60
+MAX_RESTARTS_PER_WINDOW = _cfg.get_limit("max_restarts_per_window")
+RESTART_WINDOW_SECONDS = _cfg.get_limit("restart_window_seconds")
+
+_cfg.validate()
 
 
 async def _node_health_monitor():
@@ -1068,14 +1071,17 @@ if os.path.isdir(FRONTEND_DIR):
         return FileResponse(os.path.join(FRONTEND_DIR, "login.html"))
 
     @app.get("/app.html", include_in_schema=False)
+    @app.get("/app", include_in_schema=False)
     async def app_page():
         return FileResponse(os.path.join(FRONTEND_DIR, "app.html"))
 
     @app.get("/node.html", include_in_schema=False)
+    @app.get("/node", include_in_schema=False)
     async def node_page():
         return FileResponse(os.path.join(FRONTEND_DIR, "node.html"))
 
     @app.get("/audit.html", include_in_schema=False)
+    @app.get("/audit", include_in_schema=False)
     async def audit_page():
         return FileResponse(os.path.join(FRONTEND_DIR, "audit.html"))
 

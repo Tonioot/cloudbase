@@ -24,6 +24,7 @@ from routers.nodes import ensure_local_node, queue_node_command, wait_for_node_c
 from env_crypto import encrypt_env, decrypt_env, encrypt_text, decrypt_text
 from audit import log_audit
 import auth as _auth
+import config as _cfg
 
 router = APIRouter(prefix="/api/apps", tags=["applications"])
 log = logging.getLogger("pdm.apps")
@@ -653,22 +654,6 @@ async def list_git_commits(
     db: AsyncSession = Depends(get_db),
 ):
     app = await _get_or_404(app_id, db)
-    local_node = await ensure_local_node(db)
-    node = await _get_app_node(app, db, local_node)
-
-    if not node.is_local:
-        cmd = await queue_node_command(
-            db,
-            node_id=node.id,
-            app_id=app.id,
-            command_type="list_git_commits",
-            payload={"app_id": app.id, "app_name": app.name, "limit": limit, "refresh": refresh},
-        )
-        done = await wait_for_node_command(db, cmd.id, timeout_seconds=30)
-        if done.status != "done":
-            raise HTTPException(500, f"Failed to load commits from node '{node.name}': {done.error_message}")
-        return json.loads(done.result or "{}")
-
     app_dir = _git_app_dir_or_404(app.name)
     branch = _current_branch(app_dir)
     ref = "HEAD"
@@ -821,23 +806,6 @@ async def discover_certs():
 async def discover_app_certs(app_id: int, db: AsyncSession = Depends(get_db)):
     """Scan for cert/key files inside the app's working directory only."""
     app = await _get_or_404(app_id, db)
-    local_node = await ensure_local_node(db)
-    node = await _get_app_node(app, db, local_node)
-
-    if not node.is_local:
-        if node.status != "online":
-            return {"certs": [], "keys": []}
-        cmd = await queue_node_command(
-            db,
-            node_id=node.id,
-            app_id=app.id,
-            command_type="discover_app_certs",
-            payload={"app_id": app.id, "app_name": app.name},
-        )
-        done = await wait_for_node_command(db, cmd.id, timeout_seconds=20)
-        if done.status != "done":
-            raise HTTPException(500, f"Remote cert scan failed: {done.error_message}")
-        return json.loads(done.result or "{}")
 
     base = app.working_dir
     if not base or not os.path.isdir(base):
@@ -878,24 +846,6 @@ async def discover_app_certs(app_id: int, db: AsyncSession = Depends(get_db)):
 async def upload_app_cert(app_id: int, file: UploadFile = File(...), db: AsyncSession = Depends(get_db)):
     """Upload a cert/key file into the app's certs subfolder and return its path."""
     app = await _get_or_404(app_id, db)
-    local_node = await ensure_local_node(db)
-    node = await _get_app_node(app, db, local_node)
-
-    if not node.is_local:
-        import base64
-        contents = await file.read()
-        content_b64 = base64.b64encode(contents).decode()
-        cmd = await queue_node_command(
-            db,
-            node_id=node.id,
-            app_id=app.id,
-            command_type="upload_cert",
-            payload={"app_id": app.id, "app_name": app.name, "filename": file.filename, "content_b64": content_b64},
-        )
-        done = await wait_for_node_command(db, cmd.id, timeout_seconds=40)
-        if done.status != "done":
-            raise HTTPException(500, f"Remote upload failed: {done.error_message}")
-        return json.loads(done.result or "{}")
 
     allowed_exts = {".pem", ".crt", ".cer", ".key"}
     ext = os.path.splitext(file.filename or "")[1].lower()
@@ -1072,6 +1022,10 @@ async def deploy_app(
     if existing.scalar_one_or_none():
         raise HTTPException(400, f"App '{req.name}' already exists")
 
+    app_count_result = await db.execute(select(func.count()).select_from(Application))
+    if app_count_result.scalar() >= _cfg.get_limit("max_apps"):
+        raise HTTPException(400, f"App limit reached ({_cfg.get_limit('max_apps')} apps maximum). Adjust limits.max_apps in config.yaml to increase.")
+
     if req.restart_policy is not None and req.restart_policy not in ("no", "always", "on-failure"):
         raise HTTPException(400, "restart_policy must be one of: no, always, on-failure")
     _validate_docker_runtime_settings(req.docker_cpu_limit, req.docker_memory_limit_mb, req.docker_tmpfs_size_mb)
@@ -1131,35 +1085,6 @@ async def deploy_app(
         await db.flush()
 
     if not target_node.is_local:
-        await queue_node_command(
-            db,
-            node_id=target_node.id,
-            app_id=app.id,
-            command_type="deploy_app",
-            payload={
-                "name": req.name,
-                "repo_url": req.repo_url,
-                "github_token": _resolve_token(req.github_token, req.github_token_id),
-                "domain": req.domain,
-                "extra_domains": req.extra_domains or [],
-                "redirect_domains": req.redirect_domains or [],
-                "ssl_cert_path": req.ssl_cert_path,
-                "ssl_key_path": req.ssl_key_path,
-                "start_command": req.start_command,
-                "port": req.port,
-                "external_port": external_port,
-                "docker_cpu_limit": req.docker_cpu_limit,
-                "docker_memory_limit_mb": req.docker_memory_limit_mb,
-                "docker_read_only_root": req.docker_read_only_root,
-                "docker_tmpfs_enabled": req.docker_tmpfs_enabled,
-                "docker_tmpfs_size_mb": req.docker_tmpfs_size_mb,
-                "env_vars": req.env_vars or {},
-                "auto_start": req.auto_start,
-                "restart_policy": req.restart_policy,
-                "use_docker": True,
-                "first_replica_id": first_replica.id if first_replica else None,
-            },
-        )
         await db.commit()
         await db.refresh(app)
         return _app_to_dict(app)
@@ -1230,8 +1155,7 @@ async def get_stats_history(
 @router.put("/{app_id}")
 async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends(get_db), actor: str = Depends(_auth.get_current_actor)):
     app = await _get_or_404(app_id, db)
-    local_node = await ensure_local_node(db)
-    node = await _get_app_node(app, db, local_node)
+    await ensure_local_node(db)
     _validate_docker_runtime_settings(req.docker_cpu_limit, req.docker_memory_limit_mb, req.docker_tmpfs_size_mb)
 
     if req.domain is not None:
@@ -1276,69 +1200,6 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
         app.source_revision = req.source_revision
     if req.image_revision is not None:
         app.image_revision = req.image_revision
-
-    if not node.is_local:
-        # If domain and port are provided, we assume the user wants Nginx enabled.
-        # The node will attempt to configure it and return the result.
-        if app.domain and _nginx_proxy_port(app):
-            app.nginx_enabled = True
-
-        cmd = await queue_node_command(
-            db,
-            node_id=node.id,
-            app_id=app.id,
-            command_type="update_app",
-            payload={
-                "app_id": app.id,
-                "app_name": app.name,
-                "domain": req.domain,
-                "extra_domains": req.extra_domains,
-                "redirect_domains": req.redirect_domains,
-                "ssl_cert_path": req.ssl_cert_path,
-                "ssl_key_path": req.ssl_key_path,
-                "start_command": req.start_command,
-                "port": req.port,
-                "external_port": req.external_port,
-                "docker_cpu_limit": req.docker_cpu_limit,
-                "docker_memory_limit_mb": req.docker_memory_limit_mb,
-                "docker_read_only_root": req.docker_read_only_root,
-                "docker_tmpfs_enabled": req.docker_tmpfs_enabled,
-                "docker_tmpfs_size_mb": req.docker_tmpfs_size_mb,
-                "env_vars": req.env_vars,
-                "auto_start": req.auto_start,
-                "restart_policy": req.restart_policy,
-                "working_dir": req.working_dir,
-                "source_revision": req.source_revision,
-                "image_revision": req.image_revision,
-            },
-        )
-        await db.refresh(app)
-
-        # When a node is offline/unknown, keep the update queued and apply it when it reconnects.
-        if node.status != "online":
-            queued = _app_to_dict(app)
-            queued["queued"] = True
-            queued["pending_sync"] = True
-            queued["command_id"] = cmd.id
-            queued["message"] = f"Node '{node.name}' is offline. Settings saved and queued for sync."
-            return queued
-
-        try:
-            done = await wait_for_node_command(db, cmd.id, timeout_seconds=30)
-        except HTTPException as exc:
-            if exc.status_code == 504:
-                queued = _app_to_dict(app)
-                queued["queued"] = True
-                queued["pending_sync"] = True
-                queued["command_id"] = cmd.id
-                queued["message"] = f"Node '{node.name}' did not respond in time. Update remains queued."
-                return queued
-            raise
-
-        await db.refresh(app)
-        if done.status != "done":
-            raise HTTPException(500, f"Failed to update remote app settings: {done.error_message}")
-        return _app_to_dict(app)
 
     if app.domain:
         maint_ok, maint_msg = _ensure_maintenance_files(app, app.id)
@@ -1534,35 +1395,7 @@ async def import_apps(req: ImportRequest, background_tasks: BackgroundTasks, db:
         await db.flush()
 
         if not target_node.is_local:
-            await queue_node_command(
-                db,
-                node_id=target_node.id,
-                app_id=app.id,
-                command_type="deploy_app",
-                payload={
-                    "name": app.name,
-                    "repo_url": app.repo_url,
-                    "github_token": app_data.get("github_token"),
-                    "domain": app.domain,
-                    "extra_domains": app_data.get("extra_domains") or [],
-                    "redirect_domains": app_data.get("redirect_domains") or [],
-                    "ssl_cert_path": None,
-                    "ssl_key_path": None,
-                    "start_command": app.start_command,
-                    "port": app.port,
-                    "external_port": import_external_port,
-                    "docker_cpu_limit": app.docker_cpu_limit,
-                    "docker_memory_limit_mb": app.docker_memory_limit_mb,
-                    "docker_read_only_root": app.docker_read_only_root,
-                    "docker_tmpfs_enabled": app.docker_tmpfs_enabled,
-                    "docker_tmpfs_size_mb": app.docker_tmpfs_size_mb,
-                    "env_vars": app_data.get("env_vars") or {},
-                    "auto_start": app.auto_start,
-                    "restart_policy": app.restart_policy,
-                    "use_docker": True,
-                    "first_replica_id": first_replica.id,
-                },
-            )
+            pass  # Remote node setup happens lazily when start_replica is first called
         else:
             try:
                 await _deploy_app(app)
@@ -1622,38 +1455,6 @@ async def move_app(app_id: int, req: MoveRequest, db: AsyncSession = Depends(get
     else:
         if target_node.status != "online":
             raise HTTPException(400, f"Target node '{target_node.name}' is offline")
-        deploy_cmd = await queue_node_command(
-            db,
-            node_id=target_node.id,
-            app_id=app.id,
-            command_type="deploy_app",
-            payload={
-                "name": app.name,
-                "repo_url": app.repo_url,
-                "github_token": _decrypt_github_token(app.github_token),
-                "domain": app.domain,
-                "extra_domains": json.loads(app.extra_domains or "[]"),
-                "redirect_domains": json.loads(app.redirect_domains or "[]"),
-                "ssl_cert_path": app.ssl_cert_path,
-                "ssl_key_path": app.ssl_key_path,
-                "start_command": app.start_command,
-                "port": app.port,
-                "external_port": None,
-                "docker_cpu_limit": app.docker_cpu_limit,
-                "docker_memory_limit_mb": app.docker_memory_limit_mb,
-                "docker_read_only_root": bool(app.docker_read_only_root),
-                "docker_tmpfs_enabled": bool(app.docker_tmpfs_enabled),
-                "docker_tmpfs_size_mb": app.docker_tmpfs_size_mb,
-                "env_vars": env_vars,
-                "auto_start": False,
-                "restart_policy": app.restart_policy,
-                "use_docker": True,
-                "source_revision": source_revision,
-            },
-        )
-        deploy_done = await wait_for_node_command(db, deploy_cmd.id, timeout_seconds=180)
-        if deploy_done.status != "done":
-            raise HTTPException(500, f"Move failed during deploy on target node: {deploy_done.error_message or 'unknown error'}")
 
     live_statuses = {"running", "starting", "restarting", "stopping", "node_offline"}
     live_replica_ids = {replica.id for replica in replicas if replica.status in live_statuses}
@@ -2033,71 +1834,6 @@ async def start_app(app_id: int, db: AsyncSession = Depends(get_db), actor: str 
 
     return {"status": app.status, "instance_count": len(replicas)}
 
-    # ── Instance-based model ──────────────────────────────────────────────
-    replica_result = await db.execute(
-        select(ApplicationReplica).where(ApplicationReplica.app_id == app_id)
-    )
-    replicas = replica_result.scalars().all()
-
-    if replicas:
-        # Kill any orphan legacy container (cloudbase-app-{id}) that may still be running
-        # from before the instance-based model. It has no replica row and confuses status.
-        if await asyncio.to_thread(pm.is_docker_app_running, app_id):
-            await asyncio.to_thread(pm.stop_docker_app, app_id)
-
-        env_vars = decrypt_env(app.env_vars or "")
-        node_map = await _load_node_map(db)
-
-        for replica in replicas:
-            if replica.status in ("running", "starting"):
-                continue
-            if replica.status not in ("stopped", "error", "pending"):
-                continue
-            replica_node = node_map.get(replica.node_id)
-            if replica_node and replica_node.is_local:
-                try:
-                    cid = await _start_instance_local(app, replica, env_vars, app_id)
-                    replica.status = "running"
-                    replica.container_id = cid
-                    replica.last_error = None
-                except HTTPException:
-                    raise
-                except Exception as e:
-                    replica.status = "error"
-                    replica.last_error = str(e)
-            elif replica_node and replica_node.status == "online":
-                remote_payload = _remote_replica_command_payload(
-                    app, env_vars, replica.external_port or app.port or 8000
-                )
-                await queue_node_command(
-                    db, node_id=replica_node.id, app_id=app_id,
-                    command_type="start_replica",
-                    payload={**remote_payload, "replica_id": replica.id},
-                )
-                replica.status = "starting"
-
-        app.status = _derive_app_status_from_instances(replicas)
-
-        # Update nginx to include all running instances
-        if app.nginx_enabled and app.domain:
-            await db.flush()
-            backends = await _get_nginx_backends(app, db, local_node)
-            _ensure_maintenance_files(app, app_id)
-            ssl_cert, ssl_key = _resolve_ssl_paths(app.ssl_cert_path, app.ssl_key_path)
-            config = nm.generate_config(
-                app.name, app.domain, backends, ssl_cert, ssl_key,
-                app_id=app_id, mode=_get_nginx_mode(app),
-                extra_domains=json.loads(app.extra_domains or "[]"),
-                redirect_domains=json.loads(app.redirect_domains or "[]"),
-            )
-            nm.write_nginx_config(app.name, config)
-
-        await log_audit(db, "app.start", actor=actor, app_id=app_id, detail={"name": app.name})
-        await db.commit()
-        return {"status": app.status, "instance_count": len(replicas)}
-
-    raise HTTPException(400, "No instances configured — add an instance first")
-
 
 @router.post("/{app_id}/stop")
 async def stop_app(app_id: int, db: AsyncSession = Depends(get_db), actor: str = Depends(_auth.get_current_actor)):
@@ -2131,46 +1867,6 @@ async def stop_app(app_id: int, db: AsyncSession = Depends(get_db), actor: str =
     await log_audit(db, "app.stop", actor=actor, app_id=app_id, detail={"name": app.name})
     await db.commit()
     return {"status": app.status, "instance_count": len(replicas)}
-
-    # ── Instance-based model ──────────────────────────────────────────────
-    replica_result = await db.execute(
-        select(ApplicationReplica).where(ApplicationReplica.app_id == app_id)
-    )
-    replicas = replica_result.scalars().all()
-
-    if replicas:
-        # Also stop any orphan legacy container that may exist alongside instances
-        if await asyncio.to_thread(pm.is_docker_app_running, app_id):
-            await asyncio.to_thread(pm.stop_docker_app, app_id)
-
-        node_map = await _load_node_map(db)
-
-        for replica in replicas:
-            if replica.status not in ("running", "starting"):
-                continue
-            replica_node = node_map.get(replica.node_id)
-            if replica_node and replica_node.is_local:
-                await asyncio.to_thread(pm.stop_docker_replica, app_id, replica.id)
-                replica.status = "stopped"
-            elif replica_node and replica_node.status == "online":
-                await queue_node_command(
-                    db, node_id=replica_node.id, app_id=app_id,
-                    command_type="stop_replica",
-                    payload={"app_id": app_id, "replica_id": replica.id, "app_name": app.name},
-                )
-                replica.status = "stopping"
-
-        app.status = "stopped"
-        app.pid = None
-        await log_audit(db, "app.stop", actor=actor, app_id=app_id, detail={"name": app.name})
-        await db.commit()
-        return {"status": "stopped"}
-
-    # No instances — nothing to stop
-    app.status = "stopped"
-    app.pid = None
-    await db.commit()
-    return {"status": "stopped"}
 
 
 @router.post("/{app_id}/restart")
@@ -2259,99 +1955,6 @@ async def restart_app(app_id: int, db: AsyncSession = Depends(get_db), actor: st
         )
 
     return {"status": app.status, "instance_count": len(replicas)}
-
-    # ── Instance-based model ──────────────────────────────────────────────
-    replica_result = await db.execute(
-        select(ApplicationReplica).where(ApplicationReplica.app_id == app_id)
-    )
-    replicas = replica_result.scalars().all()
-
-    if replicas:
-        env_vars = decrypt_env(app.env_vars or "")
-        node_map = await _load_node_map(db)
-
-        # Show restart page briefly
-        show_restart_page = (
-            app.nginx_enabled and app.domain and (app.external_port or app.port)
-            and not app.maintenance_mode and not app.update_mode
-        )
-        if show_restart_page:
-            _ensure_maintenance_files(app, app_id)
-            _ssl_cert, _ssl_key = _resolve_ssl_paths(app.ssl_cert_path, app.ssl_key_path)
-            restart_cfg = nm.generate_config(
-                app.name, app.domain, _nginx_proxy_port(app),
-                _ssl_cert, _ssl_key,
-                app_id=app_id, mode="restart",
-                extra_domains=json.loads(app.extra_domains or "[]"),
-                redirect_domains=json.loads(app.redirect_domains or "[]"),
-            )
-            nm.write_nginx_config(app.name, restart_cfg)
-            pm._push_line(app_id, "Restarting all instances…")
-
-        # 1. Stop all running instances
-        for replica in replicas:
-            if replica.status not in ("running", "starting"):
-                continue
-            replica_node = node_map.get(replica.node_id)
-            if replica_node and replica_node.is_local:
-                await asyncio.to_thread(pm.stop_docker_replica, app_id, replica.id)
-                replica.status = "stopped"
-            elif replica_node and replica_node.status == "online":
-                await queue_node_command(
-                    db, node_id=replica_node.id, app_id=app_id,
-                    command_type="stop_replica",
-                    payload={"app_id": app_id, "replica_id": replica.id, "app_name": app.name},
-                )
-                replica.status = "stopped"
-
-        await asyncio.sleep(1)
-
-        # 2. Start all instances
-        for replica in replicas:
-            replica_node = node_map.get(replica.node_id)
-            if replica_node and replica_node.is_local:
-                try:
-                    cid = await _start_instance_local(app, replica, env_vars, app_id)
-                    replica.status = "running"
-                    replica.container_id = cid
-                    replica.last_error = None
-                except HTTPException:
-                    raise
-                except Exception as e:
-                    replica.status = "error"
-                    replica.last_error = str(e)
-            elif replica_node and replica_node.status == "online":
-                remote_payload = _remote_replica_command_payload(
-                    app, env_vars, replica.external_port or app.port or 8000
-                )
-                await queue_node_command(
-                    db, node_id=replica_node.id, app_id=app_id,
-                    command_type="start_replica",
-                    payload={**remote_payload, "replica_id": replica.id},
-                )
-                replica.status = "starting"
-
-        app.status = _derive_app_status_from_instances(replicas)
-
-        # Restore nginx
-        if show_restart_page and app.nginx_enabled and app.domain:
-            await db.flush()
-            restart_started_at = asyncio.get_running_loop().time()
-            asyncio.create_task(_restore_nginx_after_restart(
-                app_id,
-                app.name, app.domain, app.external_port or app.port,
-                app.ssl_cert_path, app.ssl_key_path,
-                None, restart_started_at,
-                json.loads(app.extra_domains or "[]"),
-                json.loads(app.redirect_domains or "[]"),
-                use_docker=True,
-            ))
-
-        await log_audit(db, "app.restart", actor=actor, app_id=app_id, detail={"name": app.name})
-        await db.commit()
-        return {"status": app.status, "instance_count": len(replicas)}
-
-    raise HTTPException(400, "No instances configured — add an instance first")
 
 
 class ScaleRequest(BaseModel):
@@ -2813,6 +2416,10 @@ async def scale_app(app_id: int, req: ScaleRequest, db: AsyncSession = Depends(g
     app = await _get_or_404(app_id, db)
     local_node = await ensure_local_node(db)
 
+    instance_count_result = await db.execute(select(func.count()).select_from(ApplicationReplica))
+    if instance_count_result.scalar() >= _cfg.get_limit("max_instances"):
+        raise HTTPException(400, f"Instance limit reached ({_cfg.get_limit('max_instances')} instances maximum). Adjust limits.max_instances in config.yaml to increase.")
+
     # Resolve target node for the new replica
     if req.node_id is not None:
         target_node_result = await db.execute(select(Node).where(Node.id == req.node_id, Node.enabled == True))
@@ -2913,29 +2520,7 @@ async def remove_replica(app_id: int, replica_id: int, db: AsyncSession = Depend
 @router.post("/{app_id}/pull")
 async def git_pull(app_id: int, payload: PullRequest | None = Body(default=None), db: AsyncSession = Depends(get_db), actor: str = Depends(_auth.get_current_actor)):
     app = await _get_or_404(app_id, db)
-    local_node = await ensure_local_node(db)
-    node = await _get_app_node(app, db, local_node)
     target_commit = (payload.commit.strip() if payload and payload.commit else None)
-
-    if not node.is_local:
-        cmd = await queue_node_command(
-            db,
-            node_id=node.id,
-            app_id=app.id,
-            command_type="git_pull",
-            payload={"app_id": app.id, "app_name": app.name, "commit": target_commit},
-        )
-        done = await wait_for_node_command(db, cmd.id, timeout_seconds=180)
-        if done.status != "done":
-            raise HTTPException(500, f"Failed to pull on node '{node.name}': {done.error_message}")
-        result = json.loads(done.result or "{}")
-        pulled_revision = result.get("source_revision")
-        if pulled_revision:
-            app.source_revision = pulled_revision
-            app.image_revision = pulled_revision
-            await db.commit()
-        return result
-
     app_dir = pm.get_app_dir(app.name)
 
     if not os.path.exists(app_dir):
@@ -3055,23 +2640,11 @@ async def git_pull(app_id: int, payload: PullRequest | None = Body(default=None)
 @router.post("/{app_id}/rebuild")
 async def rebuild_docker_image(app_id: int, db: AsyncSession = Depends(get_db), actor: str = Depends(_auth.get_current_actor)):
     app = await _get_or_404(app_id, db)
-    local_node = await ensure_local_node(db)
-    node = await _get_app_node(app, db, local_node)
 
     if not app.use_docker:
         raise HTTPException(400, "Rebuild is only available for Docker apps")
     if not app.working_dir:
         raise HTTPException(400, "No working directory — deploy the app first")
-
-    if not node.is_local:
-        cmd = await queue_node_command(
-            db,
-            node_id=node.id,
-            app_id=app.id,
-            command_type="rebuild_app",
-            payload={"app_id": app.id, "app_name": app.name},
-        )
-        return {"status": "queued", "command_id": cmd.id, "message": f"Rebuild queued on node '{node.name}'"}
 
     was_running = pm.is_docker_app_running(app_id)
     action_logs: list[str] = ["[Docker] Rebuilding image..."]
@@ -3168,6 +2741,7 @@ async def deploy_zero_downtime(app_id: int, db: AsyncSession = Depends(get_db), 
         target_slots = [fallback]
 
     env_vars = decrypt_env(app.env_vars or "")
+    source_revision = _refresh_app_source_revision(app)
 
     # ── Step 1: Refresh / build image on every target node ───────────────────
     new_img: str | None = None
@@ -3403,37 +2977,7 @@ _SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 async def git_pull_stream(app_id: int, payload: PullRequest | None = Body(default=None), db: AsyncSession = Depends(get_db)):
     """Streaming SSE variant of git_pull. Each build log line is emitted as it happens."""
     app = await _get_or_404(app_id, db)
-    local_node = await ensure_local_node(db)
-    node = await _get_app_node(app, db, local_node)
     target_commit = (payload.commit.strip() if payload and payload.commit else None)
-
-    if not node.is_local:
-        # Remote: queue command, wait, then replay action_logs
-        async def _remote_gen():
-            yield _sse_line(f"[Remote] Queueing pull on node '{node.name}'…")
-            cmd = await queue_node_command(
-                db, node_id=node.id, app_id=app.id,
-                command_type="git_pull",
-                payload={"app_id": app.id, "app_name": app.name, "commit": target_commit},
-            )
-            yield _sse_line(f"[Remote] Command queued (id={cmd.id}), waiting…")
-            done = await wait_for_node_command(db, cmd.id, timeout_seconds=180)
-            if done.status != "done":
-                yield _sse_line(f"[Error] {done.error_message or 'Pull failed on remote node'}")
-                yield "data: __FAILED__\n\n"
-                return
-            result = json.loads(done.result or "{}")
-            pulled_revision = result.get("source_revision")
-            if pulled_revision:
-                app.source_revision = pulled_revision
-                app.image_revision = pulled_revision
-                await db.commit()
-            for line in result.get("action_logs", []):
-                yield _sse_line(str(line))
-            yield f"event: result\ndata: {json.dumps(result)}\n\n"
-            yield "data: __DONE__\n\n"
-        return StreamingResponse(_remote_gen(), media_type="text/event-stream", headers=_SSE_HEADERS)
-
     app_dir = pm.get_app_dir(app.name)
 
     if not os.path.exists(app_dir):
@@ -3571,53 +3115,11 @@ async def git_pull_stream(app_id: int, payload: PullRequest | None = Body(defaul
 async def rebuild_docker_image_stream(app_id: int, db: AsyncSession = Depends(get_db)):
     """Streaming SSE variant of rebuild_docker_image."""
     app = await _get_or_404(app_id, db)
-    local_node = await ensure_local_node(db)
-    node = await _get_app_node(app, db, local_node)
 
     if not app.use_docker:
         raise HTTPException(400, "Rebuild is only available for Docker apps")
     if not app.working_dir:
         raise HTTPException(400, "No working directory — deploy the app first")
-
-    if not node.is_local:
-        async def _remote_rebuild_gen():
-            max_attempts = 3
-            for attempt in range(1, max_attempts + 1):
-                yield _sse_line(f"[Remote] Queueing rebuild on node '{node.name}' (attempt {attempt}/{max_attempts})…")
-                cmd = await queue_node_command(
-                    db, node_id=node.id, app_id=app.id,
-                    command_type="rebuild_app",
-                    payload={"app_id": app.id, "app_name": app.name},
-                )
-                yield _sse_line(f"[Remote] Command queued (id={cmd.id}), waiting…")
-                done = await wait_for_node_command(db, cmd.id, timeout_seconds=900)
-                if done.status == "done":
-                    result = json.loads(done.result or "{}")
-                    rebuilt_revision = result.get("source_revision")
-                    if rebuilt_revision:
-                        app.source_revision = rebuilt_revision
-                        app.image_revision = rebuilt_revision
-                        await db.commit()
-                    for line in result.get("action_logs", []):
-                        yield _sse_line(str(line))
-                    yield f"event: result\ndata: {json.dumps(result)}\n\n"
-                    yield "data: __DONE__\n\n"
-                    return
-
-                err = (done.error_message or "").strip()
-                retryable = (
-                    "500 internal server error" in err.lower()
-                    or "build already in progress" in err.lower()
-                )
-                if retryable and attempt < max_attempts:
-                    yield _sse_line(f"[Remote] Temporary failure from node: {err or 'unknown error'}. Retrying…")
-                    await asyncio.sleep(0.7 * attempt)
-                    continue
-
-                yield _sse_line(f"[Error] {err or 'Rebuild failed on remote node'}")
-                yield "data: __FAILED__\n\n"
-                return
-        return StreamingResponse(_remote_rebuild_gen(), media_type="text/event-stream", headers=_SSE_HEADERS)
 
     queue: asyncio.Queue = asyncio.Queue()
     result_holder: dict = {}
@@ -3696,21 +3198,6 @@ async def install_deps(app_id: int, db: AsyncSession = Depends(get_db)):
 @router.get("/{app_id}/nginx-config")
 async def get_nginx_config(app_id: int, db: AsyncSession = Depends(get_db)):
     app = await _get_or_404(app_id, db)
-    local_node = await ensure_local_node(db)
-    node = await _get_app_node(app, db, local_node)
-
-    if not node.is_local:
-        cmd = await queue_node_command(
-            db,
-            node_id=node.id,
-            app_id=app.id,
-            command_type="get_nginx_config",
-            payload={"app_id": app.id, "app_name": app.name},
-        )
-        done = await wait_for_node_command(db, cmd.id, timeout_seconds=20)
-        if done.status != "done":
-            raise HTTPException(500, f"Failed to get remote nginx config: {done.error_message}")
-        return json.loads(done.result or "{}")
 
     safe = nm._safe_name(app.name)
     config_path = os.path.join(nm.NGINX_SITES_DIR, safe)
@@ -3735,27 +3222,6 @@ async def get_nginx_config(app_id: int, db: AsyncSession = Depends(get_db)):
 @router.put("/{app_id}/nginx-config")
 async def save_nginx_config(app_id: int, payload: dict, db: AsyncSession = Depends(get_db)):
     app = await _get_or_404(app_id, db)
-    local_node = await ensure_local_node(db)
-    node = await _get_app_node(app, db, local_node)
-
-    if not node.is_local:
-        remote_payload = dict(payload or {})
-        remote_payload["app_id"] = app.id
-        remote_payload["app_name"] = app.name
-        cmd = await queue_node_command(
-            db,
-            node_id=node.id,
-            app_id=app.id,
-            command_type="save_nginx_config",
-            payload=remote_payload,
-        )
-        done = await wait_for_node_command(db, cmd.id, timeout_seconds=20)
-        if done.status != "done":
-            raise HTTPException(500, f"Failed to save remote nginx config: {done.error_message}")
-
-        result_payload = json.loads(done.result or "{}") if done.result else {}
-        await db.refresh(app)
-        return result_payload
 
     content = payload.get("content", "")
     ok, msg = nm.write_nginx_config(app.name, content)
@@ -4026,30 +3492,11 @@ async def save_maintenance_pages(
 ):
     app = await _get_or_404(app_id, db)
     local_node = await ensure_local_node(db)
-    node = await _get_app_node(app, db, local_node)
 
     app.downtime_page = json.dumps(req.downtime_page.model_dump())
     app.update_page   = json.dumps(req.update_page.model_dump())
     app.restart_page  = json.dumps(req.restart_page.model_dump())
     app.starting_page = json.dumps(req.starting_page.model_dump())
-
-    if not node.is_local:
-        remote_payload = req.model_dump()
-        remote_payload["app_id"] = app.id
-        remote_payload["app_name"] = app.name
-        await db.commit()
-        cmd = await queue_node_command(
-            db,
-            node_id=node.id,
-            app_id=app.id,
-            command_type="save_maintenance_pages",
-            payload=remote_payload,
-        )
-        done = await wait_for_node_command(db, cmd.id, timeout_seconds=60)
-        if done.status != "done":
-            raise HTTPException(500, f"Failed to save maintenance settings on node '{node.name}': {done.error_message}")
-        return json.loads(done.result or "{}")
-
     downtime_html = nm.generate_maintenance_html(
         req.downtime_page.title   or "Down for Maintenance",
         req.downtime_page.message or "We'll be back shortly.",
@@ -4115,42 +3562,18 @@ async def save_maintenance_pages(
 async def toggle_maintenance_mode(app_id: int, db: AsyncSession = Depends(get_db)):
     local_node = await ensure_local_node(db)
     app = await _get_or_404(app_id, db)
-    node = await _get_app_node(app, db, local_node)
     previous_maintenance_mode = bool(app.maintenance_mode)
     previous_update_mode = bool(app.update_mode)
     
     if not app.domain:
         raise HTTPException(400, "A domain must be configured to use maintenance mode")
     
-    if node.is_local and not app.nginx_enabled:
+    if not app.nginx_enabled:
         raise HTTPException(400, "Nginx must be configured to use maintenance mode")
 
     app.maintenance_mode = not (app.maintenance_mode or False)
     if app.maintenance_mode:
         app.update_mode = False  # mutex: only one mode at a time
-
-    node = await _get_app_node(app, db, local_node)
-    if not node.is_local:
-        await db.commit()
-        cmd = await queue_node_command(
-            db,
-            node_id=node.id,
-            app_id=app.id,
-            command_type="toggle_maintenance_mode",
-            payload={
-                "app_id": app.id,
-                "app_name": app.name,
-                "maintenance_mode": bool(app.maintenance_mode),
-                "update_mode": bool(app.update_mode),
-                "previous_maintenance_mode": previous_maintenance_mode,
-                "previous_update_mode": previous_update_mode,
-            },
-        )
-        done = await wait_for_node_command(db, cmd.id, timeout_seconds=30)
-        await db.refresh(app)
-        if done.status != "done":
-            raise HTTPException(500, f"Failed to toggle maintenance mode on node '{node.name}': {done.error_message}")
-        return _app_to_dict(app)
 
     mode = _get_nginx_mode(app)
     log.info("[toggle-maintenance] app_id=%d new_mode=%r nginx_mode=%r domain=%r",
@@ -4180,42 +3603,18 @@ async def toggle_maintenance_mode(app_id: int, db: AsyncSession = Depends(get_db
 async def toggle_update_mode(app_id: int, db: AsyncSession = Depends(get_db)):
     local_node = await ensure_local_node(db)
     app = await _get_or_404(app_id, db)
-    node = await _get_app_node(app, db, local_node)
     previous_maintenance_mode = bool(app.maintenance_mode)
     previous_update_mode = bool(app.update_mode)
 
     if not app.domain:
         raise HTTPException(400, "A domain must be configured to use update mode")
         
-    if node.is_local and not app.nginx_enabled:
+    if not app.nginx_enabled:
         raise HTTPException(400, "Nginx must be configured to use update mode")
 
     app.update_mode = not (app.update_mode or False)
     if app.update_mode:
         app.maintenance_mode = False  # mutex: only one mode at a time
-
-    node = await _get_app_node(app, db, local_node)
-    if not node.is_local:
-        await db.commit()
-        cmd = await queue_node_command(
-            db,
-            node_id=node.id,
-            app_id=app.id,
-            command_type="toggle_update_mode",
-            payload={
-                "app_id": app.id,
-                "app_name": app.name,
-                "maintenance_mode": bool(app.maintenance_mode),
-                "update_mode": bool(app.update_mode),
-                "previous_maintenance_mode": previous_maintenance_mode,
-                "previous_update_mode": previous_update_mode,
-            },
-        )
-        done = await wait_for_node_command(db, cmd.id, timeout_seconds=30)
-        await db.refresh(app)
-        if done.status != "done":
-            raise HTTPException(500, f"Failed to toggle update mode on node '{node.name}': {done.error_message}")
-        return _app_to_dict(app)
 
     mode = _get_nginx_mode(app)
     log.info("[toggle-update] app_id=%d new_mode=%r nginx_mode=%r domain=%r",

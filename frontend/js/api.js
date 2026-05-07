@@ -134,6 +134,8 @@ export const api = {
   getServerLogs: (lines) => request('GET', `/system/logs?lines=${lines || 500}`),
   getPDManagerNginx: () => request('GET',  '/system/nginx-config'),
   applyPDManagerNginx:(data)    => request('POST', '/system/nginx-config', data),
+  getSystemSettings:  ()        => request('GET',  '/system/settings'),
+  saveSystemSettings: (data)    => request('POST', '/system/settings', data),
   listGitHubTokens:  ()         => request('GET',    '/system/github-tokens'),
   saveGitHubToken:   (label, token) => request('POST', '/system/github-tokens', { label, token }),
   deleteGitHubToken: (id)       => request('DELETE', `/system/github-tokens/${id}`),

@@ -251,25 +251,29 @@ async def _write_app_nginx_config(
     *,
     mode: Optional[str] = None,
 ) -> None:
-    if not (app.nginx_enabled and app.domain):
+    _base = _cfg.get_base_domain()
+    has_custom = bool(app.nginx_enabled and app.domain)
+    if not has_custom and not _base:
         return
 
     maint_ok, maint_msg = _ensure_maintenance_files(app, app.id)
     if not maint_ok:
         raise HTTPException(500, f"Maintenance files failed: {maint_msg}")
 
-    ssl_cert, ssl_key = _resolve_ssl_paths(app.ssl_cert_path, app.ssl_key_path)
+    ssl_cert = ssl_key = None
+    if has_custom:
+        ssl_cert, ssl_key = _resolve_ssl_paths(app.ssl_cert_path, app.ssl_key_path)
     backends = await _get_nginx_backends(app, db, local_node)
     config = nm.generate_config(
         app.name,
-        app.domain,
+        app.domain if has_custom else None,
         backends,
         ssl_cert,
         ssl_key,
         app_id=app.id,
         mode=mode or _get_nginx_mode(app),
-        extra_domains=json.loads(app.extra_domains or "[]"),
-        redirect_domains=json.loads(app.redirect_domains or "[]"),
+        extra_domains=json.loads(app.extra_domains or "[]") if has_custom else [],
+        redirect_domains=json.loads(app.redirect_domains or "[]") if has_custom else [],
     )
     ok, msg = nm.write_nginx_config(app.name, config)
     if not ok:
@@ -325,22 +329,26 @@ async def _restore_nginx_after_transition(
 
     async with AsyncSessionLocal() as db:
         app = await db.get(Application, app_id)
-        if not app or not app.nginx_enabled or not app.domain:
+        _base = _cfg.get_base_domain()
+        has_custom = bool(app and app.nginx_enabled and app.domain)
+        if not app or (not has_custom and not _base):
             return
 
         local_node = await ensure_local_node(db)
         backends = await _get_nginx_backends(app, db, local_node)
-        ssl_cert, ssl_key = _resolve_ssl_paths(app.ssl_cert_path, app.ssl_key_path)
+        ssl_cert = ssl_key = None
+        if has_custom:
+            ssl_cert, ssl_key = _resolve_ssl_paths(app.ssl_cert_path, app.ssl_key_path)
         config = nm.generate_config(
             app.name,
-            app.domain,
+            app.domain if has_custom else None,
             backends,
             ssl_cert,
             ssl_key,
             app_id=app.id,
             mode=_get_nginx_mode(app),
-            extra_domains=json.loads(app.extra_domains or "[]"),
-            redirect_domains=json.loads(app.redirect_domains or "[]"),
+            extra_domains=json.loads(app.extra_domains or "[]") if has_custom else [],
+            redirect_domains=json.loads(app.redirect_domains or "[]") if has_custom else [],
         )
         ok, msg = nm.write_nginx_config(app.name, config)
 

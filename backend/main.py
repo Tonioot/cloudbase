@@ -939,6 +939,52 @@ async def apply_cloudbase_nginx(req: CloudbaseNginxRequest, _: dict = Depends(au
     return {"ok": ok, "message": msg, "preview": config}
 
 
+# ── System settings (base_domain, etc.) ───────────────────────────────────────
+@app.get("/api/system/settings", include_in_schema=False)
+async def get_system_settings(_: dict = Depends(auth.require_admin)):
+    return {"base_domain": _cfg.get_base_domain()}
+
+
+@app.post("/api/system/settings", include_in_schema=False)
+async def save_system_settings(
+    body: dict = Body(...),
+    db: AsyncSession = Depends(get_db),
+    _: dict = Depends(auth.require_admin),
+):
+    import re as _re
+    base_domain = str(body.get("base_domain", "")).strip().strip(".")
+    if base_domain and not _re.match(r'^[a-zA-Z0-9._-]+$', base_domain):
+        raise HTTPException(400, "Invalid base_domain — use only letters, digits, dots and hyphens")
+    _cfg.set_base_domain(base_domain)
+
+    # Regenerate nginx for all apps in a background task
+    async def _refresh_all():
+        import re as _re2
+        from routers.nodes import ensure_local_node as _ensure_local
+        from routers.applications import (
+            _write_app_nginx_config,
+            _ensure_maintenance_files,
+            _get_nginx_backends,
+            _get_nginx_mode,
+            _resolve_ssl_paths,
+        )
+        try:
+            async with AsyncSessionLocal() as _db:
+                result = await _db.execute(select(Application))
+                apps = result.scalars().all()
+                local_node = await _ensure_local(_db)
+                for _app in apps:
+                    try:
+                        await _write_app_nginx_config(_app, _db, local_node)
+                    except Exception as _e:
+                        log.warning("auto-nginx refresh failed for app %s: %s", _app.name, _e)
+        except Exception as _e:
+            log.warning("auto-nginx refresh failed: %s", _e)
+
+    asyncio.create_task(_refresh_all())
+    return {"ok": True}
+
+
 @app.post("/api/system/nginx-default-catchall")
 async def apply_nginx_default_catchall(_: dict = Depends(auth.require_admin)):
     ok, msg = nm.write_default_catch_all()

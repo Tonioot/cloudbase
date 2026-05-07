@@ -36,6 +36,7 @@ export function initSidebar() {
   wireGitHubTokensButton();
   wireExportImportButton();
   initRoleBasedUI();
+  wireSystemSettingsButton();
 }
 
 async function loadSidebarTree() {
@@ -1013,3 +1014,78 @@ async function renderUsersList(modal) {
   }
 }
 
+// ── System Settings (base_domain etc.) ────────────────────────────────────────
+function wireSystemSettingsButton() {
+  const btn = document.getElementById('btn-system-settings');
+  if (!btn) return;
+
+  btn.addEventListener('click', async () => {
+    let modal = document.getElementById('system-settings-modal-global');
+    if (!modal) {
+      modal = document.createElement('div');
+      modal.id = 'system-settings-modal-global';
+      modal.className = 'dialog-backdrop';
+      modal.innerHTML = `
+        <div class="dialog dialog-modern" style="max-width:480px;width:90%">
+          <div class="dialog-title">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="margin-right:8px;vertical-align:-2px"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            System Settings
+          </div>
+          <div class="dialog-body">
+            <label class="field-label" style="margin-bottom:6px">
+              App Base Domain
+              <span style="font-weight:400;color:var(--text-muted);font-size:11px;margin-left:4px">(optional)</span>
+            </label>
+            <input class="input" id="sys-base-domain-input" placeholder="apps.example.com" autocomplete="off" style="margin-bottom:8px" />
+            <p style="font-size:12px;color:var(--text-muted);margin:0 0 4px;line-height:1.6">
+              Gives every app an automatic URL before you set a custom domain —
+              like <code style="background:var(--bg-muted);padding:1px 4px;border-radius:3px">myapp.apps.example.com</code>.
+            </p>
+            <p style="font-size:12px;color:var(--text-muted);margin:0;line-height:1.6">
+              Requires a wildcard DNS record:
+              <code style="background:var(--bg-muted);padding:1px 4px;border-radius:3px">*.apps.example.com → server IP</code>
+            </p>
+            <div id="sys-settings-msg" style="display:none;margin-top:12px;padding:8px 10px;border-radius:6px;font-size:12px"></div>
+          </div>
+          <div class="dialog-actions">
+            <button class="btn btn-secondary" id="sys-settings-cancel">Cancel</button>
+            <button class="btn btn-primary" id="sys-settings-save">Save</button>
+          </div>
+        </div>`;
+      document.body.appendChild(modal);
+
+      modal.querySelector('#sys-settings-cancel').onclick = () => { modal.style.display = 'none'; };
+      modal.addEventListener('click', e => { if (e.target === modal) modal.style.display = 'none'; });
+
+      modal.querySelector('#sys-settings-save').addEventListener('click', async () => {
+        const saveBtn = modal.querySelector('#sys-settings-save');
+        const input   = modal.querySelector('#sys-base-domain-input');
+        const msg     = modal.querySelector('#sys-settings-msg');
+        msg.style.display = 'none';
+        saveBtn.disabled  = true;
+        saveBtn.textContent = 'Saving…';
+        try {
+          await api.saveSystemSettings({ base_domain: input.value.trim() });
+          showMsg(msg, 'Saved — nginx configs are being updated in the background.', true);
+          setTimeout(() => { modal.style.display = 'none'; }, 1800);
+        } catch (e) {
+          showMsg(msg, e.message || 'Failed to save', false);
+        } finally {
+          saveBtn.disabled = false;
+          saveBtn.textContent = 'Save';
+        }
+      });
+    }
+
+    // Pre-fill current value each time modal opens
+    const input = modal.querySelector('#sys-base-domain-input');
+    const msg   = modal.querySelector('#sys-settings-msg');
+    msg.style.display = 'none';
+    input.value = '';
+    modal.style.display = 'flex';
+    try {
+      const data = await api.getSystemSettings();
+      input.value = data.base_domain || '';
+    } catch {}
+  });
+}

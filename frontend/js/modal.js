@@ -95,7 +95,7 @@ function modalHTML() {
       <div class="modal-header">
         <div>
           <div class="modal-title">Deploy Application</div>
-          <div class="modal-sub">Launch from GitHub with a cleaner runtime setup and safer defaults</div>
+          <div class="modal-sub">Launch from GitHub with safe defaults</div>
         </div>
         <button class="modal-close" id="modal-close">${icon.x}</button>
       </div>
@@ -103,15 +103,6 @@ function modalHTML() {
       <form id="deploy-form" novalidate>
         <div class="modal-body">
 
-          <div class="deploy-hero">
-            <div class="deploy-hero-title">${icon.terminal} New Deployment</div>
-            <div class="deploy-hero-sub">Connect your repository, define runtime limits, and deploy in one flow.</div>
-            <div class="deploy-hero-badges">
-              <span class="deploy-hero-badge">GitHub source</span>
-              <span class="deploy-hero-badge">Docker-first runtime</span>
-              <span class="deploy-hero-badge">Encrypted env vars</span>
-            </div>
-          </div>
 
           <div class="deploy-layout">
             <div class="deploy-column deploy-column-main">

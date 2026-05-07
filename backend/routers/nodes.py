@@ -1401,12 +1401,15 @@ async def _regen_nginx_for_app(app_id: int) -> None:
     """
     import json as _json
     import nginx_manager as _nm
+    import system_config as _syscfg
     from models import Application, ApplicationReplica
 
     async with AsyncSessionLocal() as db:
         app_result = await db.execute(select(Application).where(Application.id == app_id))
         app = app_result.scalar_one_or_none()
-        if not app or not app.nginx_enabled or not app.domain:
+        has_custom = bool(app and app.nginx_enabled and app.domain)
+        has_auto = bool(_syscfg.get_base_domain_cached())
+        if not app or not (has_custom or has_auto):
             return
 
         local_node_result = await db.execute(select(Node).where(Node.is_local == True))
@@ -1446,12 +1449,17 @@ async def _regen_nginx_for_app(app_id: int) -> None:
             else "maintenance" if app.maintenance_mode
             else "normal"
         )
-        extra_domains   = _json.loads(app.extra_domains   or "[]")
-        redirect_domains = _json.loads(app.redirect_domains or "[]")
+        extra_domains = _json.loads(app.extra_domains or "[]") if has_custom else []
+        redirect_domains = _json.loads(app.redirect_domains or "[]") if has_custom else []
+
+        ssl_cert = ssl_key = None
+        if has_custom:
+            ssl_cert = app.ssl_cert_path
+            ssl_key = app.ssl_key_path
 
         config = _nm.generate_config(
-            app.name, app.domain, backends,
-            app.ssl_cert_path, app.ssl_key_path,
+            app.name, app.domain if has_custom else None, backends,
+            ssl_cert, ssl_key,
             app_id=app.id, mode=nginx_mode,
             extra_domains=extra_domains,
             redirect_domains=redirect_domains,

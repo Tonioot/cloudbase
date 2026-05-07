@@ -38,7 +38,7 @@ async def get_db():
 async def init_db():
     import datetime as _dt
     from env_crypto import decrypt_text, encrypt_text
-    from models import Application, Node, NodeInvite, NodeCommand, AuditLog, StatsHistory, User
+    from models import Application, Node, NodeInvite, NodeCommand, AuditLog, StatsHistory, User, SystemConfig
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         # Migrate existing DBs: add columns introduced after initial schema.

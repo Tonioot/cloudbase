@@ -823,9 +823,9 @@ def generate_config(
 
     # Auto-subdomain: if base_domain is configured, include {slug}.{base_domain}
     # as the primary domain (when no custom domain is set) or as an extra server_name.
-    import config as _cfgn
+    import system_config as _scfg
     _using_auto_sub = False
-    _base = _cfgn.get_base_domain()
+    _base = _scfg.get_base_domain_cached()
     if _base and (app_name or "").strip().lower() != "cloudbase":
         _slug = _re.sub(r"[^a-z0-9]+", "-", (app_name or "").lower()).strip("-")
         if _slug:
@@ -838,8 +838,8 @@ def generate_config(
 
     # When using auto-subdomain with no explicit SSL, apply base SSL (wildcard cert)
     if _using_auto_sub and not ssl_cert and not ssl_key:
-        _base_cert = _cfgn.get_base_ssl_cert()
-        _base_key  = _cfgn.get_base_ssl_key()
+      _base_cert = _scfg.get_base_ssl_cert_cached()
+      _base_key  = _scfg.get_base_ssl_key_cached()
         if _base_cert and _base_key:
             ssl_cert = _base_cert
             ssl_key  = _base_key

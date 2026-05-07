@@ -25,6 +25,7 @@ from env_crypto import encrypt_env, decrypt_env, encrypt_text, decrypt_text
 from audit import log_audit
 import auth as _auth
 import config as _cfg
+import system_config as _syscfg
 
 router = APIRouter(prefix="/api/apps", tags=["applications"])
 log = logging.getLogger("pdm.apps")
@@ -148,6 +149,11 @@ def _get_nginx_mode(app: Application) -> str:
     return "normal"
 
 
+def _has_public_nginx_domain(app: Application) -> bool:
+    """True when app traffic can be routed via custom or auto-subdomain nginx."""
+    return bool((app.nginx_enabled and app.domain) or _syscfg.get_base_domain_cached())
+
+
 def _nginx_proxy_port(app: Application) -> Optional[int]:
     return app.external_port or app.port
 
@@ -251,7 +257,7 @@ async def _write_app_nginx_config(
     *,
     mode: Optional[str] = None,
 ) -> None:
-    _base = _cfg.get_base_domain()
+    _base = _syscfg.get_base_domain_cached()
     has_custom = bool(app.nginx_enabled and app.domain)
     if not has_custom and not _base:
         return
@@ -329,7 +335,7 @@ async def _restore_nginx_after_transition(
 
     async with AsyncSessionLocal() as db:
         app = await db.get(Application, app_id)
-        _base = _cfg.get_base_domain()
+        _base = _syscfg.get_base_domain_cached()
         has_custom = bool(app and app.nginx_enabled and app.domain)
         if not app or (not has_custom and not _base):
             return
@@ -1513,7 +1519,7 @@ async def move_app(app_id: int, req: MoveRequest, db: AsyncSession = Depends(get
     app.status = _derive_app_status_from_instances(replicas)
     app.pid = None
     app.last_error = None
-    if app.nginx_enabled and app.domain:
+    if _has_public_nginx_domain(app):
         await _write_app_nginx_config(app, db, local_node)
 
     await log_audit(
@@ -1803,8 +1809,7 @@ async def start_app(app_id: int, db: AsyncSession = Depends(get_db), actor: str 
     had_live_replicas = _has_live_replicas(replicas if created_replica is None else [])
     show_start_page = (
         not had_live_replicas
-        and app.nginx_enabled
-        and app.domain
+        and _has_public_nginx_domain(app)
         and not app.maintenance_mode
         and not app.update_mode
     )
@@ -1828,7 +1833,7 @@ async def start_app(app_id: int, db: AsyncSession = Depends(get_db), actor: str 
 
     app.status = _derive_app_status_from_instances(replicas)
     app.pid = None
-    if app.nginx_enabled and app.domain and not show_start_page:
+    if _has_public_nginx_domain(app) and not show_start_page:
         await _write_app_nginx_config(app, db, local_node)
 
     await log_audit(db, "app.start", actor=actor, app_id=app_id, detail={"name": app.name})
@@ -1857,7 +1862,7 @@ async def stop_app(app_id: int, db: AsyncSession = Depends(get_db), actor: str =
     if not replicas:
         app.status = "stopped"
         app.pid = None
-        if app.nginx_enabled and app.domain:
+        if _has_public_nginx_domain(app):
             await _write_app_nginx_config(app, db, local_node)
         await log_audit(db, "app.stop", actor=actor, app_id=app_id, detail={"name": app.name})
         await db.commit()
@@ -1872,7 +1877,7 @@ async def stop_app(app_id: int, db: AsyncSession = Depends(get_db), actor: str =
 
     app.status = _derive_app_status_from_instances(replicas)
     app.pid = None
-    if app.nginx_enabled and app.domain:
+    if _has_public_nginx_domain(app):
         await _write_app_nginx_config(app, db, local_node)
 
     await log_audit(db, "app.stop", actor=actor, app_id=app_id, detail={"name": app.name})
@@ -1890,8 +1895,7 @@ async def restart_app(app_id: int, db: AsyncSession = Depends(get_db), actor: st
 
     show_restart_page = (
         _has_live_replicas(replicas)
-        and app.nginx_enabled
-        and app.domain
+        and _has_public_nginx_domain(app)
         and not app.maintenance_mode
         and not app.update_mode
     )
@@ -1950,7 +1954,7 @@ async def restart_app(app_id: int, db: AsyncSession = Depends(get_db), actor: st
 
     app.status = _derive_app_status_from_instances(replicas)
     app.pid = None
-    if app.nginx_enabled and app.domain and not show_restart_page:
+    if _has_public_nginx_domain(app) and not show_restart_page:
         await _write_app_nginx_config(app, db, local_node)
 
     await log_audit(db, "app.restart", actor=actor, app_id=app_id, detail={"name": app.name})
@@ -2349,6 +2353,9 @@ async def restart_instance(
 
     await log_audit(db, "instance.restart", actor=actor, app_id=app_id,
                     detail={"name": app.name, "instance_id": instance_id})
+    if _has_public_nginx_domain(app):
+        local_node = await ensure_local_node(db)
+        await _write_app_nginx_config(app, db, local_node)
     await db.commit()
     return {"status": replica.status, "instance_id": instance_id}
 
@@ -2402,19 +2409,10 @@ async def delete_instance(
     remaining = remaining_result.scalars().all()
     app.status = _derive_app_status_from_instances(remaining) if remaining else "stopped"
 
-    # Regenerate nginx config without the removed backend
-    if app.nginx_enabled and app.domain:
-        _ensure_maintenance_files(app, app_id)
-        ssl_cert, ssl_key = _resolve_ssl_paths(app.ssl_cert_path, app.ssl_key_path)
-        backends = await _get_nginx_backends(app, db)
-        config = nm.generate_config(
-            app.name, app.domain, backends,
-            ssl_cert, ssl_key,
-            app_id=app_id, mode=_get_nginx_mode(app),
-            extra_domains=json.loads(app.extra_domains or "[]"),
-            redirect_domains=json.loads(app.redirect_domains or "[]"),
-        )
-        nm.write_nginx_config(app.name, config)
+    # Regenerate nginx config without the removed backend.
+    if _has_public_nginx_domain(app):
+        local_node = await ensure_local_node(db)
+        await _write_app_nginx_config(app, db, local_node)
 
     await log_audit(db, "instance.delete", actor=actor, app_id=app_id,
                     detail={"name": app.name, "instance_id": instance_id})
@@ -2484,20 +2482,10 @@ async def scale_app(app_id: int, req: ScaleRequest, db: AsyncSession = Depends(g
             await db.commit()
             raise HTTPException(500, f"Failed to start replica: {e}") from e
 
-        # Regenerate nginx with new backend — flush first so the new running replica is visible
-        if app.nginx_enabled and app.domain:
+        # Regenerate nginx with new backend — flush first so the new running replica is visible.
+        if _has_public_nginx_domain(app):
             await db.flush()
-            backends = await _get_nginx_backends(app, db, local_node)
-            _ensure_maintenance_files(app, app_id)
-            _ssl_cert, _ssl_key = _resolve_ssl_paths(app.ssl_cert_path, app.ssl_key_path)
-            config = nm.generate_config(
-                app.name, app.domain, backends,
-                _ssl_cert, _ssl_key,
-                app_id=app_id, mode=_get_nginx_mode(app),
-                extra_domains=json.loads(app.extra_domains or "[]"),
-                redirect_domains=json.loads(app.redirect_domains or "[]"),
-            )
-            nm.write_nginx_config(app.name, config)
+            await _write_app_nginx_config(app, db, local_node)
     else:
         if target_node.status != "online":
             raise HTTPException(400, f"Node '{target_node.name}' is not online")
@@ -2715,8 +2703,8 @@ async def deploy_zero_downtime(app_id: int, db: AsyncSession = Depends(get_db), 
 
     if not app.use_docker:
         raise HTTPException(400, "Zero-downtime deploy is only available for Docker apps")
-    if not app.nginx_enabled or not app.domain:
-        raise HTTPException(400, "Zero-downtime deploy requires nginx to be enabled with a domain")
+    if not _has_public_nginx_domain(app):
+        raise HTTPException(400, "Zero-downtime deploy requires a custom app domain or a configured base domain")
 
     pm._push_line(app_id, "[ZD] Zero-downtime deploy starting…")
 
@@ -2908,13 +2896,16 @@ async def deploy_zero_downtime(app_id: int, db: AsyncSession = Depends(get_db), 
         app.image_revision = source_revision
     await db.flush()
 
-    ssl_cert, ssl_key = _resolve_ssl_paths(app.ssl_cert_path, app.ssl_key_path)
+    has_custom = bool(app.nginx_enabled and app.domain)
+    ssl_cert = ssl_key = None
+    if has_custom:
+        ssl_cert, ssl_key = _resolve_ssl_paths(app.ssl_cert_path, app.ssl_key_path)
     cfg = nm.generate_config(
-        app.name, app.domain, new_backends,
+        app.name, app.domain if has_custom else None, new_backends,
         ssl_cert, ssl_key,
         app_id=app_id, mode="normal",
-        extra_domains=json.loads(app.extra_domains or "[]"),
-        redirect_domains=json.loads(app.redirect_domains or "[]"),
+        extra_domains=json.loads(app.extra_domains or "[]") if has_custom else [],
+        redirect_domains=json.loads(app.redirect_domains or "[]") if has_custom else [],
     )
     ok, msg = nm.write_nginx_config(app.name, cfg)
     if not ok:
@@ -3361,7 +3352,7 @@ def _app_to_dict(
         _proto = "https" if (app.ssl_cert_path and app.ssl_key_path) else "http"
         _app_url = f"{_proto}://{app.domain}"
     else:
-        _base = _cfg.get_base_domain()
+        _base = _syscfg.get_base_domain_cached()
         if _base:
             _slug = _re.sub(r"[^a-z0-9]+", "-", (app.name or "").lower()).strip("-")
             if _slug:
@@ -3561,17 +3552,10 @@ async def save_maintenance_pages(
         return {"ok": False, "message": msg}
 
     # Regenerate and reload nginx if configured, so changes take effect immediately
-    if app.nginx_enabled and app.domain:
-        mode    = _get_nginx_mode(app)
-        backends = await _get_nginx_backends(app, db, local_node)
-        config = nm.generate_config(
-            app.name, app.domain, backends,
-            app.ssl_cert_path, app.ssl_key_path,
-            app_id=app_id, mode=mode,
-            extra_domains=json.loads(app.extra_domains or "[]"),
-            redirect_domains=json.loads(app.redirect_domains or "[]"),
-        )
-        nginx_ok, nginx_msg = nm.write_nginx_config(app.name, config)
+    if _has_public_nginx_domain(app):
+        mode = _get_nginx_mode(app)
+        await _write_app_nginx_config(app, db, local_node, mode=mode)
+        nginx_ok, nginx_msg = True, "ok"
         if not nginx_ok:
             await db.commit()
             return {"ok": False, "message": f"Files saved but nginx reload failed: {nginx_msg}"}
@@ -3587,11 +3571,8 @@ async def toggle_maintenance_mode(app_id: int, db: AsyncSession = Depends(get_db
     previous_maintenance_mode = bool(app.maintenance_mode)
     previous_update_mode = bool(app.update_mode)
     
-    if not app.domain:
-        raise HTTPException(400, "A domain must be configured to use maintenance mode")
-    
-    if not app.nginx_enabled:
-        raise HTTPException(400, "Nginx must be configured to use maintenance mode")
+    if not _has_public_nginx_domain(app):
+        raise HTTPException(400, "Configure a custom app domain or base domain to use maintenance mode")
 
     app.maintenance_mode = not (app.maintenance_mode or False)
     if app.maintenance_mode:
@@ -3604,15 +3585,8 @@ async def toggle_maintenance_mode(app_id: int, db: AsyncSession = Depends(get_db
     maint_ok, maint_msg = _ensure_maintenance_files(app, app_id)
     if not maint_ok:
         raise HTTPException(500, f"Maintenance files failed: {maint_msg}")
-    backends = await _get_nginx_backends(app, db, local_node)
-    config = nm.generate_config(
-        app.name, app.domain, backends,
-        app.ssl_cert_path, app.ssl_key_path,
-        app_id=app_id, mode=mode,
-        extra_domains=json.loads(app.extra_domains or "[]"),
-        redirect_domains=json.loads(app.redirect_domains or "[]"),
-    )
-    ok, msg = nm.write_nginx_config(app.name, config)
+    await _write_app_nginx_config(app, db, local_node, mode=mode)
+    ok, msg = True, "ok"
     log.info("[toggle-maintenance] write_nginx_config ok=%s msg=%r", ok, msg)
     if not ok:
         raise HTTPException(500, f"Nginx config failed: {msg}")
@@ -3628,11 +3602,8 @@ async def toggle_update_mode(app_id: int, db: AsyncSession = Depends(get_db)):
     previous_maintenance_mode = bool(app.maintenance_mode)
     previous_update_mode = bool(app.update_mode)
 
-    if not app.domain:
-        raise HTTPException(400, "A domain must be configured to use update mode")
-        
-    if not app.nginx_enabled:
-        raise HTTPException(400, "Nginx must be configured to use update mode")
+    if not _has_public_nginx_domain(app):
+        raise HTTPException(400, "Configure a custom app domain or base domain to use update mode")
 
     app.update_mode = not (app.update_mode or False)
     if app.update_mode:
@@ -3645,15 +3616,8 @@ async def toggle_update_mode(app_id: int, db: AsyncSession = Depends(get_db)):
     maint_ok, maint_msg = _ensure_maintenance_files(app, app_id)
     if not maint_ok:
         raise HTTPException(500, f"Maintenance files failed: {maint_msg}")
-    backends = await _get_nginx_backends(app, db, local_node)
-    config = nm.generate_config(
-        app.name, app.domain, backends,
-        app.ssl_cert_path, app.ssl_key_path,
-        app_id=app_id, mode=mode,
-        extra_domains=json.loads(app.extra_domains or "[]"),
-        redirect_domains=json.loads(app.redirect_domains or "[]"),
-    )
-    ok, msg = nm.write_nginx_config(app.name, config)
+    await _write_app_nginx_config(app, db, local_node, mode=mode)
+    ok, msg = True, "ok"
     log.info("[toggle-update] write_nginx_config ok=%s msg=%r", ok, msg)
     if not ok:
         raise HTTPException(500, f"Nginx config failed: {msg}")
@@ -3732,18 +3696,12 @@ async def preview_maintenance_page(
 async def nginx_refresh(app_id: int, db: AsyncSession = Depends(get_db), _actor: str = Depends(_auth.get_current_actor)):
     """Regenerate the nginx config from the current set of running replicas."""
     app = await _get_or_404(app_id, db)
-    if not app.nginx_enabled or not app.domain:
+    if not _has_public_nginx_domain(app):
         return {"ok": False, "message": "Nginx not configured for this app"}
-    _ensure_maintenance_files(app, app_id)
-    ssl_cert, ssl_key = _resolve_ssl_paths(app.ssl_cert_path, app.ssl_key_path)
-    backends = await _get_nginx_backends(app, db)
-    config = nm.generate_config(
-        app.name, app.domain, backends, ssl_cert, ssl_key,
-        app_id=app_id, mode=_get_nginx_mode(app),
-        extra_domains=json.loads(app.extra_domains or "[]"),
-        redirect_domains=json.loads(app.redirect_domains or "[]"),
-    )
-    ok, msg = nm.write_nginx_config(app.name, config)
+    local_node = await ensure_local_node(db)
+    await _write_app_nginx_config(app, db, local_node, mode=_get_nginx_mode(app))
+    backends = await _get_nginx_backends(app, db, local_node)
+    ok, msg = True, "ok"
     return {"ok": ok, "message": msg, "backends": backends}
 
 

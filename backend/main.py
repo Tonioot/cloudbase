@@ -32,6 +32,7 @@ import docker_manager as dm
 import token_vault
 import node_agent
 import config as _cfg
+import system_config as _syscfg
 
 _LOG_DIR  = os.path.expanduser("~/.cloudbase/logs")
 _LOG_FILE = os.path.join(_LOG_DIR, "server.log")
@@ -78,7 +79,9 @@ async def _node_health_monitor():
 def _restore_stuck_restart_configs(apps: list[Application]) -> None:
     for app in apps:
         proxy_port = app.external_port or app.port
-        if not (app.nginx_enabled and app.domain and proxy_port):
+        has_custom = bool(app.nginx_enabled and app.domain)
+        has_auto = bool(_syscfg.get_base_domain_cached())
+        if not ((has_custom or has_auto) and proxy_port):
             continue
         if app.maintenance_mode or app.update_mode:
             continue
@@ -101,10 +104,10 @@ def _restore_stuck_restart_configs(apps: list[Application]) -> None:
         )
         normal_cfg = nm.generate_config(
             app.name,
-            app.domain,
+            app.domain if has_custom else None,
             proxy_port,
-            app.ssl_cert_path,
-            app.ssl_key_path,
+            app.ssl_cert_path if has_custom else None,
+            app.ssl_key_path if has_custom else None,
             app_id=app.id,
             mode="normal",
         )
@@ -524,6 +527,11 @@ async def lifespan(app: FastAPI):
     pm.set_main_loop(asyncio.get_event_loop())
     pm.load_registry()   # restore PID + shell_pid from disk before any process checks
 
+    # Keep DB-backed global system settings in memory (with one-time config.yaml bootstrap).
+    async with AsyncSessionLocal() as _db:
+        await _syscfg.bootstrap_from_config_if_needed(_db)
+        await _syscfg.load_cache(_db)
+
     # First-run: generate a password if none exists
     if not auth.load_hashed_password():
         import secrets
@@ -616,7 +624,7 @@ async def lifespan(app: FastAPI):
     async with AsyncSessionLocal() as db:
         from routers.applications import _write_app_nginx_config as _startup_nginx
         from routers.nodes import ensure_local_node as _startup_local_node
-        _startup_base = _cfg.get_base_domain()
+        _startup_base = _syscfg.get_base_domain_cached()
         result = await db.execute(select(Application))
         _startup_local = await _startup_local_node(db)
         for a in result.scalars().all():
@@ -911,20 +919,21 @@ class CloudbaseNginxRequest(BaseModel):
 
 
 @app.get("/api/system/nginx-config")
-async def get_cloudbase_nginx(_: dict = Depends(auth.require_admin)):
+async def get_cloudbase_nginx(db: AsyncSession = Depends(get_db), _: dict = Depends(auth.require_admin)):
     config_path = os.path.join(nm.NGINX_SITES_DIR, "cloudbase")
     exists = os.path.exists(config_path)
     content = None
     if exists:
         with open(config_path) as f:
             content = f.read()
+    settings = await _syscfg.get_base_settings(db)
     return {
         "exists": exists,
         "content": content,
         "path": config_path,
-        "base_domain": _cfg.get_base_domain(),
-        "base_ssl_cert_path": _cfg.get_base_ssl_cert(),
-        "base_ssl_key_path": _cfg.get_base_ssl_key(),
+        "base_domain": settings["base_domain"],
+        "base_ssl_cert_path": settings["base_ssl_cert_path"],
+        "base_ssl_key_path": settings["base_ssl_key_path"],
     }
 
 
@@ -952,11 +961,12 @@ async def apply_cloudbase_nginx(
         raise HTTPException(400, "Invalid base_domain")
     base_ssl_cert = str(req.base_ssl_cert_path or "").strip() or None
     base_ssl_key  = str(req.base_ssl_key_path  or "").strip() or None
-    _cfg.save_server_config({
-        "base_domain":    base_domain,
-        "base_ssl_cert":  base_ssl_cert or "",
-        "base_ssl_key":   base_ssl_key  or "",
-    })
+    await _syscfg.set_base_settings(
+        db,
+        base_domain=base_domain,
+        base_ssl_cert=base_ssl_cert or "",
+        base_ssl_key=base_ssl_key or "",
+    )
 
     # Regenerate nginx for all apps in background
     async def _refresh_apps():
@@ -966,7 +976,7 @@ async def apply_cloudbase_nginx(
             async with AsyncSessionLocal() as _db:
                 _apps = (await _db.execute(select(Application))).scalars().all()
                 _local = await _eln(_db)
-                _bdom  = _cfg.get_base_domain()
+                _bdom  = _syscfg.get_base_domain_cached()
                 for _a in _apps:
                     _has_c = bool(_a.nginx_enabled and _a.domain)
                     if not _has_c and not _bdom:

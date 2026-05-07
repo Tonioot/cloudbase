@@ -157,3 +157,11 @@ class StatsHistory(Base):
     memory_mb   = Column(Float, nullable=False)
     net_mb      = Column(Float, nullable=True)
     disk_mb     = Column(Float, nullable=True)
+
+
+class SystemConfig(Base):
+    __tablename__ = "system_config"
+
+    id = Column(Integer, primary_key=True, index=True)
+    key = Column(String(100), unique=True, nullable=False, index=True)
+    value = Column(Text, nullable=True)

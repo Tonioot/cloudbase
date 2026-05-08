@@ -254,30 +254,6 @@ def _resolve_replica_node(
     return node_map.get(replica.node_id)
 
 
-async def _ensure_default_replica(
-    app: Application,
-    db: AsyncSession,
-    local_node: Node,
-) -> tuple[list[ApplicationReplica], Optional[ApplicationReplica]]:
-    replicas = await _load_app_replicas(app.id, db)
-    if replicas:
-        return replicas, None
-
-    target_node = await _preferred_replica_node(app, db, local_node)
-    external_port = app.external_port
-    if external_port is None:
-        external_port = await _assign_external_port(None, target_node.id, None, db)
-        app.external_port = external_port
-
-    replica = ApplicationReplica(
-        app_id=app.id,
-        node_id=target_node.id,
-        external_port=external_port,
-        status="stopped",
-    )
-    db.add(replica)
-    await db.flush()
-    return [replica], replica
 
 
 async def _best_effort_stop_legacy_app_container(app_id: int) -> None:
@@ -1827,8 +1803,10 @@ async def _get_local_replica_logs(
 async def start_app(app_id: int, db: AsyncSession = Depends(get_db), actor: str = Depends(_auth.get_current_actor)):
     app = await _get_or_404(app_id, db)
     local_node = await ensure_local_node(db)
-    replicas, created_replica = await _ensure_default_replica(app, db, local_node)
-    had_live_replicas = _has_live_replicas(replicas if created_replica is None else [])
+    replicas = await _load_app_replicas(app_id, db)
+    if not replicas:
+        raise HTTPException(400, "No instances configured. Add an instance first before starting the app.")
+    had_live_replicas = _has_live_replicas(replicas)
     show_start_page = (
         not had_live_replicas
         and _has_public_nginx_domain(app)
@@ -1911,7 +1889,9 @@ async def stop_app(app_id: int, db: AsyncSession = Depends(get_db), actor: str =
 async def restart_app(app_id: int, db: AsyncSession = Depends(get_db), actor: str = Depends(_auth.get_current_actor)):
     app = await _get_or_404(app_id, db)
     local_node = await ensure_local_node(db)
-    replicas, _created_replica = await _ensure_default_replica(app, db, local_node)
+    replicas = await _load_app_replicas(app_id, db)
+    if not replicas:
+        raise HTTPException(400, "No instances configured. Add an instance first before restarting the app.")
     env_vars = decrypt_env(app.env_vars or "")
     node_map = await _load_node_map(db)
 

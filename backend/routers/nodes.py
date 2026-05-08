@@ -410,10 +410,8 @@ async def ensure_local_node(db: AsyncSession) -> Node:
             local.name = "Primary Node"
             updated = True
 
-        # Keep heartbeat updates cheap: avoid committing on every request.
-        if local.last_seen is None or (now - local.last_seen).total_seconds() >= _LOCAL_SEEN_UPDATE_SECONDS:
-            local.last_seen = now
-            updated = True
+        # last_seen is updated by the background heartbeat loop — skip here
+        # to avoid lock contention on every incoming request.
 
         # Expensive system/public-IP discovery is throttled to avoid 2-7s request stalls.
         monotonic_now = time.monotonic()

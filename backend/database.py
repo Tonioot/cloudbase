@@ -22,6 +22,7 @@ def _set_sqlite_pragmas(conn, _):
     cur = conn.cursor()
     cur.execute("PRAGMA journal_mode=WAL")
     cur.execute("PRAGMA busy_timeout=30000")
+    cur.execute("PRAGMA foreign_keys=ON")
     cur.close()
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 

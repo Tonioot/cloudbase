@@ -525,14 +525,14 @@ async def _crash_monitor():
                     from routers.applications import _derive_app_status_from_instances
                     a.status = _derive_app_status_from_instances(all_rep_result.scalars().all())
                     await db.commit()
-                        # If this restart attempt failed, the backend is dead — remove it from nginx upstream
-                        if replica.status in ("error", "stopped"):
-                            try:
-                                from routers.applications import _write_app_nginx_config as _wanc, _has_public_nginx_domain as _hpnd
-                                if local_node_obj and _hpnd(a):
-                                    await _wanc(a, db, local_node_obj)
-                            except Exception:
-                                pass
+                    # If this restart attempt failed, the backend is dead — remove it from nginx upstream
+                    if replica.status in ("error", "stopped"):
+                        try:
+                            from routers.applications import _write_app_nginx_config as _wanc, _has_public_nginx_domain as _hpnd
+                            if local_node_obj and _hpnd(a):
+                                await _wanc(a, db, local_node_obj)
+                        except Exception:
+                            pass
         except asyncio.CancelledError:
             return
         except Exception:

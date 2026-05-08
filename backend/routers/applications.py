@@ -1307,22 +1307,21 @@ async def delete_app(app_id: int, db: AsyncSession = Depends(get_db), actor: str
             await db.commit()
             return {"message": f"App '{app.name}' removed (node '{node.name}' was offline — app files may still exist on the node)"}
 
-    # Stop replica containers before deleting (DB rows cascade-delete with the app row)
+    # Stop and remove all replica containers before deleting
     replica_result = await db.execute(
         select(ApplicationReplica).where(ApplicationReplica.app_id == app_id)
     )
     node_map = await _load_node_map(db)
     for replica in replica_result.scalars().all():
-        if replica.status in ("running", "starting"):
-            r_node = node_map.get(replica.node_id)
-            if r_node and r_node.is_local:
-                await asyncio.to_thread(pm.stop_docker_replica, app_id, replica.id)
-            elif r_node and not r_node.is_local:
-                await queue_node_command(
-                    db, node_id=r_node.id, app_id=app_id,
-                    command_type="stop_replica",
-                    payload={"app_id": app_id, "replica_id": replica.id, "app_name": app.name},
-                )
+        r_node = node_map.get(replica.node_id)
+        if r_node and r_node.is_local:
+            await asyncio.to_thread(pm.stop_docker_replica, app_id, replica.id)
+        elif r_node and not r_node.is_local and r_node.status == "online":
+            await queue_node_command(
+                db, node_id=r_node.id, app_id=app_id,
+                command_type="stop_replica",
+                payload={"app_id": app_id, "replica_id": replica.id, "app_name": app.name},
+            )
 
     await _best_effort_stop_legacy_app_container(app_id)
     await asyncio.to_thread(dm.remove_image, app_id, app.name)

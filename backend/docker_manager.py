@@ -767,16 +767,25 @@ def run_replica_container(
     client = _get_client()
     cname = replica_container_name(app_id, replica_id)
     docker_options = docker_options or {}
+    import time as _time
+    import docker as _docker_mod  # type: ignore
+
     try:
         old = client.containers.get(cname)
         old.reload()
         if old.status == "running":
             # Container survived a node outage and is still healthy — reuse it
-            # instead of killing and immediately re-binding the same port.
             push_line_fn(app_id, f"[Replica] Container {replica_id} already running, reusing (recovered from outage).")
             return old.id
         old.remove(force=True)
         push_line_fn(app_id, f"[Replica] Removed old container for replica {replica_id}.")
+        # Wait for Docker to fully release the container name and port bindings
+        for _ in range(10):
+            try:
+                client.containers.get(cname)
+                _time.sleep(0.5)
+            except Exception:
+                break
     except Exception:
         pass
 
@@ -818,19 +827,29 @@ def run_replica_container(
         run_kwargs["tmpfs"] = {"/tmp": ",".join(tmpfs_opts)}
 
     _assert_image_local(client, img)
-    # Retry once on port-already-allocated errors: Docker's network stack
-    # sometimes holds a port briefly after force-removing the old container.
-    import time as _time
-    import docker as _docker_mod # type: ignore
-    for attempt in (1, 2):
+    # Retry on transient Docker errors: port still releasing or container name
+    # still being removed after a force-remove.
+    for attempt in (1, 2, 3):
         try:
             container = client.containers.run(img, **run_kwargs)
             break
         except _docker_mod.errors.APIError as exc:
-            if attempt == 2 or "port is already allocated" not in str(exc):
+            err = str(exc)
+            if attempt == 3:
                 raise
-            push_line_fn(app_id, f"[Replica] Port {external_port} still releasing, retrying in 2 s…")
-            _time.sleep(2)
+            if "port is already allocated" in err:
+                push_line_fn(app_id, f"[Replica] Port {external_port} still releasing, retrying in 2 s…")
+                _time.sleep(2)
+            elif "already in use by container" in err:
+                # Previous force-remove hasn't completed yet — wait and retry
+                push_line_fn(app_id, f"[Replica] Container name still releasing, retrying in 2 s…")
+                try:
+                    client.containers.get(cname).remove(force=True)
+                except Exception:
+                    pass
+                _time.sleep(2)
+            else:
+                raise
     push_line_fn(app_id, f"[Replica] Container {replica_id} started: {container.short_id} (:{external_port} → :{internal_port})")
     return container.id
 

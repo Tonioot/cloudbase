@@ -65,6 +65,7 @@ async def init_db():
             ("last_error",        "TEXT"),
             ("source_revision",   "VARCHAR(120)"),
             ("image_revision",    "VARCHAR(120)"),
+            ("no_web",            "BOOLEAN NOT NULL DEFAULT 0"),
         ]:
             if col in existing_columns:
                 continue

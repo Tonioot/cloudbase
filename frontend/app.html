@@ -356,6 +356,16 @@
                   <input class="input input-mono" id="cfg-cmd" placeholder="npm start" />
                 </div>
                 <div class="field">
+                  <label class="toggle-row">
+                    <span class="field-label" style="margin-bottom:0">No web server</span>
+                    <label class="toggle">
+                      <input type="checkbox" id="cfg-no-web" />
+                      <span class="toggle-slider"></span>
+                    </label>
+                  </label>
+                  <div class="field-hint">Enable for apps that don't serve HTTP traffic (e.g. Discord bots, background workers). Skips port assignment and nginx routing.</div>
+                </div>
+                <div class="field" id="cfg-port-field">
                   <label class="field-label">Internal Port</label>
                   <input class="input" id="cfg-port" type="number" placeholder="3000" style="max-width:140px" />
                   <div class="field-hint">The port your app listens on inside the container. Each instance gets its own external host port, assigned automatically.</div>

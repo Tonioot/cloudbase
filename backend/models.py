@@ -47,6 +47,7 @@ class Application(Base):
     docker_read_only_root = Column(Boolean, default=False)
     docker_tmpfs_enabled = Column(Boolean, default=False)
     docker_tmpfs_size_mb = Column(Integer, nullable=True)
+    no_web           = Column(Boolean, default=False)   # True = no web server, skip nginx + port
     maintenance_mode = Column(Boolean, default=False)
     update_mode      = Column(Boolean, default=False)
     downtime_page    = Column(Text, nullable=True)  # JSON: {title, message, color, custom_html}

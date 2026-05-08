@@ -56,6 +56,7 @@ class DeployRequest(BaseModel):
     node_id: Optional[int] = None
     auto_start: Optional[bool] = None
     restart_policy: Optional[str] = None   # no | always | on-failure
+    no_web: Optional[bool] = None          # True = no web server, skip nginx + port assignment
     source_revision: Optional[str] = None
     image_revision: Optional[str] = None
 
@@ -79,6 +80,7 @@ class UpdateRequest(BaseModel):
     github_token_id: Optional[str] = None   # ID of a saved vault token
     auto_start:     Optional[bool] = None
     restart_policy: Optional[str] = None   # no | always | on-failure
+    no_web:         Optional[bool] = None  # True = no web server, skip nginx + port assignment
     working_dir:    Optional[str] = None   # set by node agents after source extraction
     source_revision: Optional[str] = None
     image_revision: Optional[str] = None
@@ -141,6 +143,41 @@ async def _assign_external_port(requested: Optional[int], node_id: int, exclude_
     return await asyncio.to_thread(dm.pick_free_external_port, used)
 
 
+async def _check_domain_conflicts(
+    domains: list[str],
+    db: AsyncSession,
+    exclude_app_id: Optional[int] = None,
+) -> None:
+    """Raise 400 if any domain in *domains* is already used by another app."""
+    clean = [d.strip().lower() for d in domains if d and d.strip()]
+    if not clean:
+        return
+    result = await db.execute(
+        select(Application.id, Application.name, Application.domain,
+               Application.extra_domains, Application.redirect_domains).where(
+            Application.id != exclude_app_id if exclude_app_id else True,
+        )
+    )
+    for row in result.all():
+        other_id, other_name, primary, extra_raw, redirect_raw = row
+        other_domains = set()
+        if primary:
+            other_domains.add(primary.strip().lower())
+        for lst_raw in (extra_raw, redirect_raw):
+            try:
+                for d in json.loads(lst_raw or "[]"):
+                    if d:
+                        other_domains.add(d.strip().lower())
+            except Exception:
+                pass
+        clash = set(clean) & other_domains
+        if clash:
+            raise HTTPException(
+                400,
+                f"Domain '{next(iter(clash))}' is already used by app '{other_name}'",
+            )
+
+
 def _get_nginx_mode(app: Application) -> str:
     if app.update_mode:
         return "update"
@@ -151,6 +188,8 @@ def _get_nginx_mode(app: Application) -> str:
 
 def _has_public_nginx_domain(app: Application) -> bool:
     """True when app traffic can be routed via custom or auto-subdomain nginx."""
+    if app.no_web:
+        return False
     return bool((app.nginx_enabled and app.domain) or _syscfg.get_base_domain_cached())
 
 
@@ -1039,6 +1078,9 @@ async def deploy_app(
     if existing.scalar_one_or_none():
         raise HTTPException(400, f"App '{req.name}' already exists")
 
+    all_domains = [req.domain] + (req.extra_domains or []) + (req.redirect_domains or [])
+    await _check_domain_conflicts([d for d in all_domains if d], db)
+
     app_count_result = await db.execute(select(func.count()).select_from(Application))
     if app_count_result.scalar() >= _cfg.get_limit("max_apps"):
         raise HTTPException(400, f"App limit reached ({_cfg.get_limit('max_apps')} apps maximum). Adjust limits.max_apps in config.yaml to increase.")
@@ -1055,9 +1097,10 @@ async def deploy_app(
         if not target_node:
             raise HTTPException(400, "Selected node is not available")
 
-    # Auto-assign external port (conflict check is inside _assign_external_port)
+    # no_web apps (discord bots, background workers, etc.) don't need a port or nginx
+    is_no_web = bool(req.no_web)
     node_id_for_port = target_node.id if target_node else local_node.id
-    external_port = await _assign_external_port(req.external_port, node_id_for_port, None, db)
+    external_port = None if is_no_web else await _assign_external_port(req.external_port, node_id_for_port, None, db)
 
     app = Application(
         name=req.name,
@@ -1074,6 +1117,7 @@ async def deploy_app(
         env_vars=encrypt_env(req.env_vars or {}),
         auto_start=bool(req.auto_start) if req.auto_start is not None else False,
         restart_policy=req.restart_policy or "no",
+        no_web=is_no_web,
         use_docker=True,
         docker_cpu_limit=req.docker_cpu_limit,
         docker_memory_limit_mb=req.docker_memory_limit_mb,
@@ -1175,6 +1219,13 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
     await ensure_local_node(db)
     _validate_docker_runtime_settings(req.docker_cpu_limit, req.docker_memory_limit_mb, req.docker_tmpfs_size_mb)
 
+    if req.domain is not None or req.extra_domains is not None or req.redirect_domains is not None:
+        new_primary   = req.domain        if req.domain        is not None else app.domain
+        new_extra     = req.extra_domains if req.extra_domains is not None else json.loads(app.extra_domains    or "[]")
+        new_redirects = req.redirect_domains if req.redirect_domains is not None else json.loads(app.redirect_domains or "[]")
+        all_domains = [new_primary] + (new_extra or []) + (new_redirects or [])
+        await _check_domain_conflicts([d for d in all_domains if d], db, exclude_app_id=app.id)
+
     if req.domain is not None:
         app.domain = req.domain
     if req.extra_domains is not None:
@@ -1211,6 +1262,8 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
         app.auto_start = req.auto_start
     if req.restart_policy is not None and req.restart_policy in ("no", "always", "on-failure"):
         app.restart_policy = req.restart_policy
+    if req.no_web is not None:
+        app.no_web = req.no_web
     if req.working_dir is not None:
         app.working_dir = req.working_dir
     if req.source_revision is not None:
@@ -3348,15 +3401,16 @@ def _app_to_dict(
     starting_page = json.loads(app.starting_page or "{}") if include_page_configs else None
     # Compute the app's accessible URL: custom domain first, then auto-subdomain
     _app_url: Optional[str] = None
-    if app.domain:
-        _proto = "https" if (app.ssl_cert_path and app.ssl_key_path) else "http"
-        _app_url = f"{_proto}://{app.domain}"
-    else:
-        _base = _syscfg.get_base_domain_cached()
-        if _base:
-            _slug = _re.sub(r"[^a-z0-9]+", "-", (app.name or "").lower()).strip("-")
-            if _slug:
-                _app_url = f"https://{_slug}.{_base}"
+    if not app.no_web:
+        if app.domain:
+            _proto = "https" if (app.ssl_cert_path and app.ssl_key_path) else "http"
+            _app_url = f"{_proto}://{app.domain}"
+        else:
+            _base = _syscfg.get_base_domain_cached()
+            if _base:
+                _slug = _re.sub(r"[^a-z0-9]+", "-", (app.name or "").lower()).strip("-")
+                if _slug:
+                    _app_url = f"https://{_slug}.{_base}"
     return {
         "id": app.id,
         "name": app.name,
@@ -3364,6 +3418,7 @@ def _app_to_dict(
         "domain": app.domain,
         "extra_domains": json.loads(app.extra_domains or "[]"),
         "redirect_domains": json.loads(app.redirect_domains or "[]"),
+        "no_web": bool(app.no_web),
         "app_type": app.app_type,
         "start_command": app.start_command,
         "port": app.port,

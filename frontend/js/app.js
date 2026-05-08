@@ -20,6 +20,17 @@ let diskData = [];
 let statsTabActive = false;
 let lastStatStatus = null; // 'running' | 'stopped' | null (unknown/loading)
 
+function _updateNoWebVisibility(noWeb) {
+  const portField    = document.getElementById('cfg-port-field');
+  if (portField) portField.style.display = noWeb ? 'none' : '';
+}
+
+document.addEventListener('change', e => {
+  if (e.target && e.target.id === 'cfg-no-web') {
+    _updateNoWebVisibility(e.target.checked);
+  }
+});
+
 /* ─── Init ──────────────────────────────────────────────────────────────── */
 export async function initApp() {
   if (!APP_ID || isNaN(APP_ID)) {
@@ -1079,6 +1090,8 @@ function initSettings() {
   (app.redirect_domains || []).forEach(d => addDomainRow(redirectContainer, d));
   document.getElementById('cfg-add-redirect-domain').onclick = () => addDomainRow(redirectContainer, '');
 
+  document.getElementById('cfg-no-web').checked = !!app.no_web;
+  _updateNoWebVisibility(!!app.no_web);
   document.getElementById('cfg-autostart').checked  = !!app.auto_start;
   document.getElementById('cfg-restart-policy').value = app.restart_policy || 'no';
   document.getElementById('cfg-docker-cpu').value = app.docker_cpu_limit || '';
@@ -1996,6 +2009,7 @@ async function saveSettings() {
                         .map(i => i.value.trim()).filter(Boolean),
     ssl_cert_path:  document.getElementById('cfg-cert').value.trim()   || null,
     ssl_key_path:   document.getElementById('cfg-key').value.trim()    || null,
+    no_web:         document.getElementById('cfg-no-web').checked,
     auto_start:     document.getElementById('cfg-autostart').checked,
     restart_policy: document.getElementById('cfg-restart-policy').value,
     docker_cpu_limit: Number.isFinite(dockerCpu) ? dockerCpu : null,

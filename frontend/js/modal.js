@@ -74,6 +74,11 @@ export function openDeployModal(onSuccess) {
   modal.querySelector('#modal-close').addEventListener('click', close);
   modal.querySelector('#modal-cancel').addEventListener('click', close);
 
+  // No web server toggle — show/hide port field
+  modal.querySelector('#f-no-web').addEventListener('change', e => {
+    modal.querySelector('#f-port-field').style.display = e.target.checked ? 'none' : '';
+  });
+
   // Add env var row
   modal.querySelector('#add-env').addEventListener('click', () => addEnvRow(modal, ++envCount));
 
@@ -156,7 +161,17 @@ function modalHTML() {
                     <label class="field-label">Start Command <span class="hint">auto-detected if empty</span></label>
                     <input class="input input-mono" id="f-cmd" placeholder="npm start" />
                   </div>
-                  <div class="field deploy-field-inline">
+                  <div class="field deploy-field-span-2">
+                    <div class="toggle-row">
+                      <span class="field-label" style="margin-bottom:0">No web server</span>
+                      <label class="toggle" for="f-no-web">
+                        <input type="checkbox" id="f-no-web" />
+                        <span class="toggle-slider"></span>
+                      </label>
+                    </div>
+                    <div class="field-hint">Enable for Discord bots, background workers, etc. Skips port &amp; nginx.</div>
+                  </div>
+                  <div class="field deploy-field-inline" id="f-port-field">
                     <label class="field-label">Internal Port</label>
                     <input class="input" id="f-port" type="number" placeholder="3000" />
                     <div class="field-hint">Container service port</div>
@@ -252,6 +267,7 @@ async function handleDeploy(modal, form, onSuccess, close) {
     ...(tokenId
       ? { github_token_id: tokenId }
       : { github_token: modal.querySelector('#f-token').value.trim() || null }),
+    no_web:        modal.querySelector('#f-no-web').checked,
     start_command: modal.querySelector('#f-cmd').value.trim() || null,
     port:          parseInt(modal.querySelector('#f-port').value) || null,
     docker_cpu_limit: Number.isFinite(dockerCpu) ? dockerCpu : null,

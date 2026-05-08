@@ -21,8 +21,23 @@ let statsTabActive = false;
 let lastStatStatus = null; // 'running' | 'stopped' | null (unknown/loading)
 
 function _updateNoWebVisibility(noWeb) {
-  const portField    = document.getElementById('cfg-port-field');
-  if (portField) portField.style.display = noWeb ? 'none' : '';
+  const hide = noWeb ? 'none' : '';
+  const el = id => document.getElementById(id);
+
+  // Settings panel
+  if (el('cfg-port-field'))          el('cfg-port-field').style.display = hide;
+  // Network section: parent settings-group of cfg-domains-rows
+  const networkSection = el('cfg-domains-rows')?.closest('.settings-group');
+  if (networkSection)                networkSection.style.display = hide;
+  // Maintenance Pages section
+  if (el('maintenance-pages-section')) el('maintenance-pages-section').style.display = hide;
+
+  // Header action buttons
+  if (el('btn-maintenance-mode'))    el('btn-maintenance-mode').style.display = noWeb ? 'none' : '';
+  if (el('btn-update-mode'))         el('btn-update-mode').style.display = noWeb ? 'none' : '';
+  // separator between action buttons and mode buttons (hide when both mode buttons hidden)
+  const sep = document.querySelector('.detail-actions-sep[data-admin]');
+  if (sep) sep.style.display = noWeb ? 'none' : '';
 }
 
 document.addEventListener('change', e => {

@@ -221,10 +221,6 @@ def _docker_runtime_options(app: Application) -> dict:
     }
 
 
-def _is_internal_agent_request(request: Optional[Request]) -> bool:
-    token = request.headers.get("X-Agent-Token", "") if request else ""
-    return bool(token and _auth.verify_agent_token(token))
-
 
 async def _load_app_replicas(app_id: int, db: AsyncSession) -> list[ApplicationReplica]:
     result = await db.execute(
@@ -1070,7 +1066,6 @@ async def list_apps(request: Request, db: AsyncSession = Depends(get_db)):
 async def deploy_app(
     req: DeployRequest,
     background_tasks: BackgroundTasks,
-    request: Request,
     db: AsyncSession = Depends(get_db),
     actor: str = Depends(_auth.get_current_actor),
 ):
@@ -1133,18 +1128,6 @@ async def deploy_app(
     await db.commit()
     await db.refresh(app)
 
-    create_primary_replica = not _is_internal_agent_request(request)
-    first_replica: Optional[ApplicationReplica] = None
-    if create_primary_replica:
-        first_replica = ApplicationReplica(
-            app_id=app.id,
-            node_id=target_node.id,
-            external_port=external_port,
-            status="deploying",
-        )
-        db.add(first_replica)
-        await db.flush()
-
     if not target_node.is_local:
         await db.commit()
         await db.refresh(app)
@@ -1153,9 +1136,6 @@ async def deploy_app(
     try:
         await _deploy_app(app)
         app.status = "stopped"
-        if first_replica is not None:
-            first_replica.status = "stopped"
-            first_replica.last_error = None
 
         if app.domain:
             app.nginx_enabled = True
@@ -1167,9 +1147,6 @@ async def deploy_app(
         return _app_to_dict(app)
     except Exception as e:
         app.status = "error"
-        if first_replica is not None:
-            first_replica.status = "error"
-            first_replica.last_error = str(e)
         await db.commit()
         raise HTTPException(500, str(e))
 
@@ -1455,30 +1432,15 @@ async def import_apps(req: ImportRequest, background_tasks: BackgroundTasks, db:
         await db.commit()
         await db.refresh(app)
 
-        first_replica = ApplicationReplica(
-            app_id=app.id,
-            node_id=target_node.id,
-            external_port=import_external_port,
-            status="deploying",
-        )
-        db.add(first_replica)
-        await db.flush()
-
-        if not target_node.is_local:
-            pass  # Remote node setup happens lazily when start_replica is first called
-        else:
+        if target_node.is_local:
             try:
                 await _deploy_app(app)
                 app.status = "stopped"
-                first_replica.status = "stopped"
-                first_replica.last_error = None
                 if app.domain:
                     app.nginx_enabled = True
                     await _write_app_nginx_config(app, db, local_node)
             except Exception as e:
                 app.status = "error"
-                first_replica.status = "error"
-                first_replica.last_error = str(e)
                 app.last_error = str(e)
         await db.commit()
         imported_count += 1

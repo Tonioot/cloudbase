@@ -759,34 +759,42 @@ def _run_install(app_dir: str) -> str:
 async def _deploy_app(app: Application):
     app_dir = pm.get_app_dir(app.name)
     log.info("[deploy] Starting deployment for app=%s in dir=%s", app.name, app_dir)
-    
-    # If directory exists but is broken or empty, clean it up
-    if os.path.exists(app_dir):
-        if not os.path.exists(os.path.join(app_dir, ".git")):
-            log.warning("[deploy] Directory %s exists but is not a git repo, cleaning up for fresh clone", app_dir)
-            shutil.rmtree(app_dir)
-            os.makedirs(app_dir, exist_ok=True)
+
+    # local://primary means source was already extracted by the node agent — skip clone
+    if app.repo_url == "local://primary":
+        if not os.path.exists(app_dir):
+            raise HTTPException(500, "Source directory missing for local app — re-deploy from primary")
+        app.working_dir = app.working_dir or app_dir
+        app.source_revision = _resolve_source_revision(app_dir)
+        app.image_revision = None
     else:
-        os.makedirs(app_dir, exist_ok=True)
+        # If directory exists but is broken or empty, clean it up
+        if os.path.exists(app_dir):
+            if not os.path.exists(os.path.join(app_dir, ".git")):
+                log.warning("[deploy] Directory %s exists but is not a git repo, cleaning up for fresh clone", app_dir)
+                shutil.rmtree(app_dir)
+                os.makedirs(app_dir, exist_ok=True)
+        else:
+            os.makedirs(app_dir, exist_ok=True)
 
-    github_token = _decrypt_github_token(app.github_token)
-    clone_url = _build_clone_url(app.repo_url, github_token)
-    log.info("[deploy] Cloning from %s", app.repo_url.replace(github_token or "SECRET", "***") if github_token else app.repo_url)
-    
-    result = await asyncio.to_thread(subprocess.run,
-        ["git", "clone", clone_url, "."],
-        cwd=app_dir,
-        capture_output=True,
-        text=True,
-    )
-    
-    if result.returncode != 0:
-        log.error("[deploy] Git clone failed: %s", result.stderr)
-        raise HTTPException(400, _friendly_git_clone_error(result.stderr))
+        github_token = _decrypt_github_token(app.github_token)
+        clone_url = _build_clone_url(app.repo_url, github_token)
+        log.info("[deploy] Cloning from %s", app.repo_url.replace(github_token or "SECRET", "***") if github_token else app.repo_url)
 
-    app.working_dir = app_dir
-    app.source_revision = _resolve_source_revision(app_dir)
-    app.image_revision = None
+        result = await asyncio.to_thread(subprocess.run,
+            ["git", "clone", clone_url, "."],
+            cwd=app_dir,
+            capture_output=True,
+            text=True,
+        )
+
+        if result.returncode != 0:
+            log.error("[deploy] Git clone failed: %s", result.stderr)
+            raise HTTPException(400, _friendly_git_clone_error(result.stderr))
+
+        app.working_dir = app_dir
+        app.source_revision = _resolve_source_revision(app_dir)
+        app.image_revision = None
     app_type, default_cmd, default_port = pm.detect_app_type(app_dir)
 
     if not app.start_command:

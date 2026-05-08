@@ -1078,9 +1078,17 @@ function wireSystemSettingsButton() {
           </div>
           <div class="dialog-body" style="display:flex;flex-direction:column;gap:14px">
             <p style="margin:0;font-size:13px;color:var(--text-secondary)">
-              These settings update <code style="background:var(--bg-muted);padding:1px 4px;border-radius:3px">config.yaml</code> on disk.
+              These settings update <code style="background:var(--bg-muted);padding:1px 4px;border-radius:3px">~/.cloudbase/config.yaml</code> on disk.
               A restart of Cloudbase is required for port range changes to take effect.
             </p>
+
+            <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted)">Authentication</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+              <div class="field" style="margin:0">
+                <label class="field-label">Token Expiry (seconds)</label>
+                <input class="input" id="sys-token-expire" type="number" min="60" max="2592000" />
+              </div>
+            </div>
 
             <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted)">Port Ranges</div>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
@@ -1147,6 +1155,9 @@ function wireSystemSettingsButton() {
         try {
           const v = id => parseInt(modal.querySelector(id).value, 10);
           await api.saveSystemSettings({
+            auth: {
+              token_expire_seconds: v('#sys-token-expire'),
+            },
             ports: {
               instance_min: v('#sys-inst-min'),
               instance_max: v('#sys-inst-max'),
@@ -1178,6 +1189,7 @@ function wireSystemSettingsButton() {
     modal.style.display = 'flex';
     try {
       const data = await api.getSystemSettings();
+      modal.querySelector('#sys-token-expire').value = data.auth?.token_expire_seconds ?? '';
       modal.querySelector('#sys-inst-min').value    = data.ports?.instance_min ?? '';
       modal.querySelector('#sys-inst-max').value    = data.ports?.instance_max ?? '';
       modal.querySelector('#sys-tun-min').value     = data.ports?.tunnel_min   ?? '';

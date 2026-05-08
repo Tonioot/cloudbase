@@ -1,9 +1,16 @@
 # Cloudbase configuration
-# All settings can be adjusted here. Restart Cloudbase for changes to take effect.
+# This file is copied to ~/.cloudbase/config.yaml on first run.
+# Edit that file — it will be preserved across Cloudbase updates.
 
 server:
   # Port Cloudbase listens on
   port: 7823
+
+
+auth:
+  # How long a login session (JWT) is valid, in seconds.
+  # 3600 = 1 hour, 86400 = 1 day, 604800 = 1 week
+  token_expire_seconds: 3600
 
 
 ports:

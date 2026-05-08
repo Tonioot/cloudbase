@@ -17,11 +17,19 @@ from typing import Optional
 import bcrypt as _bcrypt
 from fastapi import Cookie, Depends, HTTPException, Request, status
 from jose import JWTError, jwt
+import config as _cfg
 
 # ── Config ────────────────────────────────────────────────────────────────────
 CREDENTIALS_FILE = os.path.expanduser("~/.cloudbase/credentials")
-TOKEN_EXPIRE_SECONDS = 3600          # 1 hour
 ALGORITHM = "HS256"
+
+
+def get_token_expire_seconds() -> int:
+    return _cfg.get_auth("token_expire_seconds")
+
+
+# Legacy constant kept for cookie max_age references; resolved at call time via get_token_expire_seconds().
+TOKEN_EXPIRE_SECONDS = 3600
 
 # ── Secret key (generated once, stored alongside credentials) ─────────────────
 _SECRET_KEY_FILE = os.path.expanduser("~/.cloudbase/secret_key")
@@ -70,7 +78,8 @@ def save_hashed_password(hashed: str) -> None:
 
 # ── JWT helpers ───────────────────────────────────────────────────────────────
 def create_access_token(username: str, role: str) -> str:
-    expire = datetime.now(timezone.utc) + timedelta(seconds=TOKEN_EXPIRE_SECONDS)
+    expire_seconds = get_token_expire_seconds()
+    expire = datetime.now(timezone.utc) + timedelta(seconds=expire_seconds)
     payload = {
         "sub": username,
         "role": role,

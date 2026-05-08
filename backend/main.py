@@ -470,6 +470,12 @@ async def _crash_monitor():
                         replica.status = "stopped"
                         pm._push_line(a.id, f"⚠ Instance {replica.id} exited.")
                         await db.commit()
+                        try:
+                            from routers.applications import _write_app_nginx_config as _wanc, _has_public_nginx_domain as _hpnd
+                            if local_node_obj and _hpnd(a):
+                                await _wanc(a, db, local_node_obj)
+                        except Exception:
+                            pass
                         continue
 
                     now = _time.time()
@@ -482,6 +488,12 @@ async def _crash_monitor():
                         replica.last_error = f"Crashed {MAX_RESTARTS_PER_WINDOW}× in {RESTART_WINDOW_SECONDS}s"
                         pm._push_line(a.id, f"✖ Instance {replica.id} crashed {MAX_RESTARTS_PER_WINDOW}× — giving up.")
                         await db.commit()
+                        try:
+                            from routers.applications import _write_app_nginx_config as _wanc, _has_public_nginx_domain as _hpnd
+                            if local_node_obj and _hpnd(a):
+                                await _wanc(a, db, local_node_obj)
+                        except Exception:
+                            pass
                         continue
 
                     history.append(now)
@@ -513,6 +525,14 @@ async def _crash_monitor():
                     from routers.applications import _derive_app_status_from_instances
                     a.status = _derive_app_status_from_instances(all_rep_result.scalars().all())
                     await db.commit()
+                        # If this restart attempt failed, the backend is dead — remove it from nginx upstream
+                        if replica.status in ("error", "stopped"):
+                            try:
+                                from routers.applications import _write_app_nginx_config as _wanc, _has_public_nginx_domain as _hpnd
+                                if local_node_obj and _hpnd(a):
+                                    await _wanc(a, db, local_node_obj)
+                            except Exception:
+                                pass
         except asyncio.CancelledError:
             return
         except Exception:
@@ -762,10 +782,11 @@ async def login(req: LoginRequest, request: Request, response: Response, db: Asy
     if not user or not auth.verify_password(req.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid username or password")
     token = auth.create_access_token(user.username, user.role)
-    response.set_cookie(key=_COOKIE_NAME, value=token, max_age=auth.TOKEN_EXPIRE_SECONDS, **_COOKIE_OPTS)
+    expire_seconds = auth.get_token_expire_seconds()
+    response.set_cookie(key=_COOKIE_NAME, value=token, max_age=expire_seconds, **_COOKIE_OPTS)
     await log_audit(db, "auth.login", actor=user.username, detail={"ip": request.client.host if request.client else "unknown"})
     await db.commit()
-    return {"ok": True, "expires_in": auth.TOKEN_EXPIRE_SECONDS, "role": user.role}
+    return {"ok": True, "expires_in": expire_seconds, "role": user.role}
 
 
 @app.get("/api/auth/session")
@@ -996,6 +1017,9 @@ async def apply_cloudbase_nginx(
 @app.get("/api/system/settings", include_in_schema=False)
 async def get_system_settings(_: dict = Depends(auth.require_admin)):
     return {
+        "auth": {
+            "token_expire_seconds": _cfg.get_auth("token_expire_seconds"),
+        },
         "ports": {
             "instance_min": _cfg.get_port("instance_min"),
             "instance_max": _cfg.get_port("instance_max"),
@@ -1026,9 +1050,14 @@ async def save_system_settings(
             pass
         return default
 
-    ports  = body.get("ports",  {})
-    limits = body.get("limits", {})
+    auth_cfg = body.get("auth",   {})
+    ports    = body.get("ports",  {})
+    limits   = body.get("limits", {})
     sections = {}
+    if auth_cfg:
+        sections["auth"] = {
+            "token_expire_seconds": _int(auth_cfg.get("token_expire_seconds"), 60, 2592000, _cfg.get_auth("token_expire_seconds")),
+        }
     if ports:
         sections["ports"] = {
             "instance_min": _int(ports.get("instance_min"), 1024, 65000, _cfg.get_port("instance_min")),

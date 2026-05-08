@@ -2,11 +2,29 @@
 import os
 import yaml
 
-_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "config.yaml")
+_REPO_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "config.yaml")
+_USER_CONFIG_PATH = os.path.expanduser("~/.cloudbase/config.yaml")
+
+# User config takes precedence over the repo default; if it doesn't exist yet
+# we copy the repo config there on first load so it survives updates.
+def _resolve_config_path() -> str:
+    if os.path.exists(_USER_CONFIG_PATH):
+        return _USER_CONFIG_PATH
+    # Bootstrap: copy repo config to user directory so future saves go there.
+    import shutil
+    os.makedirs(os.path.dirname(_USER_CONFIG_PATH), exist_ok=True)
+    if os.path.exists(_REPO_CONFIG_PATH):
+        shutil.copy2(_REPO_CONFIG_PATH, _USER_CONFIG_PATH)
+    return _USER_CONFIG_PATH
+
+_CONFIG_PATH = _resolve_config_path()
 
 _DEFAULTS = {
     "server": {
         "port": 7823,
+    },
+    "auth": {
+        "token_expire_seconds": 3600,
     },
     "ports": {
         "instance_min": 8000,
@@ -41,6 +59,15 @@ def _load() -> dict:
 
 
 _config = _load()
+
+
+def get_auth(key: str):
+    """Return an auth value from the config, e.g. get_auth('token_expire_seconds')."""
+    default = _DEFAULTS["auth"].get(key)
+    val = _config.get("auth", {}).get(key, default)
+    if isinstance(default, int):
+        return int(val)
+    return val
 
 
 def get_limit(key: str) -> int:

@@ -565,20 +565,26 @@ def attach_container_log_tailer(
     log_buffers: dict,
     push_line_fn,
     main_loop,
+    cname: Optional[str] = None,
 ) -> None:
     """Stream container logs to the in-memory buffer in a background thread."""
     if app_id not in log_buffers:
         log_buffers[app_id] = deque(maxlen=5000)
 
+    resolved_cname = cname or container_name(app_id)
+
     def _reader():
         try:
             for _ in range(40):
-                if is_container_running(app_id):
+                try:
+                    _get_client().containers.get(resolved_cname)
                     break
+                except Exception:
+                    pass
                 time.sleep(0.25)
 
             client = _get_client()
-            c = client.containers.get(container_name(app_id))
+            c = client.containers.get(resolved_cname)
             labels = (c.attrs.get("Config", {}) or {}).get("Labels", {}) or {}
             raw_internal_port = labels.get("cloudbase.internal_port")
             internal_port = int(raw_internal_port) if str(raw_internal_port or "").isdigit() else None

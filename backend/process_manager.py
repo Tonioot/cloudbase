@@ -489,7 +489,10 @@ def start_docker_replica(
         raise RuntimeError(message) from e
 
     if _main_loop is not None and not _main_loop.is_closed():
-        dm.attach_container_log_tailer(app_id, log_buffers, _push_line, _main_loop)
+        dm.attach_container_log_tailer(
+            app_id, log_buffers, _push_line, _main_loop,
+            cname=dm.replica_container_name(app_id, replica_id),
+        )
 
     _debug(f"Replica {replica_id} for app {app_id} started, container_id={container_id[:12]}")
     return container_id

@@ -183,36 +183,28 @@ _DOCKERFILES: dict[str, str] = {
     "nodejs": """\
 FROM node:20-alpine
 WORKDIR /app
-COPY package*.json ./
-RUN npm install --production
-COPY . .
+{nodejs_copy_pkg}COPY . .
 EXPOSE {port}
 CMD {cmd_json}
 """,
     "python": """\
 FROM python:3.11-slim
 WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-COPY . .
+{python_copy_req}COPY . .
 EXPOSE {port}
 CMD {cmd_json}
 """,
     "ruby": """\
 FROM ruby:3.2-slim
 WORKDIR /app
-COPY Gemfile* ./
-RUN bundle install
-COPY . .
+{ruby_copy_gemfile}COPY . .
 EXPOSE {port}
 CMD {cmd_json}
 """,
     "go": """\
 FROM golang:1.22-alpine AS builder
 WORKDIR /app
-COPY go.mod go.sum ./
-RUN go mod download
-COPY . .
+{go_copy_mod}COPY . .
 RUN go build -o app .
 
 FROM alpine:latest
@@ -270,26 +262,56 @@ def _normalize_docker_start_command(app_type: str, start_command: str, port: int
     return cmd
 
 
-def generate_dockerfile(app_type: str, start_command: str, port: int) -> str:
+def generate_dockerfile(app_type: str, start_command: str, port: int, app_dir: str = "") -> str:
     template = _DOCKERFILES.get(app_type, _DOCKERFILES["unknown"])
     port = port or 8000
     start_command = _normalize_docker_start_command(app_type, start_command, port)
-    return template.format(
-        port=port,
-        cmd_json=_cmd_to_json(start_command),
+
+    def _has_file(name: str) -> bool:
+        return bool(app_dir) and os.path.exists(os.path.join(app_dir, name))
+
+    go_mod_line = "COPY go.mod go.sum ./" if (_has_file("go.mod") and _has_file("go.sum")) else (
+        "COPY go.mod ./" if _has_file("go.mod") else ""
     )
+    extras: dict[str, str] = {
+        "nodejs_copy_pkg": (
+            "COPY package*.json ./\nRUN npm install --production\n"
+            if _has_file("package.json") else ""
+        ),
+        "python_copy_req": (
+            "COPY requirements.txt .\nRUN pip install --no-cache-dir -r requirements.txt\n"
+            if _has_file("requirements.txt") else ""
+        ),
+        "ruby_copy_gemfile": (
+            "COPY Gemfile* ./\nRUN bundle install\n"
+            if _has_file("Gemfile") else ""
+        ),
+        "go_copy_mod": (
+            f"{go_mod_line}\nRUN go mod download\n" if go_mod_line else ""
+        ),
+    }
+
+    return template.format(port=port, cmd_json=_cmd_to_json(start_command), **extras)
 
 
 def ensure_dockerfile(app_dir: str, app_type: str, start_command: str, port: int) -> str:
-    """Write a Dockerfile to app_dir if one doesn't exist. Returns the path."""
+    """Write (or regenerate) the auto-managed Dockerfile in app_dir. Returns the path."""
     dockerfile_path = os.path.join(app_dir, "Dockerfile")
-    if not os.path.exists(dockerfile_path):
-        content = generate_dockerfile(app_type, start_command, port)
-        with open(dockerfile_path, "w") as f:
-            f.write(content)
-        log.info("[docker] Generated Dockerfile for %s app at %s", app_type, dockerfile_path)
-    else:
-        log.info("[docker] Using existing Dockerfile at %s", dockerfile_path)
+    content = generate_dockerfile(app_type, start_command, port, app_dir=app_dir)
+
+    existing = ""
+    if os.path.exists(dockerfile_path):
+        with open(dockerfile_path, "r") as f:
+            existing = f.read()
+
+    if existing == content:
+        log.info("[docker] Dockerfile unchanged at %s", dockerfile_path)
+        return dockerfile_path
+
+    with open(dockerfile_path, "w") as f:
+        f.write(content)
+    action = "Updated" if existing else "Generated"
+    log.info("[docker] %s Dockerfile for %s app at %s", action, app_type, dockerfile_path)
     return dockerfile_path
 
 

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import math
 import os
 import shutil
 import socket
@@ -34,6 +35,7 @@ log = logging.getLogger("pdm.apps")
 RESTART_READY_TIMEOUT_SECONDS = 180
 RESTART_READY_POLL_SECONDS = 1
 TRANSITION_HOLD_MAX_SECONDS = 300
+RESTART_READY_MIN_HEALTHY_RATIO = 0.5
 _active_transition_modes: dict[int, tuple[str, float]] = {}
 
 
@@ -402,19 +404,20 @@ async def _wait_for_app_backends_ready(
             if await asyncio.to_thread(_local_http_service_ready, port):
                 ready += 1
 
-        # Require all currently running backends to be healthy for two
-        # consecutive polls so restart pages are not cleared prematurely.
-        if checked and ready == checked:
+        # Require a healthy quorum for two consecutive polls so restart pages
+        # are not cleared prematurely while still allowing partial recovery.
+        required = max(1, math.ceil(checked * RESTART_READY_MIN_HEALTHY_RATIO)) if checked else 0
+        if checked and ready >= required:
             stable_ready_polls += 1
             if stable_ready_polls >= 2:
-                return True, f"{ready}/{checked} backend(s) healthy"
-            last_reason = f"{ready}/{checked} backend(s) healthy, waiting for stability"
+                return True, f"{ready}/{checked} backend(s) healthy (threshold {required})"
+            last_reason = f"{ready}/{checked} backend(s) healthy (threshold {required}), waiting for stability"
             await asyncio.sleep(RESTART_READY_POLL_SECONDS)
             continue
 
         stable_ready_polls = 0
 
-        last_reason = f"{ready}/{checked} backend(s) healthy"
+        last_reason = f"{ready}/{checked} backend(s) healthy (threshold {required})"
         await asyncio.sleep(RESTART_READY_POLL_SECONDS)
 
     return False, last_reason

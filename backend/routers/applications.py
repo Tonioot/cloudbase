@@ -404,6 +404,22 @@ async def _restore_nginx_after_transition(
 
         local_node = await ensure_local_node(db)
         backends = await _get_nginx_backends(app, db, local_node)
+        if not backends:
+            # Readiness can race with status transitions; keep the transition page
+            # active until backends are still present when we restore nginx.
+            if elapsed < TRANSITION_HOLD_MAX_SECONDS:
+                pm._push_line(
+                    app_id,
+                    f"{transition_label.capitalize()} page still active after {elapsed:.1f}s (backends temporarily unavailable); retrying...",
+                )
+                asyncio.create_task(_restore_nginx_after_transition(app_id, started_at, transition_label))
+                return
+            pm._push_line(
+                app_id,
+                f"{transition_label.capitalize()} page kept active after {elapsed:.1f}s; no running backends available to restore normal nginx routing.",
+            )
+            return
+
         ssl_cert = ssl_key = None
         if has_custom:
             ssl_cert, ssl_key = _resolve_ssl_paths(app.ssl_cert_path, app.ssl_key_path)

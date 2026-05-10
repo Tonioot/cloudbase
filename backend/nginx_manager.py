@@ -316,9 +316,8 @@ def generate_cloudbase_unknown_host_html(domain: str | None = None) -> str:
 <body>
   <section class="card">
     <div class="brand"><span class="dot"></span><span>Cloudbase</span></div>
-    <h1>App bestaat niet op dit domein</h1>
-    <p>De opgevraagde hostnaam is niet gekoppeld aan een app in Cloudbase.</p>
-    <div class="hint">{hint}</div>
+    <h1>App does not exist on this domain</h1>
+    <p>The requested hostname is not linked to an app in Cloudbase.</p>
   </section>
 </body>
 </html>

@@ -312,6 +312,17 @@ async def _write_app_nginx_config(
     if has_custom:
         ssl_cert, ssl_key = _resolve_ssl_paths(app.ssl_cert_path, app.ssl_key_path)
     backends = await _get_nginx_backends(app, db, local_node)
+    effective_mode = mode or _get_nginx_mode(app)
+    log.info(
+        "[nginx-debug] write app_id=%s app=%s mode=%s backends=%d values=%s has_custom=%s base_domain=%s",
+        app.id,
+        app.name,
+        effective_mode,
+        len(backends),
+        backends,
+        has_custom,
+        bool(_base),
+    )
     config = nm.generate_config(
         app.name,
         app.domain if has_custom else None,
@@ -319,7 +330,7 @@ async def _write_app_nginx_config(
         ssl_cert,
         ssl_key,
         app_id=app.id,
-        mode=mode or _get_nginx_mode(app),
+        mode=effective_mode,
         extra_domains=json.loads(app.extra_domains or "[]") if has_custom else [],
         redirect_domains=json.loads(app.redirect_domains or "[]") if has_custom else [],
     )
@@ -388,6 +399,13 @@ async def _restore_nginx_after_transition(
     # Do not clear start/restart pages while backends are still unhealthy.
     # Keep waiting in the background, with a hard cap to avoid infinite loops.
     if not ready and elapsed < TRANSITION_HOLD_MAX_SECONDS:
+        log.info(
+            "[nginx-transition-debug] app_id=%s label=%s keep_transition_page elapsed=%.1fs reason=%s",
+            app_id,
+            transition_label,
+            elapsed,
+            reason,
+        )
         pm._push_line(
             app_id,
             f"{transition_label.capitalize()} page still active after {elapsed:.1f}s ({reason}); waiting for healthy backends...",
@@ -408,6 +426,12 @@ async def _restore_nginx_after_transition(
             # Readiness can race with status transitions; keep the transition page
             # active until backends are still present when we restore nginx.
             if elapsed < TRANSITION_HOLD_MAX_SECONDS:
+                log.info(
+                    "[nginx-transition-debug] app_id=%s label=%s restore_race_no_backends elapsed=%.1fs",
+                    app_id,
+                    transition_label,
+                    elapsed,
+                )
                 pm._push_line(
                     app_id,
                     f"{transition_label.capitalize()} page still active after {elapsed:.1f}s (backends temporarily unavailable); retrying...",
@@ -423,6 +447,15 @@ async def _restore_nginx_after_transition(
         ssl_cert = ssl_key = None
         if has_custom:
             ssl_cert, ssl_key = _resolve_ssl_paths(app.ssl_cert_path, app.ssl_key_path)
+        effective_mode = _get_nginx_mode(app)
+        log.info(
+            "[nginx-transition-debug] app_id=%s label=%s restoring mode=%s backends=%d values=%s",
+            app_id,
+            transition_label,
+            effective_mode,
+            len(backends),
+            backends,
+        )
         config = nm.generate_config(
             app.name,
             app.domain if has_custom else None,
@@ -430,7 +463,7 @@ async def _restore_nginx_after_transition(
             ssl_cert,
             ssl_key,
             app_id=app.id,
-            mode=_get_nginx_mode(app),
+            mode=effective_mode,
             extra_domains=json.loads(app.extra_domains or "[]") if has_custom else [],
             redirect_domains=json.loads(app.redirect_domains or "[]") if has_custom else [],
         )

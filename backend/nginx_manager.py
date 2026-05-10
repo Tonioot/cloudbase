@@ -1,6 +1,7 @@
 import logging
 import os
 import subprocess
+import hashlib
 
 log = logging.getLogger("pdm.nginx")
 
@@ -1374,7 +1375,22 @@ def write_nginx_config(app_name: str, config: str) -> tuple[bool, str]:
     safe = _safe_name(app_name)
     config_path = os.path.join(NGINX_SITES_DIR, safe)
     enabled_path = os.path.join(NGINX_ENABLED_DIR, safe)
+  cfg = config or ""
+  cfg_sha = hashlib.sha256(cfg.encode("utf-8", errors="ignore")).hexdigest()[:12]
+  upstream_count = cfg.count("upstream ")
+  server_block_count = cfg.count("\nserver {")
+  line_count = cfg.count("\n") + (1 if cfg else 0)
+  cfg_bytes = len(cfg.encode("utf-8", errors="ignore"))
     log.info("[nginx-cfg] writing config for app=%r safe=%r path=%s", app_name, safe, config_path)
+  log.info(
+    "[nginx-cfg] app=%r sha=%s lines=%d upstreams=%d server_blocks=%d bytes=%d",
+    app_name,
+    cfg_sha,
+    line_count,
+    upstream_count,
+    server_block_count,
+    cfg_bytes,
+  )
     log.debug("[nginx-cfg] config content:\n%s", config)
 
     try:

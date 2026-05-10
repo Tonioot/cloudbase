@@ -528,8 +528,14 @@ async def _find_local_app_by_name(client: httpx.AsyncClient, headers, app_name: 
 
 
 def _local_app_dir(app_name: str) -> str:
-    safe = app_name.lower().replace(" ", "-")
-    return os.path.join(os.path.expanduser("~/.cloudbase/apps"), safe)
+    # Keep source extraction path aligned with backend deploy path derivation.
+    # This avoids case-mismatch failures like "inside" vs "Inside".
+    try:
+        import process_manager as pm
+        return pm.get_app_dir(app_name)
+    except Exception:
+        safe = app_name.lower().replace(" ", "-")
+        return os.path.join(os.path.expanduser("~/.cloudbase/apps"), safe)
 
 
 def _local_image_ok(img: str) -> bool:

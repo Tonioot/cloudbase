@@ -10,12 +10,13 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, UploadFile, File, Query, Body, Request
 from fastapi.responses import StreamingResponse, Response
 from pydantic import BaseModel
-from sqlalchemy import select, func, or_
+from sqlalchemy import select, func, or_, update, delete
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db, AsyncSessionLocal
 import datetime as _dt
-from models import Application, ApplicationReplica, Node, StatsHistory
+from models import Application, ApplicationReplica, Node, StatsHistory, NodeCommand, AuditLog
 import process_manager as pm
 import nginx_manager as nm
 import token_vault
@@ -141,6 +142,22 @@ async def _assign_external_port(requested: Optional[int], node_id: int, exclude_
         return requested
 
     return await asyncio.to_thread(dm.pick_free_external_port, used)
+
+
+async def _cleanup_app_dependencies(db: AsyncSession, app_id: int) -> None:
+    """Remove or detach rows that can still reference an app in older DB schemas."""
+    await db.execute(
+        update(NodeCommand)
+        .where(NodeCommand.app_id == app_id)
+        .values(app_id=None)
+    )
+    await db.execute(
+        update(AuditLog)
+        .where(AuditLog.app_id == app_id)
+        .values(app_id=None)
+    )
+    await db.execute(delete(StatsHistory).where(StatsHistory.app_id == app_id))
+    await db.execute(delete(ApplicationReplica).where(ApplicationReplica.app_id == app_id))
 
 
 async def _check_domain_conflicts(
@@ -1179,6 +1196,7 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
     app = await _get_or_404(app_id, db)
     await ensure_local_node(db)
     _validate_docker_runtime_settings(req.docker_cpu_limit, req.docker_memory_limit_mb, req.docker_tmpfs_size_mb)
+    dockerfile_changed = False
 
     if req.domain is not None or req.extra_domains is not None or req.redirect_domains is not None:
         new_primary   = req.domain        if req.domain        is not None else app.domain
@@ -1198,9 +1216,13 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
     if req.ssl_key_path is not None:
         app.ssl_key_path = req.ssl_key_path
     if req.start_command is not None:
+        if req.start_command != app.start_command:
+            dockerfile_changed = True
         app.start_command = req.start_command
         app.app_type = pm.detect_app_type_from_command(req.start_command)
     if req.port is not None:
+        if req.port != app.port:
+            dockerfile_changed = True
         app.port = req.port
     if req.external_port is not None:
         app.external_port = await _assign_external_port(req.external_port, app.node_id, app.id, db)
@@ -1231,6 +1253,18 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
         app.source_revision = req.source_revision
     if req.image_revision is not None:
         app.image_revision = req.image_revision
+
+    if app.use_docker and dockerfile_changed:
+        if app.working_dir and os.path.exists(app.working_dir):
+            await asyncio.to_thread(
+                dm.ensure_dockerfile,
+                app.working_dir,
+                app.app_type or "unknown",
+                app.start_command or "",
+                app.port or 8000,
+            )
+        # Force image refresh on next start/restart so config changes are applied.
+        app.image_revision = None
 
     if app.domain:
         maint_ok, maint_msg = _ensure_maintenance_files(app, app.id)
@@ -1273,14 +1307,24 @@ async def delete_app(app_id: int, db: AsyncSession = Depends(get_db), actor: str
             done = await wait_for_node_command(db, cmd.id, timeout_seconds=60)
             if done.status != "done":
                 raise HTTPException(500, f"Failed to delete app on node '{node.name}': {done.error_message}")
+            await _cleanup_app_dependencies(db, app.id)
             await db.delete(app)
-            await db.commit()
+            try:
+                await db.commit()
+            except IntegrityError as e:
+                await db.rollback()
+                raise HTTPException(409, f"App '{app.name}' cannot be deleted because it is still referenced") from e
             result_payload = json.loads(done.result or "{}") if done.result else {}
             return {"message": result_payload.get("message") or f"App '{app.name}' deleted"}
         else:
             # Node offline — remove from DB only; node cleans up its own files when it reconnects
+            await _cleanup_app_dependencies(db, app.id)
             await db.delete(app)
-            await db.commit()
+            try:
+                await db.commit()
+            except IntegrityError as e:
+                await db.rollback()
+                raise HTTPException(409, f"App '{app.name}' cannot be deleted because it is still referenced") from e
             return {"message": f"App '{app.name}' removed (node '{node.name}' was offline — app files may still exist on the node)"}
 
     # Stop and remove all replica containers before deleting
@@ -1311,9 +1355,14 @@ async def delete_app(app_id: int, db: AsyncSession = Depends(get_db), actor: str
 
     app_name = app.name
     app_id_val = app.id
+    await _cleanup_app_dependencies(db, app.id)
     await db.delete(app)
     await log_audit(db, "app.delete", actor=actor, detail={"name": app_name, "app_id": app_id_val})
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError as e:
+        await db.rollback()
+        raise HTTPException(409, f"App '{app_name}' cannot be deleted because it is still referenced") from e
     return {"message": f"App '{app_name}' deleted"}
 
 

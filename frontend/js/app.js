@@ -148,8 +148,10 @@ function _syncZeroDowntimeButton() {
   const zdBtn = document.getElementById('btn-zero-downtime');
   if (!zdBtn) return;
 
-  // Keep it available from initial page load (not only after opening Settings).
-  zdBtn.style.display = (app.use_docker && app.nginx_enabled) ? '' : 'none';
+  // Base-domain routed apps can have app_url without app.nginx_enabled.
+  const hasPublicRoute = !!(app?.app_url || (app?.nginx_enabled && app?.domain));
+  const canUseRollingRestart = !!(app?.use_docker && !app?.no_web && hasPublicRoute);
+  zdBtn.style.display = canUseRollingRestart ? '' : 'none';
 
   if (zdBtn.dataset.bound === '1') return;
   zdBtn.dataset.bound = '1';
@@ -711,6 +713,19 @@ function initStats() {
   if (historySelect) {
     historySelect.onchange = e => loadStatsHistory(parseInt(e.target.value));
   }
+  const exportBtn = document.getElementById('btn-export-stats');
+  if (exportBtn && exportBtn.dataset.bound !== '1') {
+    exportBtn.dataset.bound = '1';
+    exportBtn.onclick = async () => {
+      const hours = parseInt(document.getElementById('history-hours')?.value || '24', 10);
+      await exportStatsCsv(hours);
+    };
+  }
+  document.querySelectorAll('.history-open-btn').forEach(btn => {
+    if (btn.dataset.bound === '1') return;
+    btn.dataset.bound = '1';
+    btn.onclick = () => openLargeHistoryChart(btn.dataset.historyChart || 'cpu');
+  });
   // Defer slightly so canvas has layout dimensions before drawing
   setTimeout(() => loadStatsHistory(24), 100);
 }
@@ -730,6 +745,7 @@ let chartCpuHistory = null;
 let chartMemHistory = null;
 let chartNetHistory = null;
 let chartDiskHistory = null;
+let historySeriesCache = { hours: 24, rows: [], cpuPoints: [], memPoints: [], netPoints: [], diskPoints: [] };
 
 function _fmtHistoryTime(ts, hours) {
   const d = new Date(ts);
@@ -745,11 +761,15 @@ function _fmtHistoryTime(ts, hours) {
 async function loadStatsHistory(hours) {
   try {
     const data = await api.getStatsHistory(APP_ID, hours);
-    if (!data || !data.length) return;
+    if (!data || !data.length) {
+      historySeriesCache = { hours, rows: [], cpuPoints: [], memPoints: [], netPoints: [], diskPoints: [] };
+      return;
+    }
     const cpuPoints  = data.map(r => ({ t: _fmtHistoryTime(r.timestamp, hours), v: r.cpu_percent }));
     const memPoints  = data.map(r => ({ t: _fmtHistoryTime(r.timestamp, hours), v: r.memory_mb }));
     const netPoints  = data.map(r => ({ t: _fmtHistoryTime(r.timestamp, hours), v: r.net_mb || 0 }));
     const diskPoints = data.map(r => ({ t: _fmtHistoryTime(r.timestamp, hours), v: r.disk_mb || 0 }));
+    historySeriesCache = { hours, rows: data, cpuPoints, memPoints, netPoints, diskPoints };
     if (!chartCpuHistory) chartCpuHistory = createChart('chart-cpu-history', '#c8c8c8', '%');
     if (!chartMemHistory) chartMemHistory = createChart('chart-mem-history', '#a78bfa', ' MB');
     if (!chartNetHistory) chartNetHistory = createChart('chart-net-history', '#34d399', ' MB');
@@ -761,6 +781,97 @@ async function loadStatsHistory(hours) {
   } catch (e) {
     console.warn('Stats history load failed:', e);
   }
+}
+
+function _csv(v) {
+  const s = String(v ?? '');
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+async function exportStatsCsv(hours) {
+  try {
+    const rows = (historySeriesCache.hours === hours && historySeriesCache.rows?.length)
+      ? historySeriesCache.rows
+      : await api.getStatsHistory(APP_ID, hours);
+
+    if (!rows || !rows.length) {
+      toast('No stats history available in this range', 'error');
+      return;
+    }
+
+    const csvRows = ['timestamp_utc,cpu_percent,memory_mb,net_mb,disk_mb'];
+    rows.forEach(r => {
+      csvRows.push([
+        _csv(r.timestamp),
+        _csv(r.cpu_percent),
+        _csv(r.memory_mb),
+        _csv(r.net_mb ?? 0),
+        _csv(r.disk_mb ?? 0),
+      ].join(','));
+    });
+
+    const blob = new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    a.href = url;
+    a.download = `${app.name}-stats-${hours}h-${stamp}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    toast('Stats exported as CSV', 'success');
+  } catch (e) {
+    toast(e.message || 'Failed to export stats', 'error');
+  }
+}
+
+function openLargeHistoryChart(kind) {
+  const map = {
+    cpu: { title: 'CPU History', subtitle: 'Averaged per 30s interval', color: '#c8c8c8', unit: '%', points: historySeriesCache.cpuPoints },
+    memory: { title: 'Memory History', subtitle: 'Averaged per 30s interval', color: '#a78bfa', unit: ' MB', points: historySeriesCache.memPoints },
+    network: { title: 'Traffic History', subtitle: 'Cumulative RX+TX per 30s', color: '#34d399', unit: ' MB', points: historySeriesCache.netPoints },
+    disk: { title: 'Disk I/O History', subtitle: 'Cumulative Read+Write per 30s', color: '#fbbf24', unit: ' MB', points: historySeriesCache.diskPoints },
+  };
+
+  const cfg = map[kind] || map.cpu;
+  if (!cfg.points || !cfg.points.length) {
+    toast('No history data to enlarge yet', 'error');
+    return;
+  }
+
+  const backdrop = document.createElement('div');
+  backdrop.className = 'dialog-backdrop';
+  backdrop.innerHTML = `
+    <div class="dialog dialog-modern" style="max-width:min(1100px,96vw);width:min(1100px,96vw)">
+      <div class="dialog-title">${cfg.title}</div>
+      <div class="dialog-body" style="padding:14px 16px 10px;display:flex;flex-direction:column;gap:8px">
+        <div style="font-size:12px;color:var(--text-muted)">${cfg.subtitle} · Range: last ${historySeriesCache.hours}h</div>
+        <div style="height:min(62vh,560px)">
+          <canvas id="history-large-canvas" style="width:100%;height:100%;display:block"></canvas>
+        </div>
+      </div>
+      <div class="dialog-actions">
+        <button class="btn btn-secondary" id="history-large-close">Close</button>
+      </div>
+    </div>`;
+  document.body.appendChild(backdrop);
+
+  const canvas = backdrop.querySelector('#history-large-canvas');
+  const draw = () => {
+    canvas.width = canvas.offsetWidth * devicePixelRatio;
+    canvas.height = canvas.offsetHeight * devicePixelRatio;
+    drawSparkline(canvas.getContext('2d'), canvas, cfg.points, cfg.color, cfg.unit, { maxLabels: 14 });
+  };
+  draw();
+  window.addEventListener('resize', draw, { passive: true });
+
+  const close = () => {
+    window.removeEventListener('resize', draw);
+    backdrop.remove();
+  };
+  backdrop.querySelector('#history-large-close').onclick = close;
+  backdrop.addEventListener('click', e => { if (e.target === backdrop) close(); });
 }
 
 function createChart(canvasId, color, unit, opts = {}) {
@@ -2185,6 +2296,7 @@ async function openCommitPicker() {
     </div>`;
   document.body.appendChild(backdrop);
 
+  let resolvePicker = null;
   const renderCommitRows = (listEl, commits) => {
     if (!commits.length) {
       listEl.innerHTML = '<div class="commit-picker-empty">No recent commits found.</div>';
@@ -2203,7 +2315,9 @@ async function openCommitPicker() {
 
     listEl.scrollTop = 0;
     listEl.querySelectorAll('.commit-row').forEach(row => {
-      row.onclick = () => resolve(close(row.dataset.commit));
+      row.onclick = () => {
+        if (resolvePicker) resolvePicker(close(row.dataset.commit));
+      };
     });
   };
 
@@ -2215,6 +2329,7 @@ async function openCommitPicker() {
   };
 
   return await new Promise(async resolve => {
+    resolvePicker = resolve;
     backdrop.addEventListener('click', e => { if (e.target === backdrop) resolve(close(null)); });
     backdrop.querySelector('#commit-cancel').onclick = () => resolve(close(null));
     backdrop.querySelector('#commit-latest').onclick = () => resolve(close(''));

@@ -252,6 +252,9 @@
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
               <span style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em">History</span>
               <div style="display:flex;align-items:center;gap:8px">
+                <button class="btn btn-secondary btn-sm" id="btn-export-stats" style="font-size:11px;padding:4px 10px">
+                  Export CSV
+                </button>
                 <span style="font-size:11px;color:var(--text-muted)">Time range</span>
                 <select id="history-hours" class="input" style="width:auto;font-size:11px;padding:4px 8px">
                   <option value="1">Last 1h</option>
@@ -264,21 +267,33 @@
             </div>
             <div class="history-row">
               <div class="card chart-card">
-                <div class="chart-hdr"><div><div class="chart-title">CPU History</div><div class="chart-subtitle">Averaged per 30s interval</div></div></div>
+                <div class="chart-hdr">
+                  <div><div class="chart-title">CPU History</div><div class="chart-subtitle">Averaged per 30s interval</div></div>
+                  <button class="btn btn-secondary btn-sm history-open-btn" data-history-chart="cpu" style="font-size:10px;padding:3px 8px">Open Large</button>
+                </div>
                 <canvas id="chart-cpu-history" style="width:100%;height:140px;display:block"></canvas>
               </div>
               <div class="card chart-card">
-                <div class="chart-hdr"><div><div class="chart-title">Memory History</div><div class="chart-subtitle">Averaged per 30s interval</div></div></div>
+                <div class="chart-hdr">
+                  <div><div class="chart-title">Memory History</div><div class="chart-subtitle">Averaged per 30s interval</div></div>
+                  <button class="btn btn-secondary btn-sm history-open-btn" data-history-chart="memory" style="font-size:10px;padding:3px 8px">Open Large</button>
+                </div>
                 <canvas id="chart-mem-history" style="width:100%;height:140px;display:block"></canvas>
               </div>
             </div>
             <div class="history-row" style="margin-top:12px">
               <div class="card chart-card">
-                <div class="chart-hdr"><div><div class="chart-title">Traffic History</div><div class="chart-subtitle">Cumulative RX+TX per 30s</div></div></div>
+                <div class="chart-hdr">
+                  <div><div class="chart-title">Traffic History</div><div class="chart-subtitle">Cumulative RX+TX per 30s</div></div>
+                  <button class="btn btn-secondary btn-sm history-open-btn" data-history-chart="network" style="font-size:10px;padding:3px 8px">Open Large</button>
+                </div>
                 <canvas id="chart-net-history" style="width:100%;height:140px;display:block"></canvas>
               </div>
               <div class="card chart-card">
-                <div class="chart-hdr"><div><div class="chart-title">Disk I/O History</div><div class="chart-subtitle">Cumulative Read+Write per 30s</div></div></div>
+                <div class="chart-hdr">
+                  <div><div class="chart-title">Disk I/O History</div><div class="chart-subtitle">Cumulative Read+Write per 30s</div></div>
+                  <button class="btn btn-secondary btn-sm history-open-btn" data-history-chart="disk" style="font-size:10px;padding:3px 8px">Open Large</button>
+                </div>
                 <canvas id="chart-disk-history" style="width:100%;height:140px;display:block"></canvas>
               </div>
             </div>
@@ -509,13 +524,14 @@
               <div class="settings-group-bd">
                 <div class="field">
                   <label class="field-label">GitHub Token <span class="hint">(leave blank to keep current)</span></label>
-                  <div style="display:flex;gap:6px;align-items:center">
+                  <form id="cfg-token-form" onsubmit="return false;" style="display:flex;gap:6px;align-items:center">
+                    <input type="text" autocomplete="username" tabindex="-1" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0" aria-hidden="true" />
                     <input class="input input-mono" id="cfg-token" type="password" placeholder="ghp_…" autocomplete="current-password" style="flex:1;min-width:0" />
                     <button type="button" class="btn btn-secondary btn-sm" id="cfg-token-pick" style="white-space:nowrap;flex-shrink:0">
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
                       Saved
                     </button>
-                  </div>
+                  </form>
                   <input type="hidden" id="cfg-token-id" />
                 </div>
                 <div class="field-label" style="display:block;margin-bottom:10px">Environment Variables</div>
@@ -750,6 +766,7 @@
   <div class="dialog" style="max-width:360px;width:90%">
     <div class="dialog-title">Change Admin Password</div>
     <form id="change-pwd-form" onsubmit="return false;">
+    <input type="text" autocomplete="username" tabindex="-1" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0" aria-hidden="true" />
     <div class="dialog-body" style="display:flex;flex-direction:column;gap:14px">
       <div class="field" style="margin:0">
         <label class="field-label">New Password <span class="hint">(min 8 chars)</span></label>

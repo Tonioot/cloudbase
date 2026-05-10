@@ -293,6 +293,11 @@ async def _write_app_nginx_config(
     *,
     mode: Optional[str] = None,
 ) -> None:
+    if app.no_web:
+        app.nginx_enabled = False
+        _best_effort_remove_app_nginx(app.name)
+        return
+
     _base = _syscfg.get_base_domain_cached()
     has_custom = bool(app.nginx_enabled and app.domain)
     if not has_custom and not _base:
@@ -1122,7 +1127,7 @@ async def deploy_app(
         await _deploy_app(app)
         app.status = "stopped"
 
-        if app.domain:
+        if app.domain and not app.no_web:
             app.nginx_enabled = True
             await _write_app_nginx_config(app, db, local_node)
 
@@ -1231,6 +1236,9 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
         app.restart_policy = req.restart_policy
     if req.no_web is not None:
         app.no_web = req.no_web
+        if app.no_web:
+            app.nginx_enabled = False
+            _best_effort_remove_app_nginx(app.name)
     if req.working_dir is not None:
         app.working_dir = req.working_dir
     if req.source_revision is not None:
@@ -1250,7 +1258,7 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
         # Force image refresh on next start/restart so config changes are applied.
         app.image_revision = None
 
-    if app.domain:
+    if app.domain and not app.no_web:
         maint_ok, maint_msg = _ensure_maintenance_files(app, app.id)
         if not maint_ok:
             raise HTTPException(500, f"Maintenance files failed: {maint_msg}")

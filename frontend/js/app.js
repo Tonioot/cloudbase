@@ -1767,6 +1767,22 @@ function escAttr(s) {
 /* ─── INSTANCES TAB ─────────────────────────────────────────────────────── */
 let _instancesRefreshTimer = null;
 
+const _sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+async function _waitForInstanceSync(predicate, timeoutMs = 15000, intervalMs = 700) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const instances = await api.listInstances(APP_ID);
+      if (predicate(instances || [])) return true;
+    } catch {
+      // Keep polling; transient API hiccups should not fail sync wait immediately.
+    }
+    await _sleep(intervalMs);
+  }
+  return false;
+}
+
 async function initInstances() {
   const wrap = document.getElementById('instances-table-wrap');
   if (!wrap) return;
@@ -1935,11 +1951,17 @@ async function initInstances() {
         btn.innerHTML = `${spinner} Removing…`;
         try {
           await api.deleteInstance(APP_ID, instanceId);
-          toast('Instance removed');
+          toast('Instance removal requested… syncing…');
+          const removed = await _waitForInstanceSync(instances => !instances.some(i => i.id === instanceId));
           app = await api.getApp(APP_ID);
           updateHeaderStatus();
           renderHeader();
           await renderInstances();
+          if (removed) {
+            toast('Instance removed');
+          } else {
+            toast('Instance removal is still syncing');
+          }
         } catch (e) {
           toast(e.message, 'error');
           btn.disabled = false;
@@ -2048,6 +2070,8 @@ async function initInstances() {
       addBtn.disabled = true;
       addBtn.textContent = 'Starting...';
       try {
+        const beforeInstances = await api.listInstances(APP_ID).catch(() => []);
+        const beforeIds = new Set((beforeInstances || []).map(i => i.id));
         await api.scaleApp(APP_ID, {
           node_id: result.nodeId,
           docker_cpu_limit: result.cpu,
@@ -2056,11 +2080,18 @@ async function initInstances() {
           docker_tmpfs_enabled: result.tmpfs,
           docker_tmpfs_size_mb: result.tmpfsSz,
         });
-        toast('Instance started');
+        addBtn.textContent = 'Syncing...';
+        toast('Instance start requested… syncing…');
+        const started = await _waitForInstanceSync(instances => instances.some(i => !beforeIds.has(i.id)));
         app = await api.getApp(APP_ID);
         updateHeaderStatus();
         renderHeader();
         await renderInstances();
+        if (started) {
+          toast('Instance started');
+        } else {
+          toast('Instance is still provisioning');
+        }
       } catch (e) {
         toast(e.message, 'error');
       } finally {

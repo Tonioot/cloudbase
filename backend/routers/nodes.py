@@ -1430,13 +1430,12 @@ async def get_node_connection_status(node_id: int, db: AsyncSession = Depends(ge
 async def _regen_nginx_for_app(app_id: int) -> None:
     """Rebuild nginx config for an app after a tunnel state change.
 
-    Intentionally self-contained (no import from routers.applications) to avoid
-    circular imports.  Replicates the backend-list logic of _get_nginx_backends.
+    Uses the shared applications writer so transition guards (start/restart pages)
+    are applied consistently across all nginx write paths.
     """
-    import json as _json
-    import nginx_manager as _nm
     import system_config as _syscfg
-    from models import Application, ApplicationReplica
+    from models import Application
+    from routers.applications import _write_app_nginx_config
 
     async with AsyncSessionLocal() as db:
         app_result = await db.execute(select(Application).where(Application.id == app_id))
@@ -1450,56 +1449,8 @@ async def _regen_nginx_for_app(app_id: int) -> None:
         local_node = local_node_result.scalar_one_or_none()
         if not local_node:
             return
-
-        rep_result = await db.execute(
-            select(ApplicationReplica, Node)
-            .join(Node, ApplicationReplica.node_id == Node.id, isouter=True)
-            .where(
-                ApplicationReplica.app_id == app_id,
-                ApplicationReplica.status == "running",
-            )
-        )
-        running_replicas = rep_result.all()
-
-        if not running_replicas:
-            return
-
-        blist: list[str] = []
-        for replica, r_node in running_replicas:
-            is_remote = r_node is not None and not r_node.is_local
-            if is_remote:
-                if replica.tunnel_port:
-                    blist.append(f"127.0.0.1:{replica.tunnel_port}")
-            else:
-                if replica.external_port:
-                    blist.append(f"127.0.0.1:{replica.external_port}")
-        backends: "list[str]" = blist
-
-        if not backends:
-            return
-
-        nginx_mode = (
-            "update" if app.update_mode
-            else "maintenance" if app.maintenance_mode
-            else "normal"
-        )
-        extra_domains = _json.loads(app.extra_domains or "[]") if has_custom else []
-        redirect_domains = _json.loads(app.redirect_domains or "[]") if has_custom else []
-
-        ssl_cert = ssl_key = None
-        if has_custom:
-            ssl_cert = app.ssl_cert_path
-            ssl_key = app.ssl_key_path
-
-        config = _nm.generate_config(
-            app.name, app.domain if has_custom else None, backends,
-            ssl_cert, ssl_key,
-            app_id=app.id, mode=nginx_mode,
-            extra_domains=extra_domains,
-            redirect_domains=redirect_domains,
-        )
         try:
-            _nm.write_nginx_config(app.name, config)
+            await _write_app_nginx_config(app, db, local_node)
         except Exception as e:
             log.warning("[tunnel] nginx reload failed for app=%d: %s", app_id, e)
 

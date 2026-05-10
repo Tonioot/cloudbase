@@ -416,11 +416,13 @@ async def _restore_nginx_after_transition(
 
 def _remote_replica_command_payload(app: Application, env_vars: dict, external_port: int) -> dict:
     source_revision = _refresh_app_source_revision(app)
+    app_type = app.app_type or pm.detect_app_type_from_command(app.start_command or "")
     return {
         "app_id": app.id,
         "app_name": app.name,
         "repo_url": app.repo_url,
         "github_token": _decrypt_github_token(app.github_token),
+        "app_type": app_type or "unknown",
         "start_command": app.start_command,
         "internal_port": app.port or 8000,
         "external_port": external_port,

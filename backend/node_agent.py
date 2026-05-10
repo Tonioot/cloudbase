@@ -649,11 +649,19 @@ async def _build_image_local(local_id: int, app_name: str, app_dir: str, payload
     """Build Docker image natively using dm.build_image (handles Dockerfile generation).
     Returns image name."""
     import docker_manager as dm  # import here to avoid circular at module level on remote nodes
+    import process_manager as pm
     import re as _re
 
-    app_type = payload.get("app_type") or "unknown"
+    app_type = (payload.get("app_type") or "").strip().lower()
     start_cmd = payload.get("start_command") or ""
     port = payload.get("internal_port") or payload.get("port") or 8000
+
+    if not app_type or app_type == "unknown":
+        inferred_type = pm.detect_app_type_from_command(start_cmd) if start_cmd else "unknown"
+        if inferred_type == "unknown":
+            inferred_type, _, _ = pm.detect_app_type(app_dir)
+        app_type = inferred_type or "unknown"
+
     img = dm.image_name(local_id, app_name)
 
     _agent_log(f"[build] Building image {img} for {platform.machine()} in {app_dir}")

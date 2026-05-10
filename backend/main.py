@@ -976,6 +976,10 @@ async def apply_cloudbase_nginx(
     if not ok:
         raise HTTPException(status_code=500, detail=f"Failed to apply nginx config: {msg}")
 
+    catchall_ok, catchall_msg = nm.write_default_catch_all()
+    if not catchall_ok:
+        raise HTTPException(status_code=500, detail=f"Cloudbase config applied, but failed to enforce nginx default catch-all: {catchall_msg}")
+
     # --- Base domain for app subdomains ---
     base_domain = str(req.base_domain or "").strip().strip(".")
     if base_domain and not _re2.match(r'^[a-zA-Z0-9._-]+$', base_domain):
@@ -1010,7 +1014,12 @@ async def apply_cloudbase_nginx(
             log.warning("nginx refresh batch failed: %s", _e)
 
     asyncio.create_task(_refresh_apps())
-    return {"ok": ok, "message": msg, "preview": config}
+    return {
+        "ok": ok,
+        "message": msg,
+        "preview": config,
+        "default_catchall": {"ok": catchall_ok, "message": catchall_msg},
+    }
 
 
 # ── System settings (ports, limits from config.yaml) ─────────────────────────

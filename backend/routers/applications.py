@@ -160,6 +160,14 @@ async def _cleanup_app_dependencies(db: AsyncSession, app_id: int) -> None:
     await db.execute(delete(ApplicationReplica).where(ApplicationReplica.app_id == app_id))
 
 
+def _best_effort_remove_app_nginx(app_name: str) -> None:
+    """Remove app nginx config even when DB flags are stale, to avoid ghost routes."""
+    try:
+        nm.remove_nginx_config(app_name)
+    except Exception:
+        pass
+
+
 async def _check_domain_conflicts(
     domains: list[str],
     db: AsyncSession,
@@ -1307,6 +1315,7 @@ async def delete_app(app_id: int, db: AsyncSession = Depends(get_db), actor: str
             done = await wait_for_node_command(db, cmd.id, timeout_seconds=60)
             if done.status != "done":
                 raise HTTPException(500, f"Failed to delete app on node '{node.name}': {done.error_message}")
+            _best_effort_remove_app_nginx(app.name)
             await _cleanup_app_dependencies(db, app.id)
             await db.delete(app)
             try:
@@ -1318,6 +1327,7 @@ async def delete_app(app_id: int, db: AsyncSession = Depends(get_db), actor: str
             return {"message": result_payload.get("message") or f"App '{app.name}' deleted"}
         else:
             # Node offline — remove from DB only; node cleans up its own files when it reconnects
+            _best_effort_remove_app_nginx(app.name)
             await _cleanup_app_dependencies(db, app.id)
             await db.delete(app)
             try:
@@ -1346,8 +1356,7 @@ async def delete_app(app_id: int, db: AsyncSession = Depends(get_db), actor: str
     await _best_effort_stop_legacy_app_container(app_id)
     await asyncio.to_thread(dm.remove_image, app_id, app.name)
 
-    if app.nginx_enabled:
-        nm.remove_nginx_config(app.name)
+    _best_effort_remove_app_nginx(app.name)
 
     app_dir = pm.get_app_dir(app.name)
     if os.path.exists(app_dir):

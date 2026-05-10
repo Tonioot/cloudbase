@@ -758,6 +758,19 @@ function _fmtHistoryTime(ts, hours) {
   }
 }
 
+function _sampleHistoryRows(rows, maxPoints = 1200) {
+  if (!rows || rows.length <= maxPoints) return rows || [];
+  const step = rows.length / maxPoints;
+  const sampled = [];
+  for (let i = 0; i < maxPoints; i++) {
+    const idx = Math.floor(i * step);
+    sampled.push(rows[idx]);
+  }
+  const last = rows[rows.length - 1];
+  if (sampled[sampled.length - 1] !== last) sampled[sampled.length - 1] = last;
+  return sampled;
+}
+
 async function loadStatsHistory(hours) {
   try {
     const data = await api.getStatsHistory(APP_ID, hours);
@@ -765,10 +778,11 @@ async function loadStatsHistory(hours) {
       historySeriesCache = { hours, rows: [], cpuPoints: [], memPoints: [], netPoints: [], diskPoints: [] };
       return;
     }
-    const cpuPoints  = data.map(r => ({ t: _fmtHistoryTime(r.timestamp, hours), v: r.cpu_percent }));
-    const memPoints  = data.map(r => ({ t: _fmtHistoryTime(r.timestamp, hours), v: r.memory_mb }));
-    const netPoints  = data.map(r => ({ t: _fmtHistoryTime(r.timestamp, hours), v: r.net_mb || 0 }));
-    const diskPoints = data.map(r => ({ t: _fmtHistoryTime(r.timestamp, hours), v: r.disk_mb || 0 }));
+    const sampled = _sampleHistoryRows(data, 1200);
+    const cpuPoints  = sampled.map(r => ({ t: _fmtHistoryTime(r.timestamp, hours), v: r.cpu_percent }));
+    const memPoints  = sampled.map(r => ({ t: _fmtHistoryTime(r.timestamp, hours), v: r.memory_mb }));
+    const netPoints  = sampled.map(r => ({ t: _fmtHistoryTime(r.timestamp, hours), v: r.net_mb || 0 }));
+    const diskPoints = sampled.map(r => ({ t: _fmtHistoryTime(r.timestamp, hours), v: r.disk_mb || 0 }));
     historySeriesCache = { hours, rows: data, cpuPoints, memPoints, netPoints, diskPoints };
     if (!chartCpuHistory) chartCpuHistory = createChart('chart-cpu-history', '#c8c8c8', '%');
     if (!chartMemHistory) chartMemHistory = createChart('chart-mem-history', '#a78bfa', ' MB');

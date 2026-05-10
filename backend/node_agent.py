@@ -706,11 +706,16 @@ async def _ensure_replica_app_deployed(client: httpx.AsyncClient, state, main_id
     """Ensure source + image are ready on this node. Only downloads/builds when needed.
     Returns local_app_id."""
     import docker_manager as dm
+    import process_manager as pm
 
     app_name = payload.get("app_name") or payload.get("name") or ""
     if not app_name:
         raise RuntimeError("Missing app_name")
     desired_revision = payload.get("source_revision")
+    desired_start_command = payload.get("start_command") or ""
+    desired_app_type = (payload.get("app_type") or "").strip().lower()
+    if not desired_app_type or desired_app_type == "unknown":
+        desired_app_type = pm.detect_app_type_from_command(desired_start_command) if desired_start_command else "unknown"
 
     # Check if we already have a valid image for this architecture
     local_app = await _find_local_app_by_name(client, headers, app_name)
@@ -719,11 +724,19 @@ async def _ensure_replica_app_deployed(client: httpx.AsyncClient, state, main_id
         img = dm.image_name(local_id, app_name)
         local_source_revision = local_app.get("source_revision")
         local_image_revision = local_app.get("image_revision")
+        local_start_command = local_app.get("start_command") or ""
+        local_app_type = (local_app.get("app_type") or "").strip().lower()
         revision_matches = (
             not desired_revision
             or (local_source_revision == desired_revision and local_image_revision == desired_revision)
         )
-        if _local_image_ok(img) and revision_matches:
+        runtime_matches = True
+        if desired_start_command and local_start_command != desired_start_command:
+            runtime_matches = False
+        if desired_app_type and desired_app_type != "unknown" and local_app_type != desired_app_type:
+            runtime_matches = False
+
+        if _local_image_ok(img) and revision_matches and runtime_matches:
             # Image present and correct arch — just make sure state map is current
             if main_id:
                 state.app_id_map[str(main_id)] = local_id
@@ -733,6 +746,12 @@ async def _ensure_replica_app_deployed(client: httpx.AsyncClient, state, main_id
         else:
             if desired_revision and local_image_revision != desired_revision:
                 _agent_log(f"[deploy] Image {img} exists but revision is stale ({local_image_revision} != {desired_revision}), rebuilding...")
+            elif not runtime_matches:
+                _agent_log(
+                    f"[deploy] Image {img} exists but runtime config changed "
+                    f"(app_type {local_app_type or '?'} -> {desired_app_type or '?'}, "
+                    f"start_command changed={local_start_command != desired_start_command}), rebuilding..."
+                )
             else:
                 _agent_log(f"[deploy] Image {img} missing or wrong arch, rebuilding...")
 

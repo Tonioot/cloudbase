@@ -31,6 +31,8 @@ function _updateNoWebVisibility(noWeb) {
   if (networkSection)                networkSection.style.display = hide;
   // Maintenance Pages section
   if (el('maintenance-pages-section')) el('maintenance-pages-section').style.display = hide;
+  // Actions: nginx config editor is not applicable for no-web apps
+  if (el('tile-nginx'))               el('tile-nginx').style.display = hide;
 
   // Header action buttons
   if (el('btn-maintenance-mode'))    el('btn-maintenance-mode').style.display = noWeb ? 'none' : '';
@@ -1786,6 +1788,8 @@ async function _waitForInstanceSync(predicate, timeoutMs = 15000, intervalMs = 7
 async function initInstances() {
   const wrap = document.getElementById('instances-table-wrap');
   if (!wrap) return;
+  const pendingRemovals = new Set();
+  let pendingCreate = false;
 
   async function renderInstances() {
     let instances = [], instStats = {};
@@ -1805,6 +1809,7 @@ async function initInstances() {
     }
 
     const cards = instances.map((inst, idx) => {
+      const removePending = pendingRemovals.has(inst.id);
       const isRunning  = inst.status === 'running';
       const isStarting = inst.status === 'starting';
       const isError    = inst.status === 'error';
@@ -1913,8 +1918,8 @@ async function initInstances() {
               ${containerShort ? `<span style="font-family:var(--font-mono)" title="${escHtml(inst.container_id || '')}">${containerShort}</span>` : ''}
             </div>
             <div style="display:flex;gap:4px;flex-shrink:0">
-              <button class="btn btn-secondary btn-sm inst-restart-btn" data-id="${inst.id}" style="font-size:10px;padding:2px 8px">Restart</button>
-              <button class="btn btn-danger btn-sm inst-remove-btn" data-id="${inst.id}" style="font-size:10px;padding:2px 8px">Remove</button>
+              <button class="btn btn-secondary btn-sm inst-restart-btn" data-id="${inst.id}" style="font-size:10px;padding:2px 8px" ${removePending ? 'disabled' : ''}>Restart</button>
+              <button class="btn btn-danger btn-sm inst-remove-btn" data-id="${inst.id}" style="font-size:10px;padding:2px 8px" ${removePending ? 'disabled' : ''}>${removePending ? `${spinner} Removing…` : 'Remove'}</button>
             </div>
           </div>
         </div>
@@ -1945,14 +1950,15 @@ async function initInstances() {
     wrap.querySelectorAll('.inst-remove-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
         const instanceId = parseInt(btn.dataset.id, 10);
+        if (pendingRemovals.has(instanceId)) return;
         const ok = await confirm('Remove instance?', 'The instance container will be stopped and removed.');
         if (!ok) return;
-        btn.disabled = true;
-        btn.innerHTML = `${spinner} Removing…`;
+        pendingRemovals.add(instanceId);
+        await renderInstances();
         try {
           await api.deleteInstance(APP_ID, instanceId);
-          toast('Instance removal requested… syncing…');
           const removed = await _waitForInstanceSync(instances => !instances.some(i => i.id === instanceId));
+          pendingRemovals.delete(instanceId);
           app = await api.getApp(APP_ID);
           updateHeaderStatus();
           renderHeader();
@@ -1960,12 +1966,12 @@ async function initInstances() {
           if (removed) {
             toast('Instance removed');
           } else {
-            toast('Instance removal is still syncing');
+            toast('Instance removal duurt langer dan verwacht');
           }
         } catch (e) {
+          pendingRemovals.delete(instanceId);
+          await renderInstances();
           toast(e.message, 'error');
-          btn.disabled = false;
-          btn.innerHTML = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg> Remove`;
         }
       });
     });
@@ -2067,6 +2073,8 @@ async function initInstances() {
 
       if (result === undefined) return;
 
+      if (pendingCreate) return;
+      pendingCreate = true;
       addBtn.disabled = true;
       addBtn.textContent = 'Starting...';
       try {
@@ -2080,8 +2088,6 @@ async function initInstances() {
           docker_tmpfs_enabled: result.tmpfs,
           docker_tmpfs_size_mb: result.tmpfsSz,
         });
-        addBtn.textContent = 'Syncing...';
-        toast('Instance start requested… syncing…');
         const started = await _waitForInstanceSync(instances => instances.some(i => !beforeIds.has(i.id)));
         app = await api.getApp(APP_ID);
         updateHeaderStatus();
@@ -2095,6 +2101,7 @@ async function initInstances() {
       } catch (e) {
         toast(e.message, 'error');
       } finally {
+        pendingCreate = false;
         addBtn.disabled = false;
         addBtn.textContent = 'Add Instance';
       }

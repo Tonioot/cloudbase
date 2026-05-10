@@ -1391,7 +1391,6 @@ def write_nginx_config(app_name: str, config: str) -> tuple[bool, str]:
         server_block_count,
         cfg_bytes,
     )
-    log.debug("[nginx-cfg] config content:\n%s", config)
 
     try:
         # Write via sudo tee (works without direct write permission)

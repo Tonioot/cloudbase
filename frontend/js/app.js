@@ -1055,7 +1055,6 @@ async function loadDir(path) {
       btn.addEventListener('click', () => loadDir(btn.dataset.path));
     });
 
-    console.log('[Files] API Response:', data);
     // Entries
     list.innerHTML = '';
 

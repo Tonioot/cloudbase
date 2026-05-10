@@ -971,6 +971,11 @@ async def apply_cloudbase_nginx(
     if not page_ok:
         raise HTTPException(status_code=500, detail=f"Failed to write Cloudbase unavailable page: {page_msg}")
 
+    unknown_host_html = nm.generate_cloudbase_unknown_host_html(req.domain)
+    host_ok, host_msg = nm.write_cloudbase_unknown_host_page(unknown_host_html)
+    if not host_ok:
+        raise HTTPException(status_code=500, detail=f"Failed to write Cloudbase unknown-host page: {host_msg}")
+
     config = nm.generate_config(
         "cloudbase",
         req.domain,

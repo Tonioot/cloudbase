@@ -253,6 +253,78 @@ def generate_cloudbase_unavailable_html(domain: str | None = None) -> str:
 """
 
 
+def generate_cloudbase_unknown_host_html(domain: str | None = None) -> str:
+    """Return a branded page for unknown/unconfigured hostnames."""
+    safe_domain = (domain or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    hint = (
+        f"Use the configured Cloudbase panel domain: {safe_domain}"
+        if safe_domain else
+        "This hostname is not configured in Cloudbase"
+    )
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>App Not Found</title>
+  <style>
+    :root {{
+      --bg-base: #0a0a0a;
+      --bg-surface: #111111;
+      --border: #2e2e2e;
+      --text-primary: #f0f0f0;
+      --text-secondary: #a0a0a0;
+      --accent: #c8c8c8;
+      --accent-bg: rgba(200, 200, 200, 0.08);
+      --accent-border: rgba(200, 200, 200, 0.2);
+    }}
+    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    body {{
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif;
+      background: radial-gradient(120% 80% at 0% 0%, rgba(200,200,200,0.08), transparent 52%), var(--bg-base);
+      color: var(--text-primary);
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+    }}
+    .card {{
+      width: min(500px, 100%);
+      background: linear-gradient(180deg, rgba(20,20,20,0.96), rgba(12,12,12,0.94));
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      box-shadow: 0 24px 60px rgba(0,0,0,0.7);
+      padding: 30px 28px 24px;
+    }}
+    .brand {{ display: inline-flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 700; margin-bottom: 16px; }}
+    .dot {{ width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }}
+    h1 {{ font-size: 22px; line-height: 1.25; margin-bottom: 9px; }}
+    p {{ color: var(--text-secondary); line-height: 1.6; font-size: 14px; }}
+    .hint {{
+      margin-top: 14px;
+      padding: 9px 10px;
+      border-radius: 10px;
+      border: 1px solid var(--accent-border);
+      background: var(--accent-bg);
+      color: var(--text-secondary);
+      font-size: 12px;
+      line-height: 1.45;
+    }}
+  </style>
+</head>
+<body>
+  <section class="card">
+    <div class="brand"><span class="dot"></span><span>Cloudbase</span></div>
+    <h1>App bestaat niet op dit domein</h1>
+    <p>De opgevraagde hostnaam is niet gekoppeld aan een app in Cloudbase.</p>
+    <div class="hint">{hint}</div>
+  </section>
+</body>
+</html>
+"""
+
+
 def _render_visual_block(color: str, icon_svg: str, logo_data: str = None) -> str:
     inner = (
         f'<span class="icon-logo"><img src="{logo_data}" alt="Logo" /></span>'
@@ -903,7 +975,7 @@ def _build_strict_host_guard(all_domains: list[str]) -> str:
   host_pattern = "|".join(patterns)
   return f"""
   if ($host !~* ^(?:{host_pattern})$) {{
-    return 444;
+    return 418;
   }}"""
 
 
@@ -911,7 +983,20 @@ def _proxy_config(domain: str, proxy_target: str, maint_root: str, ssl_cert: str
     # NOTE: proxy_intercept_errors must be inside the proxying location block.
     # We use a regular 'internal' location (not named @) so that try_files works.
     # Named locations don't support try_files, which caused the file to not be served.
+    unknown_host_block = """\
+    error_page 418 = /_cloudbase_unknown_host;
+    location = /_cloudbase_unknown_host {
+      internal;
+      root /var/www/cloudbase/maintenance/cloudbase;
+      try_files /app-not-found.html =404;
+      default_type text/html;
+      add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+      add_header Pragma "no-cache" always;
+    }
+
+  """ if strict_hostnames else ""
     server_content = f"""\
+  {unknown_host_block}
     # Auto-serve downtime page when upstream returns 502/503/504.
     error_page 502 503 504 =503 /_pdm_maintenance;
     location = /_pdm_maintenance {{
@@ -995,11 +1080,46 @@ def write_cloudbase_unavailable_page(html: str) -> tuple[bool, str]:
     return False, str(exc)
 
 
+def write_cloudbase_unknown_host_page(html: str) -> tuple[bool, str]:
+  """Write /var/www/cloudbase/maintenance/cloudbase/app-not-found.html."""
+  cloudbase_dir = os.path.join(MAINTENANCE_DIR, "cloudbase")
+  page_path = os.path.join(cloudbase_dir, "app-not-found.html")
+  try:
+    r = subprocess.run(["sudo", "mkdir", "-p", cloudbase_dir], capture_output=True, text=True)
+    if r.returncode != 0:
+      return False, r.stderr or "Failed to create Cloudbase maintenance directory"
+
+    r = subprocess.run(["sudo", "tee", page_path], input=html, text=True, capture_output=True)
+    if r.returncode != 0:
+      return False, r.stderr or "Failed to write unknown-host page"
+
+    r = subprocess.run(["sudo", "chmod", "644", page_path], capture_output=True, text=True)
+    if r.returncode != 0:
+      return False, r.stderr or "Failed to chmod unknown-host page"
+    return True, "OK"
+  except Exception as exc:
+    log.exception("[cloudbase-unknown-host] unexpected error: %s", exc)
+    return False, str(exc)
+
+
 def _static_page_config(domain: str, maint_root: str, filename: str, ssl_cert: str = None, ssl_key: str = None, extra_domains: list = None, redirect_domains: list = None, strict_hostnames: bool = False) -> str:
     # Serve a single static HTML file with a real 503 status.
     # error_page 503 points to an internal location that reads the file;
     # the outer location just triggers the 503 unconditionally.
+    unknown_host_block = """\
+    error_page 418 = /_cloudbase_unknown_host;
+    location = /_cloudbase_unknown_host {
+      internal;
+      root /var/www/cloudbase/maintenance/cloudbase;
+      try_files /app-not-found.html =404;
+      default_type text/html;
+      add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+      add_header Pragma "no-cache" always;
+    }
+
+  """ if strict_hostnames else ""
     server_content = f"""\
+  {unknown_host_block}
     root {maint_root};
 
     error_page 503 /_pdm_static;

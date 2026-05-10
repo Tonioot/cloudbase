@@ -563,12 +563,30 @@ def _resolve_ssl_paths(cert: str | None, key: str | None) -> tuple[str | None, s
 
 def _ensure_maintenance_files(app: Application, app_id: int) -> tuple[bool, str]:
     """Write maintenance HTML files from stored config (or defaults)."""
-    log.info("[ensure-files] app_id=%d downtime_page=%r update_page=%r restart_page=%r starting_page=%r",
-             app_id, app.downtime_page, app.update_page, app.restart_page, app.starting_page)
     downtime_cfg = json.loads(app.downtime_page  or "{}")
     update_cfg   = json.loads(app.update_page    or "{}")
     restart_cfg  = json.loads(app.restart_page   or "{}")
     starting_cfg = json.loads(app.starting_page  or "{}")
+
+    def _page_meta(cfg: dict) -> dict:
+        logo = cfg.get("logo_data")
+        html = cfg.get("custom_html")
+        return {
+            "has_logo": bool(logo),
+            "logo_len": len(logo) if isinstance(logo, str) else 0,
+            "has_custom_html": bool(html),
+            "custom_html_len": len(html) if isinstance(html, str) else 0,
+            "has_status_url": bool(cfg.get("status_url")),
+        }
+
+    log.info(
+        "[ensure-files] app_id=%d page_meta downtime=%s update=%s restart=%s starting=%s",
+        app_id,
+        _page_meta(downtime_cfg),
+        _page_meta(update_cfg),
+        _page_meta(restart_cfg),
+        _page_meta(starting_cfg),
+    )
 
     downtime_html = nm.generate_maintenance_html(
         downtime_cfg.get("title")       or "Down for Maintenance",

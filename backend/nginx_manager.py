@@ -975,7 +975,7 @@ def _build_strict_host_guard(all_domains: list[str]) -> str:
   host_pattern = "|".join(patterns)
   return f"""
   if ($host !~* ^(?:{host_pattern})$) {{
-    return 418;
+    return 404;
   }}"""
 
 
@@ -984,7 +984,7 @@ def _proxy_config(domain: str, proxy_target: str, maint_root: str, ssl_cert: str
     # We use a regular 'internal' location (not named @) so that try_files works.
     # Named locations don't support try_files, which caused the file to not be served.
     unknown_host_block = """\
-    error_page 418 = /_cloudbase_unknown_host;
+    error_page 404 = /_cloudbase_unknown_host;
     location = /_cloudbase_unknown_host {
       internal;
       root /var/www/cloudbase/maintenance/cloudbase;
@@ -1107,7 +1107,7 @@ def _static_page_config(domain: str, maint_root: str, filename: str, ssl_cert: s
     # error_page 503 points to an internal location that reads the file;
     # the outer location just triggers the 503 unconditionally.
     unknown_host_block = """\
-    error_page 418 = /_cloudbase_unknown_host;
+    error_page 404 = /_cloudbase_unknown_host;
     location = /_cloudbase_unknown_host {
       internal;
       root /var/www/cloudbase/maintenance/cloudbase;
@@ -1208,20 +1208,33 @@ server {{
 
 
 _DEFAULT_CATCH_ALL = """\
-# Cloudbase default catch-all — rejects requests for unknown hostnames.
+# Cloudbase default catch-all — serves a branded page for unknown hostnames.
 # This prevents Nginx from forwarding traffic intended for other services
 # (e.g. a hosting control panel) to a random app config.
 server {
     listen 80 default_server;
     listen [::]:80 default_server;
     server_name _;
-    return 444;
+
+  root /var/www/cloudbase/maintenance/cloudbase;
+  error_page 404 /app-not-found.html;
+  location = /app-not-found.html {
+    internal;
+    try_files /app-not-found.html =404;
+    default_type text/html;
+    add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+    add_header Pragma "no-cache" always;
+  }
+
+  location / {
+    return 404;
+  }
 }
 """
 
 
 def write_default_catch_all() -> tuple[bool, str]:
-    """Write a default_server block that drops unmatched requests (HTTP 444).
+    """Write a default_server block for unmatched requests with a branded 404 page.
     Call this once during install and whenever nginx config changes."""
     config_path = os.path.join(NGINX_SITES_DIR, "cloudbase-default")
     enabled_path = os.path.join(NGINX_ENABLED_DIR, "cloudbase-default")

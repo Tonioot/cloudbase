@@ -10,6 +10,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, delete, func, select, update
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db, AsyncSessionLocal
@@ -371,6 +372,30 @@ class CommandResultRequest(BaseModel):
 
 def _utcnow() -> datetime:
     return datetime.utcnow()
+
+
+async def _commit_with_sqlite_lock_retry(
+    db: AsyncSession,
+    *,
+    context: str,
+    attempts: int = 4,
+    base_delay_seconds: float = 0.05,
+) -> bool:
+    """Commit with short retry/backoff for transient SQLite lock contention."""
+    for attempt in range(1, attempts + 1):
+        try:
+            await db.commit()
+            return True
+        except OperationalError as exc:
+            msg = str(exc).lower()
+            if "database is locked" not in msg:
+                await db.rollback()
+                raise
+            await db.rollback()
+            if attempt >= attempts:
+                log.warning("SQLite lock persisted after %d attempts (%s)", attempts, context)
+                return False
+            await asyncio.sleep(base_delay_seconds * attempt)
 
 
 def _detect_public_ip(timeout: float = 2.5) -> Optional[str]:
@@ -949,7 +974,10 @@ async def agent_ws(websocket: WebSocket):
                             for _r in rep_res.scalars().all():
                                 _r.status = "node_offline"
                                 _r.tunnel_port = None
-                            await db.commit()
+                            await _commit_with_sqlite_lock_retry(
+                                db,
+                                context=f"agent_ws/offline-mark node_id={node_id}",
+                            )
                             log.info("Node id=%d marked offline after WS disconnect", node_id)
                     _push_node_event(node_id, {"type": "node_offline", "node_id": node_id})
 
@@ -985,7 +1013,12 @@ async def agent_ws(websocket: WebSocket):
                                 live_node.node_cpu_percent = metrics.get("cpu_percent")
                                 live_node.node_memory_percent = metrics.get("memory_percent")
                                 live_node.node_disk_percent = metrics.get("disk_percent")
-                            await db.commit()
+                            committed = await _commit_with_sqlite_lock_retry(
+                                db,
+                                context=f"agent_ws/heartbeat node_id={node_id}",
+                            )
+                            if not committed:
+                                log.debug("Skipped one heartbeat DB update due to SQLite lock: node_id=%d", node_id)
                         _push_node_event(node_id, {
                             "type": "node_health",
                             "cpu_percent": incoming.get("node_metrics", {}).get("cpu_percent"),
@@ -1005,7 +1038,10 @@ async def agent_ws(websocket: WebSocket):
                                     target_app.status = new_status
                                     if new_status != "running":
                                         target_app.pid = None
-                                    await db.commit()
+                                    await _commit_with_sqlite_lock_retry(
+                                        db,
+                                        context=f"agent_ws/status_update node_id={node_id} app_id={app_id}",
+                                    )
                     elif msg_type == "command_result":
                         command_id = int(incoming.get("command_id") or -1)
                         if command_id == -1:

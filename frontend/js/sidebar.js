@@ -831,6 +831,7 @@ async function initRoleBasedUI() {
   try {
     const data = await api.checkAuth();
     document.body.dataset.role = data.role;
+    window.dispatchEvent(new CustomEvent('cloudbase-role-ready', { detail: { role: data.role } }));
 
     if (data.role !== 'admin') {
       document.querySelectorAll('[data-admin]').forEach(el => { el.style.display = 'none'; });

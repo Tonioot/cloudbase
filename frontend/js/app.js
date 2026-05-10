@@ -19,6 +19,18 @@ let netData  = [];
 let diskData = [];
 let statsTabActive = false;
 let lastStatStatus = null; // 'running' | 'stopped' | null (unknown/loading)
+let _settingsInitialized = false;
+
+function _isViewerRole() {
+  return (document.body.dataset.role || '').toLowerCase() === 'viewer';
+}
+
+window.addEventListener('cloudbase-role-ready', (evt) => {
+  if (!_settingsInitialized) return;
+  const role = String(evt?.detail?.role || '').toLowerCase();
+  if (role === 'viewer') _disableSettingsForViewer();
+  else _enableSettingsForEditor();
+});
 
 function _updateNoWebVisibility(noWeb) {
   const hide = noWeb ? 'none' : '';
@@ -1206,7 +1218,8 @@ async function initActivity() {
 }
 
 function initSettings() {
-  const isViewer = document.body.dataset.role !== 'admin';
+  const isViewer = _isViewerRole();
+  _settingsInitialized = true;
 
   // Info rows
   document.getElementById('si-name').textContent  = app.name;
@@ -1421,11 +1434,13 @@ function initSettings() {
   _initMaintModal();
 
   if (isViewer) _disableSettingsForViewer();
+  else _enableSettingsForEditor();
 }
 
 function _disableSettingsForViewer() {
   const panel = document.getElementById('panel-settings');
   if (!panel) return;
+  if (panel.dataset.viewerLocked === '1') return;
 
   // Disable all inputs, selects, textareas, buttons
   panel.querySelectorAll('input, select, textarea, button').forEach(el => {
@@ -1441,6 +1456,19 @@ function _disableSettingsForViewer() {
     notice.innerHTML = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Read-only`;
     bar.appendChild(notice);
   }
+  panel.dataset.viewerLocked = '1';
+}
+
+function _enableSettingsForEditor() {
+  const panel = document.getElementById('panel-settings');
+  if (!panel) return;
+  if (panel.dataset.viewerLocked !== '1') return;
+
+  panel.querySelectorAll('input, select, textarea, button').forEach(el => {
+    el.disabled = false;
+  });
+  panel.querySelector('.viewer-notice')?.remove();
+  delete panel.dataset.viewerLocked;
 }
 
 /* ─── Maintenance pages settings ────────────────────────────────────────── */

@@ -33,6 +33,7 @@ log = logging.getLogger("pdm.apps")
 
 RESTART_READY_TIMEOUT_SECONDS = 180
 RESTART_READY_POLL_SECONDS = 1
+TRANSITION_HOLD_MAX_SECONDS = 300
 
 
 class DeployRequest(BaseModel):
@@ -333,6 +334,7 @@ async def _wait_for_app_backends_ready(
 ) -> tuple[bool, str]:
     deadline = asyncio.get_running_loop().time() + timeout_seconds
     last_reason = "no running instance backends yet"
+    stable_ready_polls = 0
 
     while asyncio.get_running_loop().time() < deadline:
         async with AsyncSessionLocal() as db:
@@ -357,10 +359,19 @@ async def _wait_for_app_backends_ready(
             if await asyncio.to_thread(_local_http_service_ready, port):
                 ready += 1
 
-        if checked and ready:
-            return True, f"{ready}/{checked} backend(s) ready"
+        # Require all currently running backends to be healthy for two
+        # consecutive polls so restart pages are not cleared prematurely.
+        if checked and ready == checked:
+            stable_ready_polls += 1
+            if stable_ready_polls >= 2:
+                return True, f"{ready}/{checked} backend(s) healthy"
+            last_reason = f"{ready}/{checked} backend(s) healthy, waiting for stability"
+            await asyncio.sleep(RESTART_READY_POLL_SECONDS)
+            continue
 
-        last_reason = f"{len(backends)} backend(s) registered but not healthy yet"
+        stable_ready_polls = 0
+
+        last_reason = f"{ready}/{checked} backend(s) healthy"
         await asyncio.sleep(RESTART_READY_POLL_SECONDS)
 
     return False, last_reason
@@ -373,6 +384,16 @@ async def _restore_nginx_after_transition(
 ) -> None:
     ready, reason = await _wait_for_app_backends_ready(app_id)
     elapsed = max(asyncio.get_running_loop().time() - started_at, 0)
+
+    # Do not clear start/restart pages while backends are still unhealthy.
+    # Keep waiting in the background, with a hard cap to avoid infinite loops.
+    if not ready and elapsed < TRANSITION_HOLD_MAX_SECONDS:
+        pm._push_line(
+            app_id,
+            f"{transition_label.capitalize()} page still active after {elapsed:.1f}s ({reason}); waiting for healthy backends...",
+        )
+        asyncio.create_task(_restore_nginx_after_transition(app_id, started_at, transition_label))
+        return
 
     async with AsyncSessionLocal() as db:
         app = await db.get(Application, app_id)
@@ -410,7 +431,7 @@ async def _restore_nginx_after_transition(
         msg,
     )
     if ok:
-        status_text = "cleared" if ready else "timed out"
+        status_text = "cleared" if ready else "force-cleared after hard timeout"
         pm._push_line(
             app_id,
             f"{transition_label.capitalize()} page {status_text} after {elapsed:.1f}s ({reason}).",

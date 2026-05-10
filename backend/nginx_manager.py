@@ -371,7 +371,7 @@ def _downtime_template(title: str, message: str, color: str, status_url: str = N
     <p class="msg">{message}</p>
     <div class="divider"></div>
     {status_btn}
-    <div class="footer">We&rsquo;re working on it &mdash; this page updates automatically.</div>
+    <div class="footer">Powered by Cloudbase &middot; We&rsquo;re working on it &mdash; this page updates automatically.</div>
   </div>
 </body>
 </html>
@@ -494,7 +494,7 @@ def _restart_template(title: str, message: str, color: str, status_url: str = No
     <p class="msg">{message}</p>
     <div class="track"><div class="bar"></div></div>
     {status_btn}
-    <div class="footer">Page auto-refreshes every 8 seconds.</div>
+    <div class="footer">Powered by Cloudbase &middot; Page auto-refreshes every 8 seconds.</div>
   </div>
 </body>
 </html>
@@ -616,7 +616,7 @@ def _starting_template(title: str, message: str, color: str, status_url: str = N
     <p class="msg">{message}</p>
     <div class="track"><div class="bar"></div></div>
     {status_btn}
-    <div class="footer">Page auto-refreshes every 8 seconds.</div>
+    <div class="footer">Powered by Cloudbase &middot; Page auto-refreshes every 8 seconds.</div>
   </div>
 </body>
 </html>
@@ -740,7 +740,7 @@ def _update_template(title: str, message: str, color: str, status_url: str = Non
     <p class="msg">{message}</p>
     <div class="track"><div class="bar"></div></div>
     {status_btn}
-    <div class="footer">Page auto-refreshes every 30 seconds.</div>
+    <div class="footer">Powered by Cloudbase &middot; Page auto-refreshes every 30 seconds.</div>
   </div>
 </body>
 </html>
@@ -793,6 +793,7 @@ def generate_config(
     mode: str = "normal",
     extra_domains: list = None,
     redirect_domains: list = None,
+    strict_hostnames: bool = False,
 ) -> str:
     """Generate an nginx server block.
 
@@ -862,34 +863,51 @@ def generate_config(
       fallback_filename = "unavailable.html"
 
     if mode == "maintenance":
-        return _static_page_config(domain, maint_root, "downtime.html", ssl_cert, ssl_key, extra_domains, redirect_domains)
+      return _static_page_config(domain, maint_root, "downtime.html", ssl_cert, ssl_key, extra_domains, redirect_domains, strict_hostnames=strict_hostnames)
     if mode == "update":
-        return _static_page_config(domain, maint_root, "update.html", ssl_cert, ssl_key, extra_domains, redirect_domains)
+      return _static_page_config(domain, maint_root, "update.html", ssl_cert, ssl_key, extra_domains, redirect_domains, strict_hostnames=strict_hostnames)
     if mode == "restart":
-        return _static_page_config(domain, maint_root, "restart.html", ssl_cert, ssl_key, extra_domains, redirect_domains)
+      return _static_page_config(domain, maint_root, "restart.html", ssl_cert, ssl_key, extra_domains, redirect_domains, strict_hostnames=strict_hostnames)
     if mode == "starting":
-        return _static_page_config(domain, maint_root, "starting.html", ssl_cert, ssl_key, extra_domains, redirect_domains)
+      return _static_page_config(domain, maint_root, "starting.html", ssl_cert, ssl_key, extra_domains, redirect_domains, strict_hostnames=strict_hostnames)
 
     # list[str] of "host:port" backends (instance-based model)
     if isinstance(port, list):
         if not port:
             # No running instances — serve 503 maintenance page
-            return _static_page_config(domain, maint_root, "downtime.html", ssl_cert, ssl_key, extra_domains, redirect_domains)
+          return _static_page_config(domain, maint_root, "downtime.html", ssl_cert, ssl_key, extra_domains, redirect_domains, strict_hostnames=strict_hostnames)
         if len(port) == 1:
-            return _proxy_config(domain, f"http://{port[0]}", maint_root, ssl_cert, ssl_key, extra_domains, redirect_domains, fallback_filename=fallback_filename)
+          return _proxy_config(domain, f"http://{port[0]}", maint_root, ssl_cert, ssl_key, extra_domains, redirect_domains, fallback_filename=fallback_filename, strict_hostnames=strict_hostnames)
         safe_name = _re.sub(r"[^a-z0-9_]", "_", app_name.lower())
         upstream_name = f"cloudbase_{safe_name}"
         upstream_block = f"upstream {upstream_name} {{\n"
         for backend in port:
             upstream_block += f"    server {backend};\n"
         upstream_block += "}\n\n"
-        return _proxy_config(domain, f"http://{upstream_name}", maint_root, ssl_cert, ssl_key, extra_domains, redirect_domains, upstream_block=upstream_block, fallback_filename=fallback_filename)
+        return _proxy_config(domain, f"http://{upstream_name}", maint_root, ssl_cert, ssl_key, extra_domains, redirect_domains, upstream_block=upstream_block, fallback_filename=fallback_filename, strict_hostnames=strict_hostnames)
 
     # Legacy single int port
-    return _proxy_config(domain, f"http://127.0.0.1:{port}", maint_root, ssl_cert, ssl_key, extra_domains, redirect_domains, fallback_filename=fallback_filename)
+    return _proxy_config(domain, f"http://127.0.0.1:{port}", maint_root, ssl_cert, ssl_key, extra_domains, redirect_domains, fallback_filename=fallback_filename, strict_hostnames=strict_hostnames)
 
 
-def _proxy_config(domain: str, proxy_target: str, maint_root: str, ssl_cert: str = None, ssl_key: str = None, extra_domains: list = None, redirect_domains: list = None, upstream_block: str = "", fallback_filename: str = "downtime.html") -> str:
+def _build_strict_host_guard(all_domains: list[str]) -> str:
+  import re as _re
+  names = [d for d in (all_domains or []) if d]
+  if not names:
+    return ""
+  patterns = []
+  for name in names:
+    esc = _re.escape(name)
+    esc = esc.replace(r"\*", "[^.]+")
+    patterns.append(esc)
+  host_pattern = "|".join(patterns)
+  return f"""
+  if ($host !~* ^(?:{host_pattern})$) {{
+    return 444;
+  }}"""
+
+
+def _proxy_config(domain: str, proxy_target: str, maint_root: str, ssl_cert: str = None, ssl_key: str = None, extra_domains: list = None, redirect_domains: list = None, upstream_block: str = "", fallback_filename: str = "downtime.html", strict_hostnames: bool = False) -> str:
     # NOTE: proxy_intercept_errors must be inside the proxying location block.
     # We use a regular 'internal' location (not named @) so that try_files works.
     # Named locations don't support try_files, which caused the file to not be served.
@@ -921,6 +939,7 @@ def _proxy_config(domain: str, proxy_target: str, maint_root: str, ssl_cert: str
     # Build server_name lists
     all_domains = [domain] + [d for d in (extra_domains or []) if d and d != domain]
     server_name_str = " ".join(all_domains)
+    strict_guard = _build_strict_host_guard(all_domains) if strict_hostnames else ""
     # Redirect block for domains that should 301 to the primary
     redirect_blocks = _redirect_server_blocks(redirect_domains or [], domain, ssl_cert, ssl_key)
 
@@ -939,6 +958,7 @@ server {{
     ssl_certificate_key "{ssl_key}";
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers HIGH:!aNULL:!MD5;
+  {strict_guard}
 
 {server_content}
 }}
@@ -946,6 +966,7 @@ server {{
     return f"""{upstream_block}{redirect_blocks}server {{
     listen 80;
     server_name {server_name_str};
+  {strict_guard}
 
 {server_content}
 }}
@@ -974,7 +995,7 @@ def write_cloudbase_unavailable_page(html: str) -> tuple[bool, str]:
     return False, str(exc)
 
 
-def _static_page_config(domain: str, maint_root: str, filename: str, ssl_cert: str = None, ssl_key: str = None, extra_domains: list = None, redirect_domains: list = None) -> str:
+def _static_page_config(domain: str, maint_root: str, filename: str, ssl_cert: str = None, ssl_key: str = None, extra_domains: list = None, redirect_domains: list = None, strict_hostnames: bool = False) -> str:
     # Serve a single static HTML file with a real 503 status.
     # error_page 503 points to an internal location that reads the file;
     # the outer location just triggers the 503 unconditionally.
@@ -996,6 +1017,7 @@ def _static_page_config(domain: str, maint_root: str, filename: str, ssl_cert: s
 
     all_domains = [domain] + [d for d in (extra_domains or []) if d and d != domain]
     server_name_str = " ".join(all_domains)
+    strict_guard = _build_strict_host_guard(all_domains) if strict_hostnames else ""
     redirect_blocks = _redirect_server_blocks(redirect_domains or [], domain, ssl_cert, ssl_key)
 
     if ssl_cert and ssl_key:
@@ -1013,6 +1035,7 @@ server {{
     ssl_certificate_key "{ssl_key}";
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers HIGH:!aNULL:!MD5;
+  {strict_guard}
 
 {server_content}
 }}
@@ -1020,6 +1043,7 @@ server {{
     return f"""{redirect_blocks}server {{
     listen 80;
     server_name {server_name_str};
+  {strict_guard}
 
 {server_content}
 }}

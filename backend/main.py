@@ -988,7 +988,7 @@ async def apply_cloudbase_nginx(
     if not ok:
         raise HTTPException(status_code=500, detail=f"Failed to apply nginx config: {msg}")
 
-    catchall_ok, catchall_msg = nm.write_default_catch_all()
+    catchall_ok, catchall_msg = nm.write_default_catch_all(req.ssl_cert_path, req.ssl_key_path)
     if not catchall_ok:
         raise HTTPException(status_code=500, detail=f"Cloudbase config applied, but failed to enforce nginx default catch-all: {catchall_msg}")
 

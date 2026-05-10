@@ -1207,49 +1207,83 @@ server {{
 """
 
 
-_DEFAULT_CATCH_ALL = """\
-# Cloudbase default catch-all — serves a branded page for unknown hostnames.
-# This prevents Nginx from forwarding traffic intended for other services
-# (e.g. a hosting control panel) to a random app config.
-server {
-    listen 80 default_server;
-    listen [::]:80 default_server;
-    server_name _;
+def _build_default_catch_all_config(ssl_cert: str | None = None, ssl_key: str | None = None) -> str:
+  ssl_cert = _sanitize_ssl_path(ssl_cert)
+  ssl_key = _sanitize_ssl_path(ssl_key)
+  has_ssl = bool(ssl_cert and ssl_key)
+
+  https_block = f"""
+server {{
+  listen 443 ssl default_server;
+  listen [::]:443 ssl default_server;
+  server_name _;
+
+  ssl_certificate \"{ssl_cert}\";
+  ssl_certificate_key \"{ssl_key}\";
+  ssl_protocols TLSv1.2 TLSv1.3;
+  ssl_ciphers HIGH:!aNULL:!MD5;
 
   root /var/www/cloudbase/maintenance/cloudbase;
-  error_page 404 /app-not-found.html;
-  location = /app-not-found.html {
+  error_page 404 = /app-not-found.html;
+  location = /app-not-found.html {{
     internal;
     try_files /app-not-found.html =404;
     default_type text/html;
-    add_header Cache-Control "no-store, no-cache, must-revalidate" always;
-    add_header Pragma "no-cache" always;
-  }
+    add_header Cache-Control \"no-store, no-cache, must-revalidate\" always;
+    add_header Pragma \"no-cache\" always;
+  }}
 
-  location / {
+  location / {{
     return 404;
-  }
-}
+  }}
+}}
+""" if has_ssl else ""
+
+  return f"""\
+# Cloudbase default catch-all — serves a branded page for unknown hostnames.
+# This prevents Nginx from forwarding traffic intended for other services
+# (e.g. a hosting control panel) to a random app config.
+server {{
+  listen 80 default_server;
+  listen [::]:80 default_server;
+  server_name _;
+
+  root /var/www/cloudbase/maintenance/cloudbase;
+  error_page 404 = /app-not-found.html;
+  location = /app-not-found.html {{
+    internal;
+    try_files /app-not-found.html =404;
+    default_type text/html;
+    add_header Cache-Control \"no-store, no-cache, must-revalidate\" always;
+    add_header Pragma \"no-cache\" always;
+  }}
+
+  location / {{
+    return 404;
+  }}
+}}
+{https_block}
 """
 
 
-def write_default_catch_all() -> tuple[bool, str]:
-    """Write a default_server block for unmatched requests with a branded 404 page.
-    Call this once during install and whenever nginx config changes."""
-    config_path = os.path.join(NGINX_SITES_DIR, "cloudbase-default")
-    enabled_path = os.path.join(NGINX_ENABLED_DIR, "cloudbase-default")
-    try:
-        r = subprocess.run(["sudo", "tee", config_path], input=_DEFAULT_CATCH_ALL, text=True, capture_output=True)
-        if r.returncode != 0:
-            return False, r.stderr or "Failed to write default catch-all"
-        subprocess.run(["sudo", "ln", "-sf", config_path, enabled_path], capture_output=True)
-        result = subprocess.run(["sudo", "nginx", "-t"], capture_output=True, text=True)
-        if result.returncode != 0:
-            return False, result.stderr
-        subprocess.run(["sudo", "systemctl", "reload", "nginx"], capture_output=True)
-        return True, "OK"
-    except Exception as e:
-        return False, str(e)
+def write_default_catch_all(ssl_cert: str | None = None, ssl_key: str | None = None) -> tuple[bool, str]:
+  """Write a default_server block for unmatched requests with a branded 404 page.
+  Includes HTTPS default_server when a valid cert/key pair is provided."""
+  config_path = os.path.join(NGINX_SITES_DIR, "cloudbase-default")
+  enabled_path = os.path.join(NGINX_ENABLED_DIR, "cloudbase-default")
+  try:
+    catch_all_cfg = _build_default_catch_all_config(ssl_cert, ssl_key)
+    r = subprocess.run(["sudo", "tee", config_path], input=catch_all_cfg, text=True, capture_output=True)
+    if r.returncode != 0:
+      return False, r.stderr or "Failed to write default catch-all"
+    subprocess.run(["sudo", "ln", "-sf", config_path, enabled_path], capture_output=True)
+    result = subprocess.run(["sudo", "nginx", "-t"], capture_output=True, text=True)
+    if result.returncode != 0:
+      return False, result.stderr
+    subprocess.run(["sudo", "systemctl", "reload", "nginx"], capture_output=True)
+    return True, "OK"
+  except Exception as e:
+    return False, str(e)
 
 
 def _safe_name(app_name: str) -> str:

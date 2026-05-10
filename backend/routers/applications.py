@@ -34,6 +34,29 @@ log = logging.getLogger("pdm.apps")
 RESTART_READY_TIMEOUT_SECONDS = 180
 RESTART_READY_POLL_SECONDS = 1
 TRANSITION_HOLD_MAX_SECONDS = 300
+_active_transition_modes: dict[int, tuple[str, float]] = {}
+
+
+def _set_active_transition_mode(app_id: int, mode: str, started_at: Optional[float] = None) -> float:
+    ts = started_at if started_at is not None else asyncio.get_running_loop().time()
+    _active_transition_modes[app_id] = (mode, ts)
+    return ts
+
+
+def _get_active_transition_mode(app_id: int) -> Optional[str]:
+    active = _active_transition_modes.get(app_id)
+    if not active:
+        return None
+    mode, started_at = active
+    elapsed = asyncio.get_running_loop().time() - started_at
+    if elapsed > TRANSITION_HOLD_MAX_SECONDS:
+        _active_transition_modes.pop(app_id, None)
+        return None
+    return mode
+
+
+def _clear_active_transition_mode(app_id: int) -> None:
+    _active_transition_modes.pop(app_id, None)
 
 
 class DeployRequest(BaseModel):
@@ -313,6 +336,15 @@ async def _write_app_nginx_config(
         ssl_cert, ssl_key = _resolve_ssl_paths(app.ssl_cert_path, app.ssl_key_path)
     backends = await _get_nginx_backends(app, db, local_node)
     effective_mode = mode or _get_nginx_mode(app)
+    if mode is None and effective_mode == "normal":
+        active_mode = _get_active_transition_mode(app.id)
+        if active_mode in ("restart", "starting"):
+            log.info(
+                "[nginx-transition-guard] app_id=%s forcing mode=%s (normal write suppressed while transition active)",
+                app.id,
+                active_mode,
+            )
+            effective_mode = active_mode
     log.info(
         "[nginx-debug] write app_id=%s app=%s mode=%s backends=%d values=%s has_custom=%s base_domain=%s",
         app.id,
@@ -412,6 +444,9 @@ async def _restore_nginx_after_transition(
         )
         asyncio.create_task(_restore_nginx_after_transition(app_id, started_at, transition_label))
         return
+
+    # Transition window has ended (ready or hard timeout): allow normal writes again.
+    _clear_active_transition_mode(app_id)
 
     async with AsyncSessionLocal() as db:
         app = await db.get(Application, app_id)
@@ -1824,6 +1859,7 @@ async def start_app(app_id: int, db: AsyncSession = Depends(get_db), actor: str 
     )
 
     if show_start_page:
+        transition_started_at = _set_active_transition_mode(app_id, "starting")
         await _write_app_nginx_config(app, db, local_node, mode="starting")
         pm._push_line(app_id, "Starting instances...")
 
@@ -1852,7 +1888,7 @@ async def start_app(app_id: int, db: AsyncSession = Depends(get_db), actor: str 
         asyncio.create_task(
             _restore_nginx_after_transition(
                 app_id,
-                asyncio.get_running_loop().time(),
+                transition_started_at,
                 "start",
             )
         )
@@ -1912,8 +1948,8 @@ async def restart_app(app_id: int, db: AsyncSession = Depends(get_db), actor: st
     )
     transition_started_at: Optional[float] = None
     if show_restart_page:
+        transition_started_at = _set_active_transition_mode(app_id, "restart")
         await _write_app_nginx_config(app, db, local_node, mode="restart")
-        transition_started_at = asyncio.get_running_loop().time()
         pm._push_line(app_id, "Restarting instances...")
 
     await _best_effort_stop_legacy_app_container(app_id)

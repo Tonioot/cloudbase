@@ -1764,53 +1764,6 @@ function escAttr(s) {
   return (s || '').replace(/"/g, '&quot;').replace(/</g, '&lt;');
 }
 
-async function _initMoveToNode() {
-  const section = document.getElementById('move-node-section');
-  const select  = document.getElementById('move-node-select');
-  const portInput = document.getElementById('move-node-port');
-  const btn     = document.getElementById('btn-move-node');
-  if (!section || !select || !btn || !portInput) return;
-
-  let nodes = [];
-  try { nodes = await api.listNodes(); } catch { return; }
-
-  // Only show if there are other nodes to move to
-  const usedNodeIds = new Set((app.replicas || []).map(r => r.node_id).filter(Boolean));
-  const others = nodes.filter(n => !usedNodeIds.has(n.id) && n.enabled);
-  if (!others.length) return;
-
-  section.style.display = '';
-  select.innerHTML = others.map(n =>
-    `<option value="${n.id}">${n.name} (${n.status})</option>`
-  ).join('');
-  if (app.port) portInput.value = String(app.port);
-
-  btn.addEventListener('click', async () => {
-    const targetId = parseInt(select.value, 10);
-    const rawPort = portInput.value.trim();
-    const port = rawPort ? parseInt(rawPort, 10) : null;
-    if (rawPort && (!Number.isInteger(port) || port < 1 || port > 65535)) {
-      toast('Internal port must be between 1 and 65535', 'error');
-      return;
-    }
-    const targetName = select.options[select.selectedIndex]?.text || 'selected node';
-    const ok = await confirm(`Move "${app.name}" to ${targetName}?`,
-      'The app will be stopped and redeployed. This may take a moment.');
-    if (!ok) return;
-    btn.disabled = true;
-    btn.textContent = 'Moving…';
-    try {
-      await api.moveApp(APP_ID, targetId, port);
-      toast(`"${app.name}" is being moved to ${targetName}`);
-      window.location.href = '/';
-    } catch (e) {
-      toast(e.message, 'error');
-      btn.disabled = false;
-      btn.textContent = 'Move App';
-    }
-  });
-}
-
 /* ─── INSTANCES TAB ─────────────────────────────────────────────────────── */
 let _instancesRefreshTimer = null;
 

@@ -923,32 +923,6 @@ async def upload_app_cert(app_id: int, file: UploadFile = File(...), db: AsyncSe
     return {"path": dest_path}
 
 
-@router.get("/system/service-file")
-async def get_service_file():
-    """Return a systemd unit file for auto-starting Cloudbase on boot."""
-    import getpass
-    script_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "start.sh"))
-    user = getpass.getuser()
-    content = f"""[Unit]
-Description=Cloudbase
-After=network.target
-
-[Service]
-Type=simple
-User={user}
-WorkingDirectory={os.path.dirname(os.path.dirname(script_dir))}
-ExecStart=/bin/bash {script_dir} run
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-"""
-    return {
-        "content": content,
-        "path": "/etc/systemd/system/cloudbase.service",
-    }
-
 
 async def _sync_process_status(app, db) -> None:
     """Reconcile DB status with actual OS state. Uses port recovery as fallback."""
@@ -1487,109 +1461,6 @@ async def import_apps(req: ImportRequest, background_tasks: BackgroundTasks, db:
         imported_count += 1
 
     return {"message": f"Successfully imported {imported_count} apps."}
-
-
-
-class MoveRequest(BaseModel):
-    target_node_id: int
-    port: Optional[int] = None
-
-
-@router.post("/{app_id}/move")
-async def move_app(app_id: int, req: MoveRequest, db: AsyncSession = Depends(get_db), actor: str = Depends(_auth.get_current_actor)):
-    app = await _get_or_404(app_id, db)
-    local_node = await ensure_local_node(db)
-    target_node_result = await db.execute(
-        select(Node).where(Node.id == req.target_node_id, Node.enabled == True)
-    )
-    target_node = target_node_result.scalar_one_or_none()
-    if not target_node:
-        raise HTTPException(400, "Target node not found or disabled")
-
-    chosen_port = req.port if req.port is not None else app.port
-    if chosen_port is not None and (chosen_port < 1 or chosen_port > 65535):
-        raise HTTPException(400, "Port must be between 1 and 65535")
-    replicas, created_replica = await _ensure_default_replica(app, db, local_node)
-    if created_replica is not None:
-        replicas = [created_replica]
-
-    if replicas and all(replica.node_id == target_node.id for replica in replicas) and req.port is None:
-        raise HTTPException(400, "All instances are already on that node")
-
-    app.port = chosen_port
-    app.node_id = None if target_node.is_local else target_node.id
-    env_vars = decrypt_env(app.env_vars or "")
-    node_map = await _load_node_map(db)
-    source_revision = await asyncio.to_thread(_refresh_app_source_revision, app)
-
-    if target_node.is_local:
-        if not app.working_dir:
-            await _deploy_app(app)
-    else:
-        if target_node.status != "online":
-            raise HTTPException(400, f"Target node '{target_node.name}' is offline")
-
-    live_statuses = {"running", "starting", "restarting", "stopping", "node_offline"}
-    live_replica_ids = {replica.id for replica in replicas if replica.status in live_statuses}
-
-    await _best_effort_stop_legacy_app_container(app_id)
-
-    for replica in replicas:
-        current_node = _resolve_replica_node(replica, node_map, local_node)
-        if replica.id not in live_replica_ids:
-            continue
-        if current_node is None or current_node.is_local:
-            await asyncio.to_thread(pm.stop_docker_replica, app_id, replica.id)
-            continue
-
-        if current_node.status == "online" and current_node.enabled:
-            stop_cmd = await queue_node_command(
-                db,
-                node_id=current_node.id,
-                app_id=app.id,
-                command_type="stop_replica",
-                payload={"app_id": app.id, "replica_id": replica.id, "app_name": app.name},
-            )
-            try:
-                await wait_for_node_command(db, stop_cmd.id, timeout_seconds=60)
-            except Exception:
-                pass
-
-    for index, replica in enumerate(replicas):
-        replica.node_id = target_node.id
-        replica.external_port = await _assign_external_port(None, target_node.id, None, db)
-        replica.container_id = None
-        replica.tunnel_port = None
-        replica.last_error = None
-        replica.status = "stopped"
-        if index == 0:
-            app.external_port = replica.external_port
-
-    target_node_map = {target_node.id: target_node}
-    for replica in replicas:
-        if replica.id not in live_replica_ids:
-            continue
-        replica_node = _resolve_replica_node(replica, target_node_map, local_node)
-        await _start_replica_runtime(app, replica, replica_node, env_vars, db)
-
-    app.status = _derive_app_status_from_instances(replicas)
-    app.pid = None
-    app.last_error = None
-    if _has_public_nginx_domain(app):
-        await _write_app_nginx_config(app, db, local_node)
-
-    await log_audit(
-        db,
-        "app.move",
-        actor=actor,
-        app_id=app.id,
-        detail={"name": app.name, "target_node_id": target_node.id, "replica_count": len(replicas)},
-    )
-    await db.commit()
-
-    await db.refresh(app)
-    node_map = await _load_node_map(db)
-    return _app_to_dict(app, replicas=[_replica_to_dict(r, node_map.get(r.node_id)) for r in replicas])
 
 
 async def _start_instance_local(app: "Application", replica: "ApplicationReplica", env_vars: dict, app_id: int) -> str:
@@ -3247,12 +3118,6 @@ async def rebuild_docker_image_stream(app_id: int, db: AsyncSession = Depends(ge
     return StreamingResponse(_generate(), media_type="text/event-stream", headers=_SSE_HEADERS)
 
 
-@router.post("/{app_id}/install-deps")
-async def install_deps(app_id: int, db: AsyncSession = Depends(get_db)):
-    raise HTTPException(
-        400,
-        "Install Dependencies is not available in Docker-only mode. Rebuild the image instead.",
-    )
 
 
 @router.get("/{app_id}/nginx-config")

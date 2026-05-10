@@ -46,7 +46,6 @@ export const api = {
   deleteApp:(id)       => request('DELETE', `/apps/${id}`),
   exportApps:(appIds)  => request('POST',   '/apps/export', { app_ids: appIds }),
   importApps:(apps, targetNodeId) => request('POST', '/apps/import', { apps, target_node_id: targetNodeId }),
-  moveApp:  (id, targetNodeId, port) => request('POST', `/apps/${id}/move`, { target_node_id: targetNodeId, ...(port != null ? { port } : {}) }),
   start:    (id)       => request('POST',   `/apps/${id}/start`),
   stop:     (id)       => request('POST',   `/apps/${id}/stop`),
   restart:  (id)       => request('POST',   `/apps/${id}/restart`),

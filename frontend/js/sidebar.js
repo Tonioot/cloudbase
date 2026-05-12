@@ -860,402 +860,374 @@ async function initRoleBasedUI() {
   } catch {}
 }
 
-// ── Users & Roles management modal (superadmin only) ─────────────────────────
+// ── Users & Roles management (superadmin only) ────────────────────────────────
 let _cachedRoles = null;
+let _cachedPerms = null;
 
 async function loadRoles(force = false) {
-  if (!_cachedRoles || force) {
-    _cachedRoles = await api.listRoles();
-  }
+  if (!_cachedRoles || force) _cachedRoles = await api.listRoles();
   return _cachedRoles;
 }
-
-function buildRoleSelect(selectedRoleId) {
-  // Builds role <option> elements; resolved asynchronously
-  return `<option value="">Loading…</option>`;
+async function loadPerms(force = false) {
+  if (!_cachedPerms || force) _cachedPerms = await api.listPermissions();
+  return _cachedPerms;
 }
 
+// ── Main modal skeleton ───────────────────────────────────────────────────────
 function openManageUsersModal() {
-  // The modal has two tabs: Users and Roles
-  let modal = document.getElementById('manage-users-modal-global');
+  let modal = document.getElementById('mgr-modal');
   if (!modal) {
     modal = document.createElement('div');
-    modal.id = 'manage-users-modal-global';
+    modal.id = 'mgr-modal';
     modal.className = 'dialog-backdrop';
     modal.innerHTML = `
-      <div class="dialog dialog-modern" style="max-width:600px;width:95%">
-        <div class="dialog-title" style="display:flex;align-items:center;gap:0">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="margin-right:8px;vertical-align:-2px"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-          <span style="flex:1">Users &amp; Roles</span>
-          <div style="display:flex;gap:0;border:1px solid var(--border-muted);border-radius:6px;overflow:hidden;margin-left:auto">
-            <button class="btn btn-secondary tab-btn active-tab" data-tab="users" style="border-radius:0;border:none;padding:4px 14px;font-size:12px">Users</button>
-            <button class="btn btn-secondary tab-btn" data-tab="roles" style="border-radius:0;border:none;border-left:1px solid var(--border-muted);padding:4px 14px;font-size:12px">Roles</button>
+      <div class="dialog dialog-modern mgr-shell" style="max-width:680px;width:96%;max-height:88vh;display:flex;flex-direction:column;padding:0;overflow:hidden">
+
+        <!-- Header -->
+        <div class="mgr-header">
+          <div class="mgr-title">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            Users &amp; Roles
           </div>
+          <div class="mgr-tabs">
+            <button class="mgr-tab mgr-tab--active" data-tab="users">Users</button>
+            <button class="mgr-tab" data-tab="roles">Roles</button>
+          </div>
+          <button class="mgr-close" id="mgr-close" aria-label="Close">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
         </div>
-        <div class="dialog-body" style="padding:0">
 
-          <!-- ── Users tab ────────────────────────────────── -->
-          <div id="tab-users" style="padding:16px">
-            <div id="users-list" style="margin-bottom:16px"></div>
-            <div style="border-top:1px solid var(--border-muted);padding-top:14px">
-              <div style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">Add User</div>
-              <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap">
-                <input class="input" id="new-user-name" placeholder="Username" style="flex:1;min-width:140px" />
-                <input class="input input-mono" id="new-user-pwd" type="password" placeholder="Password (min 8)" autocomplete="new-password" style="flex:1;min-width:140px" />
-                <select class="input" id="new-user-role-id" style="flex:1;min-width:140px;height:42px">
-                  <option value="">Loading roles…</option>
-                </select>
-              </div>
-              <div id="users-err" style="display:none;color:var(--red);font-size:12px;margin-bottom:8px"></div>
-              <button class="btn btn-primary" id="manage-users-add" style="width:100%">Add User</button>
+        <!-- Body -->
+        <div class="mgr-body">
+
+          <!-- Users tab -->
+          <div class="mgr-pane" id="mgr-pane-users">
+            <div class="mgr-pane-toolbar">
+              <span class="mgr-pane-label">All users</span>
+              <button class="btn btn-primary mgr-new-btn" id="mgr-new-user-btn" style="font-size:12px;padding:5px 12px">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                New User
+              </button>
             </div>
+            <div id="mgr-users-list" class="mgr-list"></div>
           </div>
 
-          <!-- ── Roles tab ────────────────────────────────── -->
-          <div id="tab-roles" style="display:none;padding:16px">
-            <div id="roles-list" style="margin-bottom:16px"></div>
-            <div style="border-top:1px solid var(--border-muted);padding-top:14px">
-              <div style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">Create Role</div>
-              <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap">
-                <input class="input" id="new-role-name" placeholder="Role name" style="flex:1;min-width:140px" />
-                <input class="input" id="new-role-desc" placeholder="Description (optional)" style="flex:2;min-width:200px" />
-              </div>
-              <div id="new-role-perms" style="margin-bottom:10px"></div>
-              <div id="roles-err" style="display:none;color:var(--red);font-size:12px;margin-bottom:8px"></div>
-              <button class="btn btn-primary" id="manage-roles-add" style="width:100%">Create Role</button>
+          <!-- Roles tab -->
+          <div class="mgr-pane" id="mgr-pane-roles" style="display:none">
+            <div class="mgr-pane-toolbar">
+              <span class="mgr-pane-label">All roles</span>
+              <button class="btn btn-primary mgr-new-btn" id="mgr-new-role-btn" style="font-size:12px;padding:5px 12px">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                New Role
+              </button>
             </div>
+            <div id="mgr-roles-list" class="mgr-list"></div>
           </div>
 
-        </div>
-        <div class="dialog-actions">
-          <button class="btn btn-secondary" id="manage-users-close">Close</button>
         </div>
       </div>`;
     document.body.appendChild(modal);
 
-    modal.querySelector('#manage-users-close').onclick = () => { modal.style.display = 'none'; };
+    modal.querySelector('#mgr-close').onclick = () => { modal.style.display = 'none'; };
     modal.addEventListener('click', e => { if (e.target === modal) modal.style.display = 'none'; });
 
-    // Tab switching
-    modal.querySelectorAll('.tab-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        modal.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active-tab'));
-        btn.classList.add('active-tab');
-        const tab = btn.dataset.tab;
-        modal.querySelector('#tab-users').style.display = tab === 'users' ? 'block' : 'none';
-        modal.querySelector('#tab-roles').style.display = tab === 'roles' ? 'block' : 'none';
-        if (tab === 'roles') renderRolesList(modal);
+    modal.querySelectorAll('.mgr-tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        modal.querySelectorAll('.mgr-tab').forEach(t => t.classList.remove('mgr-tab--active'));
+        tab.classList.add('mgr-tab--active');
+        const pane = tab.dataset.tab;
+        modal.querySelector('#mgr-pane-users').style.display = pane === 'users' ? 'flex' : 'none';
+        modal.querySelector('#mgr-pane-roles').style.display = pane === 'roles' ? 'flex' : 'none';
+        if (pane === 'roles') renderRolesList();
       });
     });
 
-    // Add user
-    modal.querySelector('#manage-users-add').addEventListener('click', async () => {
-      const username = modal.querySelector('#new-user-name').value.trim();
-      const password = modal.querySelector('#new-user-pwd').value;
-      const roleId   = parseInt(modal.querySelector('#new-user-role-id').value);
-      const err      = modal.querySelector('#users-err');
-      err.style.display = 'none';
-      if (!username) { err.textContent = 'Username is required'; err.style.display = 'block'; return; }
-      if (password.length < 8) { err.textContent = 'Password must be at least 8 characters'; err.style.display = 'block'; return; }
-      if (!roleId) { err.textContent = 'Please select a role'; err.style.display = 'block'; return; }
-      const btn = modal.querySelector('#manage-users-add');
-      btn.disabled = true;
-      try {
-        await api.createUser({ username, password, role_id: roleId });
-        modal.querySelector('#new-user-name').value = '';
-        modal.querySelector('#new-user-pwd').value = '';
-        await renderUsersList(modal);
-        toast(`User "${username}" created`);
-      } catch (e) {
-        err.textContent = e.message;
-        err.style.display = 'block';
-      } finally {
-        btn.disabled = false;
-      }
-    });
-
-    // Create role
-    modal.querySelector('#manage-roles-add').addEventListener('click', async () => {
-      const name  = modal.querySelector('#new-role-name').value.trim();
-      const desc  = modal.querySelector('#new-role-desc').value.trim();
-      const permIds = [...modal.querySelectorAll('#new-role-perms input[type=checkbox]:checked')].map(c => parseInt(c.value));
-      const err   = modal.querySelector('#roles-err');
-      err.style.display = 'none';
-      if (name.length < 2) { err.textContent = 'Role name must be at least 2 characters'; err.style.display = 'block'; return; }
-      const btn = modal.querySelector('#manage-roles-add');
-      btn.disabled = true;
-      try {
-        await api.createRole({ name, description: desc || null, permission_ids: permIds });
-        _cachedRoles = null;
-        modal.querySelector('#new-role-name').value = '';
-        modal.querySelector('#new-role-desc').value = '';
-        await renderRolesList(modal);
-        await populateRoleSelect(modal);
-        toast(`Role "${name}" created`);
-      } catch (e) {
-        err.textContent = e.message;
-        err.style.display = 'block';
-      } finally {
-        btn.disabled = false;
-      }
-    });
+    modal.querySelector('#mgr-new-user-btn').addEventListener('click', () => openUserSubModal());
+    modal.querySelector('#mgr-new-role-btn').addEventListener('click', () => openRoleSubModal());
   }
 
   modal.style.display = 'flex';
-  renderUsersList(modal);
-  populateRoleSelect(modal);
-  loadPermissionsCheckboxes(modal.querySelector('#new-role-perms'));
+  renderUsersList();
 }
 
-async function populateRoleSelect(modal) {
-  const sel = modal.querySelector('#new-user-role-id');
-  if (!sel) return;
-  try {
-    const roles = await loadRoles(true);
-    sel.innerHTML = roles.map(r => `<option value="${r.id}">${esc(r.name)}${r.description ? ' — ' + esc(r.description) : ''}</option>`).join('');
-  } catch {
-    sel.innerHTML = '<option value="">Failed to load roles</option>';
-  }
-}
-
-async function loadPermissionsCheckboxes(container) {
-  if (!container) return;
-  try {
-    const perms = await api.listPermissions();
-    container.innerHTML = `
-      <div style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Permissions</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 16px">
-        ${perms.map(p => `
-          <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;user-select:none">
-            <input type="checkbox" value="${p.id}" style="accent-color:var(--accent)" />
-            <span title="${esc(p.description || '')}">${esc(p.name)}</span>
-          </label>`).join('')}
-      </div>`;
-  } catch {
-    container.innerHTML = '<div style="color:var(--text-muted);font-size:12px">Failed to load permissions</div>';
-  }
-}
-
-async function renderUsersList(modal) {
-  const list = modal.querySelector('#users-list');
-  list.innerHTML = '<div style="color:var(--text-muted);font-size:12px">Loading…</div>';
+// ── Render users list ─────────────────────────────────────────────────────────
+async function renderUsersList() {
+  const list = document.getElementById('mgr-users-list');
+  if (!list) return;
+  list.innerHTML = '<div class="mgr-loading">Loading…</div>';
   try {
     const [users, roles] = await Promise.all([api.listUsers(), loadRoles()]);
-    const roleMap = Object.fromEntries(roles.map(r => [r.id, r]));
-    if (!users.length) {
-      list.innerHTML = '<div style="color:var(--text-muted);font-size:12px">No users found.</div>';
-      return;
-    }
-    list.innerHTML = users.map(u => {
+    if (!users.length) { list.innerHTML = '<div class="mgr-empty">No users yet.</div>'; return; }
+    list.innerHTML = '';
+    users.forEach(u => {
       const isSuperadmin = u.username === 'admin';
-      const roleName = isSuperadmin ? 'superadmin' : (u.role || 'unknown');
-      const badgeColor = isSuperadmin ? 'rgba(210,153,34,.15)' : 'var(--accent-dark)';
-      const badgeText  = isSuperadmin ? '#e3b341' : 'var(--accent)';
-      const badgeHtml  = `<span class="user-role-badge" style="padding:2px 8px;border-radius:4px;font-size:11px;background:${badgeColor};color:${badgeText}">${esc(roleName)}</span>`;
-
-      const roleOptions = isSuperadmin ? '' : roles.map(r =>
-        `<option value="${r.id}" ${r.id === u.role_id ? 'selected' : ''}>${esc(r.name)}</option>`
-      ).join('');
-
-      const editFormHtml = isSuperadmin ? '' : `
-        <div class="user-edit-form" style="display:none;background:var(--bg-elevated);border-radius:6px;padding:10px;flex-direction:column;gap:8px">
-          <div style="display:flex;gap:8px;flex-wrap:wrap">
-            <input class="input user-edit-username" placeholder="Username" style="flex:1;min-width:140px" value="${esc(u.username)}" />
-            <input class="input input-mono user-edit-pwd" type="password" placeholder="New password (leave blank to keep)" autocomplete="new-password" style="flex:1;min-width:140px" />
-            <select class="input user-edit-role-id" style="flex:1;min-width:140px;height:38px">${roleOptions}</select>
-          </div>
-          <div class="user-edit-err" style="display:none;color:var(--red);font-size:12px"></div>
-          <div style="display:flex;gap:6px;justify-content:flex-end">
-            <button class="btn btn-secondary btn-sm user-edit-cancel" style="font-size:11px">Cancel</button>
-            <button class="btn btn-primary btn-sm user-edit-save" style="font-size:11px">Save</button>
-          </div>
+      const roleName = isSuperadmin ? 'superadmin' : (u.role || '—');
+      const card = document.createElement('div');
+      card.className = 'mgr-card';
+      card.innerHTML = `
+        <div class="mgr-card-avatar">${esc(u.username[0].toUpperCase())}</div>
+        <div class="mgr-card-info">
+          <div class="mgr-card-name">${esc(u.username)}</div>
+          <div class="mgr-card-meta">${u.created_at ? 'Joined ' + new Date(u.created_at).toLocaleDateString() : ''}</div>
+        </div>
+        <div class="mgr-card-badge ${isSuperadmin ? 'mgr-badge--gold' : 'mgr-badge--default'}">${esc(roleName)}</div>
+        <div class="mgr-card-actions">
+          ${isSuperadmin ? '' : `<button class="mgr-icon-btn mgr-edit-user" title="Edit user" data-id="${u.id}">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          </button>`}
+          ${isSuperadmin ? '' : `<button class="mgr-icon-btn mgr-icon-btn--danger mgr-delete-user" title="Delete user" data-id="${u.id}" data-name="${esc(u.username)}">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+          </button>`}
         </div>`;
+      list.appendChild(card);
 
-      return `
-        <div class="gh-token-row" data-id="${u.id}" data-username="${esc(u.username)}" data-role-id="${u.role_id || ''}" data-superadmin="${isSuperadmin}" style="flex-direction:column;align-items:stretch;gap:6px">
-          <div style="display:flex;align-items:center;gap:8px">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="color:var(--text-muted);flex-shrink:0"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-            <span class="gh-token-row-label">${esc(u.username)}</span>
-            ${badgeHtml}
-            <div style="margin-left:auto;display:flex;gap:6px">
-              ${isSuperadmin ? '' : `<button class="btn btn-secondary btn-sm user-edit-btn" style="padding:3px 8px;font-size:11px">Edit</button>`}
-              ${isSuperadmin ? '' : `<button class="btn btn-danger btn-sm user-delete-btn" style="padding:3px 8px;font-size:11px">Delete</button>`}
-            </div>
-          </div>
-          ${editFormHtml}
-        </div>`;
-    }).join('');
-
-    list.querySelectorAll('[data-id]').forEach(row => {
-      const id          = parseInt(row.dataset.id);
-      const username    = row.dataset.username;
-      const isSuperadmin = row.dataset.superadmin === 'true';
-      const form        = row.querySelector('.user-edit-form');
-
-      row.querySelector('.user-edit-btn')?.addEventListener('click', () => {
-        const isOpen = form.style.display === 'flex';
-        form.style.display = isOpen ? 'none' : 'flex';
-        if (!isOpen) row.querySelector('.user-edit-err').style.display = 'none';
-      });
-
-      row.querySelector('.user-edit-cancel')?.addEventListener('click', () => { form.style.display = 'none'; });
-
-      row.querySelector('.user-edit-save')?.addEventListener('click', async () => {
-        const newUsername = row.querySelector('.user-edit-username').value.trim();
-        const pwd        = row.querySelector('.user-edit-pwd').value;
-        const roleId     = parseInt(row.querySelector('.user-edit-role-id').value);
-        const errEl      = row.querySelector('.user-edit-err');
-        const saveBtn    = row.querySelector('.user-edit-save');
-        errEl.style.display = 'none';
-        if (newUsername.length < 2) { errEl.textContent = 'Username must be at least 2 characters'; errEl.style.display = 'block'; return; }
-        if (pwd && pwd.length < 8) { errEl.textContent = 'Password must be at least 8 characters'; errEl.style.display = 'block'; return; }
-        const payload = { role_id: roleId };
-        if (newUsername !== username) payload.username = newUsername;
-        if (pwd) payload.password = pwd;
-        saveBtn.disabled = true;
-        try {
-          const updated = await api.updateUser(id, payload);
-          row.dataset.username = updated.username;
-          row.dataset.roleId   = updated.role_id;
-          row.querySelector('.gh-token-row-label').textContent = updated.username;
-          row.querySelector('.user-role-badge').textContent = updated.role;
-          form.style.display = 'none';
-          toast(`User "${updated.username}" updated`);
-        } catch (e) {
-          errEl.textContent = e.message;
-          errEl.style.display = 'block';
-        } finally {
-          saveBtn.disabled = false;
-        }
-      });
-
-      row.querySelector('.user-delete-btn')?.addEventListener('click', async () => {
-        if (!await confirm(`Delete user "${username}"?`, 'This cannot be undone.')) return;
-        try {
-          await api.deleteUser(id);
-          await renderUsersList(modal);
-          toast(`User "${username}" deleted`);
-        } catch (e) {
-          toast(e.message, 'error');
-        }
+      card.querySelector('.mgr-edit-user')?.addEventListener('click', () => openUserSubModal(u, roles));
+      card.querySelector('.mgr-delete-user')?.addEventListener('click', async () => {
+        if (!await confirm(`Delete "${u.username}"?`, 'This cannot be undone.')) return;
+        try { await api.deleteUser(u.id); renderUsersList(); toast(`User "${u.username}" deleted`); }
+        catch (e) { toast(e.message, 'error'); }
       });
     });
   } catch (e) {
-    list.innerHTML = `<div style="color:var(--red);font-size:12px">${e.message}</div>`;
+    list.innerHTML = `<div class="mgr-error">${e.message}</div>`;
   }
 }
 
-async function renderRolesList(modal) {
-  const list = modal.querySelector('#roles-list');
-  list.innerHTML = '<div style="color:var(--text-muted);font-size:12px">Loading…</div>';
+// ── Render roles list ─────────────────────────────────────────────────────────
+async function renderRolesList() {
+  const list = document.getElementById('mgr-roles-list');
+  if (!list) return;
+  list.innerHTML = '<div class="mgr-loading">Loading…</div>';
   try {
-    const [roles, allPerms] = await Promise.all([loadRoles(true), api.listPermissions()]);
-    const permMap = Object.fromEntries(allPerms.map(p => [p.id, p]));
+    const [roles, allPerms] = await Promise.all([loadRoles(true), loadPerms()]);
     const builtIn = new Set(['admin', 'viewer']);
-
-    list.innerHTML = roles.map(r => {
+    if (!roles.length) { list.innerHTML = '<div class="mgr-empty">No roles yet.</div>'; return; }
+    list.innerHTML = '';
+    roles.forEach(r => {
       const isBuiltIn = builtIn.has(r.name);
-      const permTags = r.permissions.map(p =>
-        `<span style="padding:1px 7px;border-radius:3px;font-size:10px;background:var(--bg-muted);color:var(--text-secondary)">${esc(p.name)}</span>`
-      ).join(' ');
-
-      const editFormHtml = isBuiltIn && r.name === 'admin' ? '' : `
-        <div class="role-edit-form" style="display:none;background:var(--bg-elevated);border-radius:6px;padding:10px;flex-direction:column;gap:8px">
-          ${!isBuiltIn ? `<div style="display:flex;gap:8px;flex-wrap:wrap">
-            <input class="input role-edit-name" placeholder="Role name" style="flex:1;min-width:140px" value="${esc(r.name)}" />
-            <input class="input role-edit-desc" placeholder="Description" style="flex:2;min-width:200px" value="${esc(r.description || '')}" />
-          </div>` : ''}
-          <div class="role-edit-perms" style="display:grid;grid-template-columns:1fr 1fr;gap:4px 16px">
-            ${allPerms.map(p => `
-              <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;user-select:none">
-                <input type="checkbox" value="${p.id}" ${r.permissions.find(rp => rp.id === p.id) ? 'checked' : ''} style="accent-color:var(--accent)" />
-                <span title="${esc(p.description || '')}">${esc(p.name)}</span>
-              </label>`).join('')}
-          </div>
-          <div class="role-edit-err" style="display:none;color:var(--red);font-size:12px"></div>
-          <div style="display:flex;gap:6px;justify-content:flex-end">
-            <button class="btn btn-secondary btn-sm role-edit-cancel" style="font-size:11px">Cancel</button>
-            <button class="btn btn-primary btn-sm role-edit-save" style="font-size:11px">Save</button>
-          </div>
-        </div>`;
-
-      return `
-        <div class="gh-token-row" data-role-id="${r.id}" data-role-name="${esc(r.name)}" data-builtin="${isBuiltIn}" style="flex-direction:column;align-items:stretch;gap:6px">
+      const card = document.createElement('div');
+      card.className = 'mgr-card mgr-card--role';
+      card.innerHTML = `
+        <div class="mgr-card-avatar mgr-card-avatar--role">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11"/></svg>
+        </div>
+        <div class="mgr-card-info" style="flex:1;min-width:0">
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="color:var(--text-muted);flex-shrink:0"><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11"/></svg>
-            <span class="gh-token-row-label">${esc(r.name)}</span>
-            ${isBuiltIn ? `<span style="padding:1px 7px;border-radius:3px;font-size:10px;background:rgba(210,153,34,.15);color:#e3b341">built-in</span>` : ''}
-            ${r.description ? `<span style="font-size:12px;color:var(--text-muted)">${esc(r.description)}</span>` : ''}
-            <div style="margin-left:auto;display:flex;gap:6px">
-              ${r.name !== 'admin' ? `<button class="btn btn-secondary btn-sm role-edit-btn" style="padding:3px 8px;font-size:11px">Edit</button>` : ''}
-              ${!isBuiltIn ? `<button class="btn btn-danger btn-sm role-delete-btn" style="padding:3px 8px;font-size:11px">Delete</button>` : ''}
-            </div>
+            <div class="mgr-card-name">${esc(r.name)}</div>
+            ${isBuiltIn ? `<span class="mgr-badge mgr-badge--gold" style="font-size:10px">built-in</span>` : ''}
+            ${r.description ? `<div class="mgr-card-meta" style="font-size:11px">${esc(r.description)}</div>` : ''}
           </div>
-          ${r.permissions.length ? `<div style="display:flex;flex-wrap:wrap;gap:4px;padding-left:20px">${permTags}</div>` : ''}
-          ${editFormHtml}
+          <div class="mgr-perm-pills" style="margin-top:6px">
+            ${r.permissions.length
+              ? r.permissions.map(p => `<span class="mgr-perm-pill mgr-perm-pill--active" style="cursor:default">${esc(p.name)}</span>`).join('')
+              : `<span style="font-size:11px;color:var(--text-muted)">No permissions</span>`}
+          </div>
+        </div>
+        <div class="mgr-card-actions">
+          ${r.name !== 'admin' ? `<button class="mgr-icon-btn mgr-edit-role" title="Edit role" data-id="${r.id}">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          </button>` : ''}
+          ${!isBuiltIn ? `<button class="mgr-icon-btn mgr-icon-btn--danger mgr-delete-role" title="Delete role" data-id="${r.id}" data-name="${esc(r.name)}">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+          </button>` : ''}
         </div>`;
-    }).join('');
+      list.appendChild(card);
 
-    list.querySelectorAll('[data-role-id]').forEach(row => {
-      const roleId   = parseInt(row.dataset.roleId);
-      const roleName = row.dataset.roleName;
-      const isBuiltIn = row.dataset.builtin === 'true';
-      const form     = row.querySelector('.role-edit-form');
-
-      row.querySelector('.role-edit-btn')?.addEventListener('click', () => {
-        const isOpen = form.style.display === 'flex';
-        form.style.display = isOpen ? 'none' : 'flex';
-        if (!isOpen) row.querySelector('.role-edit-err').style.display = 'none';
-      });
-
-      row.querySelector('.role-edit-cancel')?.addEventListener('click', () => { form.style.display = 'none'; });
-
-      row.querySelector('.role-edit-save')?.addEventListener('click', async () => {
-        const nameEl = row.querySelector('.role-edit-name');
-        const descEl = row.querySelector('.role-edit-desc');
-        const permIds = [...row.querySelectorAll('.role-edit-perms input:checked')].map(c => parseInt(c.value));
-        const errEl  = row.querySelector('.role-edit-err');
-        const saveBtn = row.querySelector('.role-edit-save');
-        errEl.style.display = 'none';
-
-        const payload = { permission_ids: permIds };
-        if (nameEl) {
-          const newName = nameEl.value.trim();
-          if (newName.length < 2) { errEl.textContent = 'Name must be at least 2 characters'; errEl.style.display = 'block'; return; }
-          payload.name = newName;
-        }
-        if (descEl) payload.description = descEl.value.trim() || null;
-
-        saveBtn.disabled = true;
+      card.querySelector('.mgr-edit-role')?.addEventListener('click', () => openRoleSubModal(r, allPerms));
+      card.querySelector('.mgr-delete-role')?.addEventListener('click', async () => {
+        if (!await confirm(`Delete role "${r.name}"?`, 'Users with this role will lose it.')) return;
         try {
-          await api.updateRole(roleId, payload);
+          await api.deleteRole(r.id);
           _cachedRoles = null;
-          await renderRolesList(modal);
-          await populateRoleSelect(modal);
-          toast(`Role updated`);
-        } catch (e) {
-          errEl.textContent = e.message;
-          errEl.style.display = 'block';
-          saveBtn.disabled = false;
-        }
-      });
-
-      row.querySelector('.role-delete-btn')?.addEventListener('click', async () => {
-        if (!await confirm(`Delete role "${roleName}"?`, 'Users assigned to this role will lose it.')) return;
-        try {
-          await api.deleteRole(roleId);
-          _cachedRoles = null;
-          await renderRolesList(modal);
-          await populateRoleSelect(modal);
-          toast(`Role "${roleName}" deleted`);
-        } catch (e) {
-          toast(e.message, 'error');
-        }
+          renderRolesList();
+          toast(`Role "${r.name}" deleted`);
+        } catch (e) { toast(e.message, 'error'); }
       });
     });
   } catch (e) {
-    list.innerHTML = `<div style="color:var(--red);font-size:12px">${e.message}</div>`;
+    list.innerHTML = `<div class="mgr-error">${e.message}</div>`;
   }
+}
+
+// ── User sub-modal (create / edit) ────────────────────────────────────────────
+async function openUserSubModal(existingUser = null, roles = null) {
+  const isEdit = !!existingUser;
+  if (!roles) roles = await loadRoles();
+
+  let sub = document.getElementById('mgr-user-sub');
+  if (sub) sub.remove();
+  sub = document.createElement('div');
+  sub.id = 'mgr-user-sub';
+  sub.className = 'dialog-backdrop mgr-sub-backdrop';
+  sub.innerHTML = `
+    <div class="dialog dialog-modern mgr-sub" style="max-width:440px;width:94%">
+      <div class="mgr-sub-header">
+        <span>${isEdit ? 'Edit User' : 'Create New User'}</span>
+        <button class="mgr-close mgr-sub-close" aria-label="Close">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="mgr-sub-body">
+        <div class="mgr-field">
+          <label class="mgr-label">Username</label>
+          <input class="input" id="sub-user-name" placeholder="e.g. johndoe" value="${isEdit ? esc(existingUser.username) : ''}" autocomplete="off" />
+        </div>
+        <div class="mgr-field">
+          <label class="mgr-label">${isEdit ? 'New Password' : 'Password'} <span style="color:var(--text-muted);font-weight:400">${isEdit ? '(leave blank to keep)' : '(min 8 characters)'}</span></label>
+          <input class="input input-mono" id="sub-user-pwd" type="password" placeholder="••••••••" autocomplete="new-password" />
+        </div>
+        <div class="mgr-field">
+          <label class="mgr-label">Role</label>
+          <select class="input" id="sub-user-role" style="height:42px">
+            ${roles.map(r => `<option value="${r.id}" ${isEdit && r.id === existingUser.role_id ? 'selected' : ''}>${esc(r.name)}${r.description ? ' — ' + esc(r.description) : ''}</option>`).join('')}
+          </select>
+        </div>
+        <div id="sub-user-err" class="mgr-err" style="display:none"></div>
+      </div>
+      <div class="mgr-sub-footer">
+        <button class="btn btn-secondary mgr-sub-close">Cancel</button>
+        <button class="btn btn-primary" id="sub-user-save">${isEdit ? 'Save Changes' : 'Create User'}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(sub);
+
+  sub.querySelectorAll('.mgr-sub-close').forEach(b => b.onclick = () => sub.remove());
+  sub.addEventListener('click', e => { if (e.target === sub) sub.remove(); });
+
+  sub.querySelector('#sub-user-save').addEventListener('click', async () => {
+    const username = sub.querySelector('#sub-user-name').value.trim();
+    const pwd      = sub.querySelector('#sub-user-pwd').value;
+    const roleId   = parseInt(sub.querySelector('#sub-user-role').value);
+    const errEl    = sub.querySelector('#sub-user-err');
+    const saveBtn  = sub.querySelector('#sub-user-save');
+    errEl.style.display = 'none';
+
+    if (username.length < 2) { errEl.textContent = 'Username must be at least 2 characters'; errEl.style.display = 'block'; return; }
+    if (!isEdit && pwd.length < 8) { errEl.textContent = 'Password must be at least 8 characters'; errEl.style.display = 'block'; return; }
+    if (isEdit && pwd && pwd.length < 8) { errEl.textContent = 'Password must be at least 8 characters'; errEl.style.display = 'block'; return; }
+    if (!roleId) { errEl.textContent = 'Please select a role'; errEl.style.display = 'block'; return; }
+
+    saveBtn.disabled = true;
+    try {
+      if (isEdit) {
+        const payload = { role_id: roleId };
+        if (username !== existingUser.username) payload.username = username;
+        if (pwd) payload.password = pwd;
+        await api.updateUser(existingUser.id, payload);
+        toast(`User "${username}" updated`);
+      } else {
+        await api.createUser({ username, password: pwd, role_id: roleId });
+        toast(`User "${username}" created`);
+      }
+      sub.remove();
+      renderUsersList();
+    } catch (e) {
+      errEl.textContent = e.message;
+      errEl.style.display = 'block';
+      saveBtn.disabled = false;
+    }
+  });
+
+  // Focus first empty field
+  const nameInput = sub.querySelector('#sub-user-name');
+  setTimeout(() => nameInput.focus(), 50);
+}
+
+// ── Role sub-modal (create / edit) ────────────────────────────────────────────
+async function openRoleSubModal(existingRole = null, allPerms = null) {
+  const isEdit = !!existingRole;
+  if (!allPerms) allPerms = await loadPerms();
+  const isBuiltIn = isEdit && ['admin', 'viewer'].includes(existingRole.name);
+  const activePermIds = new Set(isEdit ? existingRole.permissions.map(p => p.id) : []);
+
+  let sub = document.getElementById('mgr-role-sub');
+  if (sub) sub.remove();
+  sub = document.createElement('div');
+  sub.id = 'mgr-role-sub';
+  sub.className = 'dialog-backdrop mgr-sub-backdrop';
+  sub.innerHTML = `
+    <div class="dialog dialog-modern mgr-sub" style="max-width:500px;width:94%">
+      <div class="mgr-sub-header">
+        <span>${isEdit ? 'Edit Role' : 'Create New Role'}</span>
+        <button class="mgr-close mgr-sub-close" aria-label="Close">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="mgr-sub-body">
+        ${!isBuiltIn ? `
+        <div class="mgr-field">
+          <label class="mgr-label">Role name</label>
+          <input class="input" id="sub-role-name" placeholder="e.g. developer" value="${isEdit ? esc(existingRole.name) : ''}" autocomplete="off" />
+        </div>
+        <div class="mgr-field">
+          <label class="mgr-label">Description <span style="color:var(--text-muted);font-weight:400">(optional)</span></label>
+          <input class="input" id="sub-role-desc" placeholder="What can this role do?" value="${isEdit ? esc(existingRole.description || '') : ''}" />
+        </div>` : `
+        <div class="mgr-field">
+          <p style="margin:0;font-size:13px;color:var(--text-secondary)">Built-in role <strong>${esc(existingRole.name)}</strong> — name and description cannot be changed.</p>
+        </div>`}
+        <div class="mgr-field">
+          <label class="mgr-label">Permissions <span style="color:var(--text-muted);font-weight:400">(click to toggle)</span></label>
+          <div class="mgr-perm-pills" id="sub-role-pills">
+            ${allPerms.map(p => `
+              <span class="mgr-perm-pill ${activePermIds.has(p.id) ? 'mgr-perm-pill--active' : ''}" data-id="${p.id}" title="${esc(p.description || '')}">${esc(p.name)}</span>
+            `).join('')}
+          </div>
+        </div>
+        <div id="sub-role-err" class="mgr-err" style="display:none"></div>
+      </div>
+      <div class="mgr-sub-footer">
+        <button class="btn btn-secondary mgr-sub-close">Cancel</button>
+        <button class="btn btn-primary" id="sub-role-save">${isEdit ? 'Save Changes' : 'Create Role'}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(sub);
+
+  sub.querySelectorAll('.mgr-sub-close').forEach(b => b.onclick = () => sub.remove());
+  sub.addEventListener('click', e => { if (e.target === sub) sub.remove(); });
+
+  // Toggle pills
+  sub.querySelectorAll('.mgr-perm-pill').forEach(pill => {
+    pill.addEventListener('click', () => pill.classList.toggle('mgr-perm-pill--active'));
+  });
+
+  sub.querySelector('#sub-role-save').addEventListener('click', async () => {
+    const nameEl   = sub.querySelector('#sub-role-name');
+    const descEl   = sub.querySelector('#sub-role-desc');
+    const permIds  = [...sub.querySelectorAll('.mgr-perm-pill--active')].map(p => parseInt(p.dataset.id));
+    const errEl    = sub.querySelector('#sub-role-err');
+    const saveBtn  = sub.querySelector('#sub-role-save');
+    errEl.style.display = 'none';
+
+    const payload = { permission_ids: permIds };
+    if (!isBuiltIn) {
+      const name = nameEl ? nameEl.value.trim() : (existingRole?.name || '');
+      if (name.length < 2) { errEl.textContent = 'Role name must be at least 2 characters'; errEl.style.display = 'block'; return; }
+      payload.name = name;
+      if (descEl) payload.description = descEl.value.trim() || null;
+    }
+
+    saveBtn.disabled = true;
+    try {
+      if (isEdit) {
+        await api.updateRole(existingRole.id, payload);
+        toast(`Role updated`);
+      } else {
+        await api.createRole(payload);
+        toast(`Role "${payload.name}" created`);
+      }
+      _cachedRoles = null;
+      sub.remove();
+      renderRolesList();
+    } catch (e) {
+      errEl.textContent = e.message;
+      errEl.style.display = 'block';
+      saveBtn.disabled = false;
+    }
+  });
+
+  if (!isBuiltIn) setTimeout(() => sub.querySelector('#sub-role-name')?.focus(), 50);
 }
 
 // ── System Settings (ports, limits from config.yaml) ─────────────────────────

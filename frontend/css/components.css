@@ -345,6 +345,234 @@
 .dialog-actions { display: flex; justify-content: flex-end; gap: 10px; }
 .tab-btn.active-tab { background: var(--accent-dark); color: var(--accent); border-color: var(--accent-dark); }
 
+/* ── Users & Roles manager ──────────────────────────────────────────────────── */
+.mgr-shell { border-radius: 14px; box-shadow: 0 24px 60px rgba(0,0,0,.55); }
+
+.mgr-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 18px 22px 0;
+  border-bottom: 1px solid var(--border-muted);
+  flex-shrink: 0;
+}
+.mgr-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary);
+  white-space: nowrap;
+  margin-right: 4px;
+}
+.mgr-tabs {
+  display: flex;
+  gap: 2px;
+  flex: 1;
+}
+.mgr-tab {
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: color .15s, border-color .15s;
+  margin-bottom: -1px;
+}
+.mgr-tab:hover { color: var(--text-primary); }
+.mgr-tab--active { color: var(--text-primary); border-bottom-color: var(--accent); }
+
+.mgr-close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  transition: background .15s, color .15s;
+  flex-shrink: 0;
+}
+.mgr-close:hover { background: var(--bg-elevated); color: var(--text-primary); }
+
+.mgr-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.mgr-pane {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  max-height: calc(88vh - 64px);
+}
+.mgr-pane-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 22px 10px;
+  flex-shrink: 0;
+}
+.mgr-pane-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--text-muted);
+}
+.mgr-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 22px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.mgr-loading, .mgr-empty, .mgr-error {
+  font-size: 13px;
+  color: var(--text-muted);
+  text-align: center;
+  padding: 32px 0;
+}
+.mgr-error { color: var(--red); }
+
+/* Cards */
+.mgr-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-muted);
+  border-radius: 10px;
+  padding: 12px 14px;
+  transition: border-color .15s, box-shadow .15s;
+}
+.mgr-card:hover { border-color: var(--border); box-shadow: 0 2px 8px rgba(0,0,0,.15); }
+.mgr-card--role { align-items: flex-start; }
+
+.mgr-card-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--accent-dark);
+  color: var(--accent);
+  font-size: 15px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.mgr-card-avatar--role {
+  border-radius: 9px;
+  background: var(--bg-muted);
+  color: var(--text-muted);
+}
+.mgr-card-info { flex: 1; min-width: 0; }
+.mgr-card-name { font-size: 14px; font-weight: 600; color: var(--text-primary); }
+.mgr-card-meta { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
+.mgr-card-actions { display: flex; gap: 6px; flex-shrink: 0; align-items: center; }
+
+.mgr-card-badge {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 9px;
+  border-radius: 20px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.mgr-badge--default { background: var(--accent-dark); color: var(--accent); }
+.mgr-badge--gold    { background: rgba(210,153,34,.15); color: #e3b341; }
+.mgr-badge { font-size: 11px; font-weight: 500; padding: 2px 9px; border-radius: 20px; white-space: nowrap; }
+
+/* Icon buttons */
+.mgr-icon-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  border: 1px solid var(--border-muted);
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all .15s;
+}
+.mgr-icon-btn:hover { background: var(--bg-muted); color: var(--text-primary); border-color: var(--border); }
+.mgr-icon-btn--danger:hover { background: rgba(248,81,73,.1); color: var(--red); border-color: rgba(248,81,73,.3); }
+
+/* Permission pills */
+.mgr-perm-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.mgr-perm-pill {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 4px 10px;
+  border-radius: 20px;
+  border: 1px solid var(--border-muted);
+  background: var(--bg-muted);
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+  transition: all .15s;
+  white-space: nowrap;
+}
+.mgr-perm-pill:hover { border-color: var(--accent); color: var(--text-primary); }
+.mgr-perm-pill--active {
+  background: var(--accent-dark);
+  border-color: var(--accent-dark);
+  color: var(--accent);
+}
+.mgr-perm-pill--active:hover { opacity: .8; }
+
+/* Sub-modal (stacked on top of main modal) */
+.mgr-sub-backdrop {
+  z-index: 1100;
+  background: rgba(0,0,0,.5);
+}
+.mgr-sub { border-radius: 12px; padding: 0; overflow: hidden; }
+
+.mgr-sub-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border-muted);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.mgr-sub-body {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.mgr-sub-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--border-muted);
+  background: var(--bg-elevated);
+}
+.mgr-field { display: flex; flex-direction: column; gap: 6px; }
+.mgr-label { font-size: 12px; font-weight: 600; color: var(--text-secondary); }
+.mgr-err { font-size: 12px; color: var(--red); padding: 8px 12px; background: rgba(248,81,73,.08); border-radius: 6px; border: 1px solid rgba(248,81,73,.2); }
+
 .nginx-dialog { max-width: 700px; width: 95%; max-height: 90vh; display: flex; flex-direction: column; }
 .nginx-dialog .dialog-body { flex: 1; min-height: 0; margin-bottom: 0; overflow: hidden; display: flex; flex-direction: column; }
 .nginx-textarea { flex: 1; min-height: 320px; resize: vertical; font-size: 12px; line-height: 1.6; padding: 12px; border-radius: 0; border-left: none; border-right: none; }

@@ -21,8 +21,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from database import AsyncSessionLocal, init_db, get_db
-from models import Application, User
+from models import Application, User, Role, Permission, role_permissions
 from routers import applications, files, logs, stats, nodes, audit as audit_router
+from routers import roles as roles_router
 from env_crypto import decrypt_env
 from audit import log_audit
 import auth
@@ -690,8 +691,15 @@ _PUBLIC = {
     "/api/auth/check",
 }
 
-# Paths that require admin role for non-GET requests
-_ADMIN_WRITE_PREFIXES = ("/api/apps", "/api/nodes", "/api/system", "/api/users")
+# Paths that require write-capable permissions (checked live against DB)
+# Mapping: path prefix -> minimum permission needed for non-GET mutations
+_PERMISSION_WRITE_MAP = (
+    ("/api/apps",   "apps.manage"),
+    ("/api/nodes",  "nodes.manage"),
+    ("/api/system", "system.manage"),
+    ("/api/users",  "users.manage"),
+    ("/api/roles",  "roles.manage"),
+)
 
 
 class _AuthMiddleware(BaseHTTPMiddleware):
@@ -702,7 +710,6 @@ class _AuthMiddleware(BaseHTTPMiddleware):
         if path in _PUBLIC:
             return await call_next(request)
         # Browser-facing node WebSocket endpoints — auth checked via cookie below
-        # (BaseHTTPMiddleware can't block WS upgrades cleanly; the endpoints themselves are read-only)
         if path.startswith("/api/nodes/") and any(path.endswith(s) for s in ("/events", "/stats", "/commands/live")):
             token = request.cookies.get(_COOKIE_NAME)
             if token and auth.decode_token(token):
@@ -713,11 +720,19 @@ class _AuthMiddleware(BaseHTTPMiddleware):
             if token:
                 user = auth.decode_token(token)
                 if user:
-                    # Viewer role may not perform mutations on protected paths
-                    if (request.method not in ("GET", "HEAD", "OPTIONS")
-                            and user["role"] != "admin"
-                            and any(path.startswith(p) for p in _ADMIN_WRITE_PREFIXES)):
-                        return JSONResponse({"detail": "Admin access required"}, status_code=403)
+                    # Superadmin bypasses permission checks entirely
+                    if user["username"] == "admin":
+                        return await call_next(request)
+                    # For mutations, check that the user has the required permission live
+                    if request.method not in ("GET", "HEAD", "OPTIONS"):
+                        required_perm = next(
+                            (perm for prefix, perm in _PERMISSION_WRITE_MAP if path.startswith(prefix)),
+                            None,
+                        )
+                        if required_perm:
+                            perms = await auth.get_user_permissions(user["username"])
+                            if required_perm not in perms:
+                                return JSONResponse({"detail": "Permission denied"}, status_code=403)
                     return await call_next(request)
             # Allow node_agent.py running locally via X-Agent-Token header
             agent_token = request.headers.get("X-Agent-Token", "")
@@ -766,12 +781,37 @@ async def auth_check(request: Request, db: AsyncSession = Depends(get_db)):
     user = auth.decode_token(token) if token else None
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    # Always return the live role from the database so UI reflects immediate role changes
     result = await db.execute(select(User).where(User.username == user["username"]))
     db_user = result.scalar_one_or_none()
     if not db_user:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    return {"authenticated": True, "username": db_user.username, "role": db_user.role, "is_superadmin": db_user.username == "admin"}
+    is_superadmin = db_user.username == "admin"
+    perms: list[str] = []
+    if is_superadmin:
+        perm_res = await db.execute(select(Permission.name))
+        perms = [row[0] for row in perm_res.fetchall()]
+    elif db_user.role_id:
+        perm_res = await db.execute(
+            select(Permission.name)
+            .join(role_permissions, Permission.id == role_permissions.c.permission_id)
+            .where(role_permissions.c.role_id == db_user.role_id)
+        )
+        perms = [row[0] for row in perm_res.fetchall()]
+    # Fetch role name
+    role_name = db_user.role
+    if db_user.role_id:
+        role_res = await db.execute(select(Role).where(Role.id == db_user.role_id))
+        role_obj = role_res.scalar_one_or_none()
+        if role_obj:
+            role_name = role_obj.name
+    return {
+        "authenticated": True,
+        "username": db_user.username,
+        "role": role_name,
+        "role_id": db_user.role_id,
+        "is_superadmin": is_superadmin,
+        "permissions": perms,
+    }
 
 
 @app.post("/api/auth/login")
@@ -835,46 +875,65 @@ async def change_password(req: ChangePasswordRequest, request: Request, db: Asyn
     return {"ok": True}
 
 
-# ── User management endpoints (admin only) ───────────────────────────────────
+# ── User management endpoints (superadmin only) ──────────────────────────────
 class CreateUserRequest(BaseModel):
     username: str
     password: str
-    role: str = "viewer"
+    role_id: int
 
 
 @app.get("/api/users")
 async def list_users(_user: dict = Depends(auth.require_superadmin), db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).order_by(User.created_at))
     users = result.scalars().all()
-    return [
-        {"id": u.id, "username": u.username, "role": u.role, "created_at": u.created_at.isoformat() if u.created_at else None}
-        for u in users
-    ]
+    out = []
+    for u in users:
+        role_name = u.role
+        if u.role_id:
+            role_res = await db.execute(select(Role).where(Role.id == u.role_id))
+            role_obj = role_res.scalar_one_or_none()
+            if role_obj:
+                role_name = role_obj.name
+        out.append({
+            "id": u.id,
+            "username": u.username,
+            "role": role_name,
+            "role_id": u.role_id,
+            "created_at": u.created_at.isoformat() if u.created_at else None,
+        })
+    return out
 
 
 @app.post("/api/users")
 async def create_user(req: CreateUserRequest, admin_user: dict = Depends(auth.require_superadmin), db: AsyncSession = Depends(get_db)):
-    if req.role not in ("admin", "viewer"):
-        raise HTTPException(status_code=400, detail="Role must be 'admin' or 'viewer'")
     if len(req.username.strip()) < 2:
         raise HTTPException(status_code=400, detail="Username must be at least 2 characters")
     if len(req.password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    role_res = await db.execute(select(Role).where(Role.id == req.role_id))
+    role_obj = role_res.scalar_one_or_none()
+    if not role_obj:
+        raise HTTPException(status_code=400, detail="Role not found")
     existing = await db.execute(select(User).where(User.username == req.username.strip()))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Username already exists")
-    new_user = User(username=req.username.strip(), password_hash=auth.hash_password(req.password), role=req.role)
+    new_user = User(
+        username=req.username.strip(),
+        password_hash=auth.hash_password(req.password),
+        role=role_obj.name,
+        role_id=role_obj.id,
+    )
     db.add(new_user)
-    await log_audit(db, "user.create", actor=admin_user["username"], detail={"username": req.username, "role": req.role})
+    await log_audit(db, "user.create", actor=admin_user["username"], detail={"username": req.username, "role": role_obj.name})
     await db.commit()
     await db.refresh(new_user)
-    return {"id": new_user.id, "username": new_user.username, "role": new_user.role}
+    return {"id": new_user.id, "username": new_user.username, "role": role_obj.name, "role_id": new_user.role_id}
 
 
 class UpdateUserRequest(BaseModel):
     username: Optional[str] = None
     password: Optional[str] = None
-    role: Optional[str] = None
+    role_id: Optional[int] = None
 
 
 @app.put("/api/users/{user_id}")
@@ -896,13 +955,17 @@ async def update_user(user_id: int, req: UpdateUserRequest, current_user: dict =
         detail["old_username"] = user.username
         user.username = new_name
         detail["new_username"] = new_name
-    if req.role is not None:
-        if req.role not in ("admin", "viewer"):
-            raise HTTPException(status_code=400, detail="Role must be 'admin' or 'viewer'")
+    if req.role_id is not None:
         if user.username == "admin":
             raise HTTPException(status_code=400, detail="Cannot change the superadmin role")
-        user.role = req.role
-        detail["role"] = req.role
+        role_res = await db.execute(select(Role).where(Role.id == req.role_id))
+        role_obj = role_res.scalar_one_or_none()
+        if not role_obj:
+            raise HTTPException(status_code=400, detail="Role not found")
+        user.role_id = role_obj.id
+        user.role = role_obj.name
+        detail["role"] = role_obj.name
+        detail["role_id"] = role_obj.id
     if req.password is not None:
         if len(req.password) < 8:
             raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
@@ -912,7 +975,13 @@ async def update_user(user_id: int, req: UpdateUserRequest, current_user: dict =
         detail["password_changed"] = True
     await log_audit(db, "user.update", actor=current_user["username"], detail=detail)
     await db.commit()
-    return {"id": user.id, "username": user.username, "role": user.role}
+    role_name = user.role
+    if user.role_id:
+        role_res = await db.execute(select(Role).where(Role.id == user.role_id))
+        role_obj = role_res.scalar_one_or_none()
+        if role_obj:
+            role_name = role_obj.name
+    return {"id": user.id, "username": user.username, "role": role_name, "role_id": user.role_id}
 
 
 @app.delete("/api/users/{user_id}")
@@ -1211,6 +1280,7 @@ app.include_router(files.router)
 app.include_router(logs.router)
 app.include_router(stats.router)
 app.include_router(audit_router.router)
+app.include_router(roles_router.router)
 
 
 # ── App preview reverse proxy ────────────────────────────────────────────────────────────────

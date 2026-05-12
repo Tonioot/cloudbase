@@ -39,7 +39,7 @@ async def get_db():
 async def init_db():
     import datetime as _dt
     from env_crypto import decrypt_text, encrypt_text
-    from models import Application, Node, NodeInvite, NodeCommand, AuditLog, StatsHistory, User, SystemConfig
+    from models import Application, Node, NodeInvite, NodeCommand, AuditLog, StatsHistory, User, SystemConfig, Role, Permission, role_permissions
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         # Migrate existing DBs: add columns introduced after initial schema.
@@ -170,15 +170,95 @@ async def init_db():
                 f"ALTER TABLE application_replicas ADD COLUMN {col} {definition}"
             )
 
-    # Seed admin user from legacy credentials file if no users exist yet
+        # users table — add role_id column if missing
+        result = await conn.exec_driver_sql("PRAGMA table_info(users)")
+        existing_user_cols = {row[1] for row in result.fetchall()}
+        if "role_id" not in existing_user_cols:
+            await conn.exec_driver_sql("ALTER TABLE users ADD COLUMN role_id INTEGER REFERENCES roles(id) ON DELETE SET NULL")
+
+    # Seed default permissions, roles, and admin user
     import os as _os
     from sqlalchemy import select as _select
     _CREDENTIALS_FILE = _os.path.expanduser("~/.cloudbase/credentials")
+
+    # All known permissions in the system
+    ALL_PERMISSIONS = [
+        ("apps.view",         "View applications and their status"),
+        ("apps.manage",       "Create, edit and delete applications"),
+        ("apps.deploy",       "Deploy, start, stop and restart applications"),
+        ("nodes.view",        "View nodes"),
+        ("nodes.manage",      "Add, edit and delete nodes"),
+        ("logs.view",         "View application logs"),
+        ("stats.view",        "View application statistics"),
+        ("system.view",       "View system settings"),
+        ("system.manage",     "Manage system settings and nginx config"),
+        ("users.manage",      "Create, edit and delete users (superadmin only)"),
+        ("roles.manage",      "Create, edit and delete roles (superadmin only)"),
+        ("audit.view",        "View audit logs"),
+        ("github.manage",     "Manage GitHub tokens"),
+    ]
+
     async with AsyncSessionLocal() as session:
+        # Ensure all permissions exist
+        perm_map: dict[str, int] = {}
+        for pname, pdesc in ALL_PERMISSIONS:
+            res = await session.execute(_select(Permission).where(Permission.name == pname))
+            perm = res.scalar_one_or_none()
+            if perm is None:
+                perm = Permission(name=pname, description=pdesc)
+                session.add(perm)
+                await session.flush()
+            perm_map[pname] = perm.id
+
+        # Seed default roles: "viewer" (read-only) and "admin" (full access) if they don't exist
+        viewer_perms = ["apps.view", "nodes.view", "logs.view", "stats.view", "audit.view"]
+        admin_perms  = [p for p, _ in ALL_PERMISSIONS]
+
+        for role_name, role_desc, perms in [
+            ("viewer", "Read-only access", viewer_perms),
+            ("admin",  "Full access to all features", admin_perms),
+        ]:
+            res = await session.execute(_select(Role).where(Role.name == role_name))
+            role_obj = res.scalar_one_or_none()
+            if role_obj is None:
+                role_obj = Role(name=role_name, description=role_desc)
+                session.add(role_obj)
+                await session.flush()
+                # Assign permissions via raw insert (avoid ORM relationship overhead)
+                for pname in perms:
+                    pid = perm_map.get(pname)
+                    if pid:
+                        await session.execute(
+                            role_permissions.insert().values(role_id=role_obj.id, permission_id=pid)
+                        )
+
+        await session.commit()
+
+        # Re-fetch role IDs after commit
+        res = await session.execute(_select(Role).where(Role.name == "admin"))
+        admin_role = res.scalar_one_or_none()
+        res = await session.execute(_select(Role).where(Role.name == "viewer"))
+        viewer_role = res.scalar_one_or_none()
+
+        # Seed admin user from legacy credentials file if no users exist yet
         existing = await session.execute(_select(User).limit(1))
         if existing.scalar_one_or_none() is None and _os.path.exists(_CREDENTIALS_FILE):
             with open(_CREDENTIALS_FILE) as _f:
                 hashed = _f.read().strip()
             if hashed:
-                session.add(User(username="admin", password_hash=hashed, role="admin"))
+                session.add(User(
+                    username="admin",
+                    password_hash=hashed,
+                    role="admin",
+                    role_id=admin_role.id if admin_role else None,
+                ))
                 await session.commit()
+        else:
+            # Migrate existing users that have no role_id yet
+            res = await session.execute(_select(User).where(User.role_id == None))  # noqa: E711
+            for u in res.scalars().all():
+                if u.role == "admin":
+                    u.role_id = admin_role.id if admin_role else None
+                else:
+                    u.role_id = viewer_role.id if viewer_role else None
+            await session.commit()

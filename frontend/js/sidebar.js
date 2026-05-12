@@ -831,13 +831,23 @@ async function initRoleBasedUI() {
   try {
     const data = await api.checkAuth();
     document.body.dataset.role = data.role;
-    window.dispatchEvent(new CustomEvent('cloudbase-role-ready', { detail: { role: data.role } }));
+    // Store permissions on body for other scripts
+    document.body.dataset.permissions = JSON.stringify(data.permissions || []);
+    window.dispatchEvent(new CustomEvent('cloudbase-role-ready', { detail: { role: data.role, permissions: data.permissions || [] } }));
 
-    if (data.role !== 'admin') {
-      document.querySelectorAll('[data-admin]').forEach(el => { el.style.display = 'none'; });
-      const s = document.createElement('style');
-      s.textContent = '[data-admin]{display:none!important}';
-      document.head.appendChild(s);
+    // Hide [data-perm="X"] elements if user lacks that permission
+    const perms = new Set(data.permissions || []);
+    if (!data.is_superadmin) {
+      document.querySelectorAll('[data-perm]').forEach(el => {
+        if (!perms.has(el.dataset.perm)) el.style.display = 'none';
+      });
+      // Legacy support: hide [data-admin] for users without system.manage
+      if (!perms.has('system.manage')) {
+        document.querySelectorAll('[data-admin]').forEach(el => { el.style.display = 'none'; });
+        const s = document.createElement('style');
+        s.textContent = '[data-admin]{display:none!important}';
+        document.head.appendChild(s);
+      }
     }
 
     if (data.is_superadmin) {
@@ -850,41 +860,75 @@ async function initRoleBasedUI() {
   } catch {}
 }
 
+// ── Users & Roles management modal (superadmin only) ─────────────────────────
+let _cachedRoles = null;
+
+async function loadRoles(force = false) {
+  if (!_cachedRoles || force) {
+    _cachedRoles = await api.listRoles();
+  }
+  return _cachedRoles;
+}
+
+function buildRoleSelect(selectedRoleId) {
+  // Builds role <option> elements; resolved asynchronously
+  return `<option value="">Loading…</option>`;
+}
+
 function openManageUsersModal() {
+  // The modal has two tabs: Users and Roles
   let modal = document.getElementById('manage-users-modal-global');
   if (!modal) {
     modal = document.createElement('div');
     modal.id = 'manage-users-modal-global';
     modal.className = 'dialog-backdrop';
     modal.innerHTML = `
-      <div class="dialog dialog-modern" style="max-width:520px;width:90%">
-        <div class="dialog-title">
+      <div class="dialog dialog-modern" style="max-width:600px;width:95%">
+        <div class="dialog-title" style="display:flex;align-items:center;gap:0">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="margin-right:8px;vertical-align:-2px"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-          Manage Users
-        </div>
-        <div class="dialog-body">
-          <p style="font-size:12px;color:var(--text-muted);margin:0 0 12px">
-            <strong>Admin</strong> users can do everything. <strong>Viewer</strong> users can only view.
-          </p>
-          <div id="users-list" style="margin-bottom:16px"></div>
-          <div style="border-top:1px solid var(--border-muted);padding-top:14px">
-            <div style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">Add User</div>
-            <div style="display:flex;gap:8px;margin-bottom:8px">
-              <input class="input" id="new-user-name" placeholder="Username" style="flex:1;min-width:0" />
-              <input class="input input-mono" id="new-user-pwd" type="password" placeholder="Password (min 8)" autocomplete="new-password" style="flex:1;min-width:0" />
-            </div>
-            <div style="display:flex;gap:8px;margin-bottom:8px">
-              <select class="input" id="new-user-role" style="flex:1;height:42px">
-                <option value="viewer">Viewer — read only</option>
-                <option value="admin">Admin — full access</option>
-              </select>
-            </div>
-            <div id="users-err" style="display:none;color:var(--red);font-size:12px;margin-bottom:8px"></div>
+          <span style="flex:1">Users &amp; Roles</span>
+          <div style="display:flex;gap:0;border:1px solid var(--border-muted);border-radius:6px;overflow:hidden;margin-left:auto">
+            <button class="btn btn-secondary tab-btn active-tab" data-tab="users" style="border-radius:0;border:none;padding:4px 14px;font-size:12px">Users</button>
+            <button class="btn btn-secondary tab-btn" data-tab="roles" style="border-radius:0;border:none;border-left:1px solid var(--border-muted);padding:4px 14px;font-size:12px">Roles</button>
           </div>
+        </div>
+        <div class="dialog-body" style="padding:0">
+
+          <!-- ── Users tab ────────────────────────────────── -->
+          <div id="tab-users" style="padding:16px">
+            <div id="users-list" style="margin-bottom:16px"></div>
+            <div style="border-top:1px solid var(--border-muted);padding-top:14px">
+              <div style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">Add User</div>
+              <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+                <input class="input" id="new-user-name" placeholder="Username" style="flex:1;min-width:140px" />
+                <input class="input input-mono" id="new-user-pwd" type="password" placeholder="Password (min 8)" autocomplete="new-password" style="flex:1;min-width:140px" />
+                <select class="input" id="new-user-role-id" style="flex:1;min-width:140px;height:42px">
+                  <option value="">Loading roles…</option>
+                </select>
+              </div>
+              <div id="users-err" style="display:none;color:var(--red);font-size:12px;margin-bottom:8px"></div>
+              <button class="btn btn-primary" id="manage-users-add" style="width:100%">Add User</button>
+            </div>
+          </div>
+
+          <!-- ── Roles tab ────────────────────────────────── -->
+          <div id="tab-roles" style="display:none;padding:16px">
+            <div id="roles-list" style="margin-bottom:16px"></div>
+            <div style="border-top:1px solid var(--border-muted);padding-top:14px">
+              <div style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">Create Role</div>
+              <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+                <input class="input" id="new-role-name" placeholder="Role name" style="flex:1;min-width:140px" />
+                <input class="input" id="new-role-desc" placeholder="Description (optional)" style="flex:2;min-width:200px" />
+              </div>
+              <div id="new-role-perms" style="margin-bottom:10px"></div>
+              <div id="roles-err" style="display:none;color:var(--red);font-size:12px;margin-bottom:8px"></div>
+              <button class="btn btn-primary" id="manage-roles-add" style="width:100%">Create Role</button>
+            </div>
+          </div>
+
         </div>
         <div class="dialog-actions">
           <button class="btn btn-secondary" id="manage-users-close">Close</button>
-          <button class="btn btn-primary" id="manage-users-add">Add User</button>
         </div>
       </div>`;
     document.body.appendChild(modal);
@@ -892,25 +936,62 @@ function openManageUsersModal() {
     modal.querySelector('#manage-users-close').onclick = () => { modal.style.display = 'none'; };
     modal.addEventListener('click', e => { if (e.target === modal) modal.style.display = 'none'; });
 
+    // Tab switching
+    modal.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        modal.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active-tab'));
+        btn.classList.add('active-tab');
+        const tab = btn.dataset.tab;
+        modal.querySelector('#tab-users').style.display = tab === 'users' ? 'block' : 'none';
+        modal.querySelector('#tab-roles').style.display = tab === 'roles' ? 'block' : 'none';
+        if (tab === 'roles') renderRolesList(modal);
+      });
+    });
+
+    // Add user
     modal.querySelector('#manage-users-add').addEventListener('click', async () => {
       const username = modal.querySelector('#new-user-name').value.trim();
       const password = modal.querySelector('#new-user-pwd').value;
-      const role     = modal.querySelector('#new-user-role').value;
+      const roleId   = parseInt(modal.querySelector('#new-user-role-id').value);
       const err      = modal.querySelector('#users-err');
       err.style.display = 'none';
-
       if (!username) { err.textContent = 'Username is required'; err.style.display = 'block'; return; }
       if (password.length < 8) { err.textContent = 'Password must be at least 8 characters'; err.style.display = 'block'; return; }
-
+      if (!roleId) { err.textContent = 'Please select a role'; err.style.display = 'block'; return; }
       const btn = modal.querySelector('#manage-users-add');
       btn.disabled = true;
       try {
-        await api.createUser({ username, password, role });
+        await api.createUser({ username, password, role_id: roleId });
         modal.querySelector('#new-user-name').value = '';
         modal.querySelector('#new-user-pwd').value = '';
-        modal.querySelector('#new-user-role').value = 'viewer';
         await renderUsersList(modal);
         toast(`User "${username}" created`);
+      } catch (e) {
+        err.textContent = e.message;
+        err.style.display = 'block';
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    // Create role
+    modal.querySelector('#manage-roles-add').addEventListener('click', async () => {
+      const name  = modal.querySelector('#new-role-name').value.trim();
+      const desc  = modal.querySelector('#new-role-desc').value.trim();
+      const permIds = [...modal.querySelectorAll('#new-role-perms input[type=checkbox]:checked')].map(c => parseInt(c.value));
+      const err   = modal.querySelector('#roles-err');
+      err.style.display = 'none';
+      if (name.length < 2) { err.textContent = 'Role name must be at least 2 characters'; err.style.display = 'block'; return; }
+      const btn = modal.querySelector('#manage-roles-add');
+      btn.disabled = true;
+      try {
+        await api.createRole({ name, description: desc || null, permission_ids: permIds });
+        _cachedRoles = null;
+        modal.querySelector('#new-role-name').value = '';
+        modal.querySelector('#new-role-desc').value = '';
+        await renderRolesList(modal);
+        await populateRoleSelect(modal);
+        toast(`Role "${name}" created`);
       } catch (e) {
         err.textContent = e.message;
         err.style.display = 'block';
@@ -922,54 +1003,87 @@ function openManageUsersModal() {
 
   modal.style.display = 'flex';
   renderUsersList(modal);
+  populateRoleSelect(modal);
+  loadPermissionsCheckboxes(modal.querySelector('#new-role-perms'));
+}
+
+async function populateRoleSelect(modal) {
+  const sel = modal.querySelector('#new-user-role-id');
+  if (!sel) return;
+  try {
+    const roles = await loadRoles(true);
+    sel.innerHTML = roles.map(r => `<option value="${r.id}">${esc(r.name)}${r.description ? ' — ' + esc(r.description) : ''}</option>`).join('');
+  } catch {
+    sel.innerHTML = '<option value="">Failed to load roles</option>';
+  }
+}
+
+async function loadPermissionsCheckboxes(container) {
+  if (!container) return;
+  try {
+    const perms = await api.listPermissions();
+    container.innerHTML = `
+      <div style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Permissions</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 16px">
+        ${perms.map(p => `
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;user-select:none">
+            <input type="checkbox" value="${p.id}" style="accent-color:var(--accent)" />
+            <span title="${esc(p.description || '')}">${esc(p.name)}</span>
+          </label>`).join('')}
+      </div>`;
+  } catch {
+    container.innerHTML = '<div style="color:var(--text-muted);font-size:12px">Failed to load permissions</div>';
+  }
 }
 
 async function renderUsersList(modal) {
   const list = modal.querySelector('#users-list');
   list.innerHTML = '<div style="color:var(--text-muted);font-size:12px">Loading…</div>';
   try {
-    const users = await api.listUsers();
+    const [users, roles] = await Promise.all([api.listUsers(), loadRoles()]);
+    const roleMap = Object.fromEntries(roles.map(r => [r.id, r]));
     if (!users.length) {
       list.innerHTML = '<div style="color:var(--text-muted);font-size:12px">No users found.</div>';
       return;
     }
     list.innerHTML = users.map(u => {
       const isSuperadmin = u.username === 'admin';
-      const badgeHtml = isSuperadmin
-        ? `<span class="gh-token-row-hint user-role-badge" style="padding:2px 8px;border-radius:4px;font-size:11px;background:rgba(210,153,34,.15);color:#e3b341">superadmin</span>`
-        : `<span class="gh-token-row-hint user-role-badge" style="padding:2px 8px;border-radius:4px;font-size:11px;background:${u.role === 'admin' ? 'var(--accent-dark)' : 'var(--bg-elevated)'};color:${u.role === 'admin' ? 'var(--accent)' : 'var(--text-muted)'}">${u.role}</span>`;
+      const roleName = isSuperadmin ? 'superadmin' : (u.role || 'unknown');
+      const badgeColor = isSuperadmin ? 'rgba(210,153,34,.15)' : 'var(--accent-dark)';
+      const badgeText  = isSuperadmin ? '#e3b341' : 'var(--accent)';
+      const badgeHtml  = `<span class="user-role-badge" style="padding:2px 8px;border-radius:4px;font-size:11px;background:${badgeColor};color:${badgeText}">${esc(roleName)}</span>`;
 
-      const editFormHtml = isSuperadmin
-        ? ''
-        : `<div class="user-edit-form" style="display:none;background:var(--bg-elevated);border-radius:6px;padding:10px;flex-direction:column;gap:8px">
-            <div style="display:flex;gap:8px;flex-wrap:wrap">
-              <input class="input user-edit-username" placeholder="Username" style="flex:1;min-width:150px" />
-              <input class="input input-mono user-edit-pwd" type="password" placeholder="New password (leave blank to keep)" autocomplete="new-password" style="flex:1;min-width:150px" />
-              <select class="input user-edit-role" style="width:160px;height:38px">
-                <option value="viewer">Viewer</option>
-                <option value="admin">Admin</option>
-              </select>
-            </div>
-            <div class="user-edit-err" style="display:none;color:var(--red);font-size:12px"></div>
-            <div style="display:flex;gap:6px;justify-content:flex-end">
-              <button class="btn btn-secondary btn-sm user-edit-cancel" style="font-size:11px">Cancel</button>
-              <button class="btn btn-primary btn-sm user-edit-save" style="font-size:11px">Save Changes</button>
-            </div>
-          </div>`;
+      const roleOptions = isSuperadmin ? '' : roles.map(r =>
+        `<option value="${r.id}" ${r.id === u.role_id ? 'selected' : ''}>${esc(r.name)}</option>`
+      ).join('');
+
+      const editFormHtml = isSuperadmin ? '' : `
+        <div class="user-edit-form" style="display:none;background:var(--bg-elevated);border-radius:6px;padding:10px;flex-direction:column;gap:8px">
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <input class="input user-edit-username" placeholder="Username" style="flex:1;min-width:140px" value="${esc(u.username)}" />
+            <input class="input input-mono user-edit-pwd" type="password" placeholder="New password (leave blank to keep)" autocomplete="new-password" style="flex:1;min-width:140px" />
+            <select class="input user-edit-role-id" style="flex:1;min-width:140px;height:38px">${roleOptions}</select>
+          </div>
+          <div class="user-edit-err" style="display:none;color:var(--red);font-size:12px"></div>
+          <div style="display:flex;gap:6px;justify-content:flex-end">
+            <button class="btn btn-secondary btn-sm user-edit-cancel" style="font-size:11px">Cancel</button>
+            <button class="btn btn-primary btn-sm user-edit-save" style="font-size:11px">Save</button>
+          </div>
+        </div>`;
 
       return `
-      <div class="gh-token-row" data-id="${u.id}" data-username="${esc(u.username)}" data-role="${esc(u.role)}" data-superadmin="${isSuperadmin}" style="flex-direction:column;align-items:stretch;gap:6px">
-        <div style="display:flex;align-items:center;gap:8px">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="color:var(--text-muted);flex-shrink:0"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-          <span class="gh-token-row-label">${esc(u.username)}</span>
-          ${badgeHtml}
-          <div style="margin-left:auto;display:flex;gap:6px">
-            ${isSuperadmin ? '' : `<button class="btn btn-secondary btn-sm user-edit-btn" style="padding:3px 8px;font-size:11px">Edit</button>`}
-            ${isSuperadmin ? '' : `<button class="btn btn-danger btn-sm user-delete-btn" style="padding:3px 8px;font-size:11px">Delete</button>`}
+        <div class="gh-token-row" data-id="${u.id}" data-username="${esc(u.username)}" data-role-id="${u.role_id || ''}" data-superadmin="${isSuperadmin}" style="flex-direction:column;align-items:stretch;gap:6px">
+          <div style="display:flex;align-items:center;gap:8px">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="color:var(--text-muted);flex-shrink:0"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            <span class="gh-token-row-label">${esc(u.username)}</span>
+            ${badgeHtml}
+            <div style="margin-left:auto;display:flex;gap:6px">
+              ${isSuperadmin ? '' : `<button class="btn btn-secondary btn-sm user-edit-btn" style="padding:3px 8px;font-size:11px">Edit</button>`}
+              ${isSuperadmin ? '' : `<button class="btn btn-danger btn-sm user-delete-btn" style="padding:3px 8px;font-size:11px">Delete</button>`}
+            </div>
           </div>
-        </div>
-        ${editFormHtml}
-      </div>`;
+          ${editFormHtml}
+        </div>`;
     }).join('');
 
     list.querySelectorAll('[data-id]').forEach(row => {
@@ -977,63 +1091,34 @@ async function renderUsersList(modal) {
       const username    = row.dataset.username;
       const isSuperadmin = row.dataset.superadmin === 'true';
       const form        = row.querySelector('.user-edit-form');
-      const roleEl      = row.querySelector('.user-edit-role'); // null for superadmin
 
       row.querySelector('.user-edit-btn')?.addEventListener('click', () => {
         const isOpen = form.style.display === 'flex';
-        if (isOpen) {
-          form.style.display = 'none';
-        } else {
-          const usernameInput = row.querySelector('.user-edit-username');
-          if (usernameInput) usernameInput.value = username;
-          if (roleEl) roleEl.value = row.dataset.role;
-          row.querySelector('.user-edit-pwd').value = '';
-          row.querySelector('.user-edit-err').style.display = 'none';
-          form.style.display = 'flex';
-        }
+        form.style.display = isOpen ? 'none' : 'flex';
+        if (!isOpen) row.querySelector('.user-edit-err').style.display = 'none';
       });
 
-      row.querySelector('.user-edit-cancel')?.addEventListener('click', () => {
-        form.style.display = 'none';
-      });
+      row.querySelector('.user-edit-cancel')?.addEventListener('click', () => { form.style.display = 'none'; });
 
       row.querySelector('.user-edit-save')?.addEventListener('click', async () => {
-        const usernameInput = row.querySelector('.user-edit-username');
-        const newUsername = usernameInput ? usernameInput.value.trim() : username;
-        const pwd    = row.querySelector('.user-edit-pwd').value;
-        const role   = roleEl ? roleEl.value : null;
-        const errEl  = row.querySelector('.user-edit-err');
-        const saveBtn = row.querySelector('.user-edit-save');
+        const newUsername = row.querySelector('.user-edit-username').value.trim();
+        const pwd        = row.querySelector('.user-edit-pwd').value;
+        const roleId     = parseInt(row.querySelector('.user-edit-role-id').value);
+        const errEl      = row.querySelector('.user-edit-err');
+        const saveBtn    = row.querySelector('.user-edit-save');
         errEl.style.display = 'none';
-
-        if (!isSuperadmin && newUsername.length < 2) {
-          errEl.textContent = 'Username must be at least 2 characters';
-          errEl.style.display = 'block';
-          return;
-        }
-        if (pwd && pwd.length < 8) {
-          errEl.textContent = 'Password must be at least 8 characters';
-          errEl.style.display = 'block';
-          return;
-        }
-
-        const payload = {};
-        if (role !== null) payload.role = role;
-        if (!isSuperadmin && newUsername !== username) payload.username = newUsername;
+        if (newUsername.length < 2) { errEl.textContent = 'Username must be at least 2 characters'; errEl.style.display = 'block'; return; }
+        if (pwd && pwd.length < 8) { errEl.textContent = 'Password must be at least 8 characters'; errEl.style.display = 'block'; return; }
+        const payload = { role_id: roleId };
+        if (newUsername !== username) payload.username = newUsername;
         if (pwd) payload.password = pwd;
-
         saveBtn.disabled = true;
         try {
           const updated = await api.updateUser(id, payload);
-          row.dataset.role     = updated.role;
           row.dataset.username = updated.username;
+          row.dataset.roleId   = updated.role_id;
           row.querySelector('.gh-token-row-label').textContent = updated.username;
-          if (!isSuperadmin) {
-            const badge = row.querySelector('.user-role-badge');
-            badge.textContent = updated.role;
-            badge.style.background = updated.role === 'admin' ? 'var(--accent-dark)' : 'var(--bg-elevated)';
-            badge.style.color      = updated.role === 'admin' ? 'var(--accent)'      : 'var(--text-muted)';
-          }
+          row.querySelector('.user-role-badge').textContent = updated.role;
           form.style.display = 'none';
           toast(`User "${updated.username}" updated`);
         } catch (e) {
@@ -1050,6 +1135,119 @@ async function renderUsersList(modal) {
           await api.deleteUser(id);
           await renderUsersList(modal);
           toast(`User "${username}" deleted`);
+        } catch (e) {
+          toast(e.message, 'error');
+        }
+      });
+    });
+  } catch (e) {
+    list.innerHTML = `<div style="color:var(--red);font-size:12px">${e.message}</div>`;
+  }
+}
+
+async function renderRolesList(modal) {
+  const list = modal.querySelector('#roles-list');
+  list.innerHTML = '<div style="color:var(--text-muted);font-size:12px">Loading…</div>';
+  try {
+    const [roles, allPerms] = await Promise.all([loadRoles(true), api.listPermissions()]);
+    const permMap = Object.fromEntries(allPerms.map(p => [p.id, p]));
+    const builtIn = new Set(['admin', 'viewer']);
+
+    list.innerHTML = roles.map(r => {
+      const isBuiltIn = builtIn.has(r.name);
+      const permTags = r.permissions.map(p =>
+        `<span style="padding:1px 7px;border-radius:3px;font-size:10px;background:var(--bg-muted);color:var(--text-secondary)">${esc(p.name)}</span>`
+      ).join(' ');
+
+      const editFormHtml = isBuiltIn && r.name === 'admin' ? '' : `
+        <div class="role-edit-form" style="display:none;background:var(--bg-elevated);border-radius:6px;padding:10px;flex-direction:column;gap:8px">
+          ${!isBuiltIn ? `<div style="display:flex;gap:8px;flex-wrap:wrap">
+            <input class="input role-edit-name" placeholder="Role name" style="flex:1;min-width:140px" value="${esc(r.name)}" />
+            <input class="input role-edit-desc" placeholder="Description" style="flex:2;min-width:200px" value="${esc(r.description || '')}" />
+          </div>` : ''}
+          <div class="role-edit-perms" style="display:grid;grid-template-columns:1fr 1fr;gap:4px 16px">
+            ${allPerms.map(p => `
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;user-select:none">
+                <input type="checkbox" value="${p.id}" ${r.permissions.find(rp => rp.id === p.id) ? 'checked' : ''} style="accent-color:var(--accent)" />
+                <span title="${esc(p.description || '')}">${esc(p.name)}</span>
+              </label>`).join('')}
+          </div>
+          <div class="role-edit-err" style="display:none;color:var(--red);font-size:12px"></div>
+          <div style="display:flex;gap:6px;justify-content:flex-end">
+            <button class="btn btn-secondary btn-sm role-edit-cancel" style="font-size:11px">Cancel</button>
+            <button class="btn btn-primary btn-sm role-edit-save" style="font-size:11px">Save</button>
+          </div>
+        </div>`;
+
+      return `
+        <div class="gh-token-row" data-role-id="${r.id}" data-role-name="${esc(r.name)}" data-builtin="${isBuiltIn}" style="flex-direction:column;align-items:stretch;gap:6px">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="color:var(--text-muted);flex-shrink:0"><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11"/></svg>
+            <span class="gh-token-row-label">${esc(r.name)}</span>
+            ${isBuiltIn ? `<span style="padding:1px 7px;border-radius:3px;font-size:10px;background:rgba(210,153,34,.15);color:#e3b341">built-in</span>` : ''}
+            ${r.description ? `<span style="font-size:12px;color:var(--text-muted)">${esc(r.description)}</span>` : ''}
+            <div style="margin-left:auto;display:flex;gap:6px">
+              ${r.name !== 'admin' ? `<button class="btn btn-secondary btn-sm role-edit-btn" style="padding:3px 8px;font-size:11px">Edit</button>` : ''}
+              ${!isBuiltIn ? `<button class="btn btn-danger btn-sm role-delete-btn" style="padding:3px 8px;font-size:11px">Delete</button>` : ''}
+            </div>
+          </div>
+          ${r.permissions.length ? `<div style="display:flex;flex-wrap:wrap;gap:4px;padding-left:20px">${permTags}</div>` : ''}
+          ${editFormHtml}
+        </div>`;
+    }).join('');
+
+    list.querySelectorAll('[data-role-id]').forEach(row => {
+      const roleId   = parseInt(row.dataset.roleId);
+      const roleName = row.dataset.roleName;
+      const isBuiltIn = row.dataset.builtin === 'true';
+      const form     = row.querySelector('.role-edit-form');
+
+      row.querySelector('.role-edit-btn')?.addEventListener('click', () => {
+        const isOpen = form.style.display === 'flex';
+        form.style.display = isOpen ? 'none' : 'flex';
+        if (!isOpen) row.querySelector('.role-edit-err').style.display = 'none';
+      });
+
+      row.querySelector('.role-edit-cancel')?.addEventListener('click', () => { form.style.display = 'none'; });
+
+      row.querySelector('.role-edit-save')?.addEventListener('click', async () => {
+        const nameEl = row.querySelector('.role-edit-name');
+        const descEl = row.querySelector('.role-edit-desc');
+        const permIds = [...row.querySelectorAll('.role-edit-perms input:checked')].map(c => parseInt(c.value));
+        const errEl  = row.querySelector('.role-edit-err');
+        const saveBtn = row.querySelector('.role-edit-save');
+        errEl.style.display = 'none';
+
+        const payload = { permission_ids: permIds };
+        if (nameEl) {
+          const newName = nameEl.value.trim();
+          if (newName.length < 2) { errEl.textContent = 'Name must be at least 2 characters'; errEl.style.display = 'block'; return; }
+          payload.name = newName;
+        }
+        if (descEl) payload.description = descEl.value.trim() || null;
+
+        saveBtn.disabled = true;
+        try {
+          await api.updateRole(roleId, payload);
+          _cachedRoles = null;
+          await renderRolesList(modal);
+          await populateRoleSelect(modal);
+          toast(`Role updated`);
+        } catch (e) {
+          errEl.textContent = e.message;
+          errEl.style.display = 'block';
+          saveBtn.disabled = false;
+        }
+      });
+
+      row.querySelector('.role-delete-btn')?.addEventListener('click', async () => {
+        if (!await confirm(`Delete role "${roleName}"?`, 'Users assigned to this role will lose it.')) return;
+        try {
+          await api.deleteRole(roleId);
+          _cachedRoles = null;
+          await renderRolesList(modal);
+          await populateRoleSelect(modal);
+          toast(`Role "${roleName}" deleted`);
         } catch (e) {
           toast(e.message, 'error');
         }

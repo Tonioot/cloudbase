@@ -1,6 +1,33 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, DateTime, Text, Boolean, ForeignKey, Float
+from sqlalchemy import Column, Integer, String, DateTime, Text, Boolean, ForeignKey, Float, Table
 from database import Base
+
+
+# Many-to-many: roles <-> permissions
+role_permissions = Table(
+    "role_permissions",
+    Base.metadata,
+    Column("role_id", Integer, ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True),
+    Column("permission_id", Integer, ForeignKey("permissions.id", ondelete="CASCADE"), primary_key=True),
+)
+
+
+class Permission(Base):
+    __tablename__ = "permissions"
+
+    id          = Column(Integer, primary_key=True, index=True)
+    name        = Column(String(80), unique=True, nullable=False, index=True)  # e.g. "apps.view"
+    description = Column(String(200), nullable=True)
+    created_at  = Column(DateTime, default=datetime.utcnow)
+
+
+class Role(Base):
+    __tablename__ = "roles"
+
+    id          = Column(Integer, primary_key=True, index=True)
+    name        = Column(String(50), unique=True, nullable=False, index=True)
+    description = Column(String(200), nullable=True)
+    created_at  = Column(DateTime, default=datetime.utcnow)
 
 
 class User(Base):
@@ -9,7 +36,8 @@ class User(Base):
     id           = Column(Integer, primary_key=True, index=True)
     username     = Column(String(50), unique=True, nullable=False, index=True)
     password_hash = Column(String, nullable=False)
-    role         = Column(String(10), nullable=False, default="viewer")  # "admin" or "viewer"
+    role         = Column(String(10), nullable=False, default="viewer")  # legacy, kept for JWT compat
+    role_id      = Column(Integer, ForeignKey("roles.id", ondelete="SET NULL"), nullable=True, index=True)
     created_at   = Column(DateTime, default=datetime.utcnow)
 
 

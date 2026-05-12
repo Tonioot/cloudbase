@@ -2,9 +2,10 @@
 Authentication module for Cloudbase.
 
 - Users are stored in the SQLite database with bcrypt-hashed passwords.
-- JWTs (HS256) carry username + role, expire after 1 hour.
+- JWTs (HS256) carry username + role_id, expire after 1 hour.
 - Tokens are delivered as httpOnly, SameSite=Strict cookies.
-- Roles: "admin" (full access) | "viewer" (read-only).
+- Authorization is permission-based: users have a Role, roles have Permissions.
+- The built-in "admin" user is the superadmin and always has full access.
 """
 
 import os
@@ -142,6 +143,33 @@ def decode_token(token: str) -> Optional[dict]:
     return {"username": username, "role": role}
 
 
+async def get_user_permissions(username: str) -> set[str]:
+    """Return the set of permission names for a user, loaded live from the DB."""
+    from database import AsyncSessionLocal
+    from models import User, Role, Permission, role_permissions
+    from sqlalchemy import select
+    try:
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(select(User).where(User.username == username))
+            user = result.scalar_one_or_none()
+            if user is None:
+                return set()
+            # Superadmin always has all permissions
+            if username == "admin":
+                res = await db.execute(select(Permission.name))
+                return {row[0] for row in res.fetchall()}
+            if user.role_id is None:
+                return set()
+            res = await db.execute(
+                select(Permission.name)
+                .join(role_permissions, Permission.id == role_permissions.c.permission_id)
+                .where(role_permissions.c.role_id == user.role_id)
+            )
+            return {row[0] for row in res.fetchall()}
+    except Exception:
+        return set()
+
+
 def get_token_expires_in(token: str) -> Optional[int]:
     """Return seconds remaining until token expires, or None if invalid."""
     payload = _decode_payload(token)
@@ -186,43 +214,77 @@ def require_auth(pdm_token: Optional[str] = Cookie(default=None)) -> dict:
     return user
 
 
-async def _get_db_role(username: str) -> Optional[str]:
-    """Look up the current role from the database (bypasses the JWT cache)."""
+async def _get_db_user(username: str):
+    """Return the live DB User object or None."""
     from database import AsyncSessionLocal
     from models import User
     from sqlalchemy import select
     try:
         async with AsyncSessionLocal() as db:
             result = await db.execute(select(User).where(User.username == username))
-            user = result.scalar_one_or_none()
-            return user.role if user else None
+            return result.scalar_one_or_none()
     except Exception:
         return None
 
 
 async def require_admin(pdm_token: Optional[str] = Cookie(default=None)) -> dict:
-    """Require admin role, validated live against the database so role changes take effect immediately."""
+    """Require the user to have the built-in superadmin account OR the 'roles.manage'/'users.manage' scope.
+    For backwards compatibility this still checks for full admin (all permissions)."""
     if not pdm_token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
     user = decode_token(pdm_token)
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-    # Always re-check role from DB so a downgraded admin can no longer act
-    db_role = await _get_db_role(user["username"])
-    if db_role is None:
+    db_user = await _get_db_user(user["username"])
+    if db_user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
-    if db_role != "admin":
+    # Superadmin always passes
+    if db_user.username == "admin":
+        return {**user, "role": db_user.role, "role_id": db_user.role_id, "permissions": None}
+    perms = await get_user_permissions(db_user.username)
+    # "admin" role means all permissions granted — check by seeing if system.manage is present
+    if "system.manage" not in perms:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
-    user["role"] = db_role
-    return user
+    return {**user, "role": db_user.role, "role_id": db_user.role_id, "permissions": perms}
 
 
 async def require_superadmin(pdm_token: Optional[str] = Cookie(default=None)) -> dict:
-    """Require the built-in 'admin' superuser account. Only this account may manage users."""
-    user = await require_admin(pdm_token)
-    if user.get("username") != "admin":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the superadmin account can manage users")
-    return user
+    """Require the built-in 'admin' superuser account. Only this account may manage users and roles."""
+    if not pdm_token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    user = decode_token(pdm_token)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    db_user = await _get_db_user(user["username"])
+    if db_user is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+    if db_user.username != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the superadmin account can manage users and roles")
+    return {**user, "role": db_user.role, "role_id": db_user.role_id, "permissions": None}
+
+
+def require_permission(permission: str):
+    """Return a FastAPI dependency that requires the user to have a specific permission."""
+    async def _dep(pdm_token: Optional[str] = Cookie(default=None)) -> dict:
+        if not pdm_token:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+        user = decode_token(pdm_token)
+        if not user:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+        db_user = await _get_db_user(user["username"])
+        if db_user is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+        # Superadmin bypasses all permission checks
+        if db_user.username == "admin":
+            return {**user, "role": db_user.role, "role_id": db_user.role_id, "permissions": None}
+        perms = await get_user_permissions(db_user.username)
+        if permission not in perms:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Permission '{permission}' required",
+            )
+        return {**user, "role": db_user.role, "role_id": db_user.role_id, "permissions": perms}
+    return _dep
 
 
 def get_current_actor(pdm_token: Optional[str] = Cookie(default=None)) -> str:

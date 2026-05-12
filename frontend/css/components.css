@@ -343,6 +343,7 @@
 .dialog-title { font-size: 16px; font-weight: 700; margin-bottom: 8px; display:flex; align-items:center; }
 .dialog-body  { color: var(--text-secondary); font-size: 13px; margin-bottom: 24px; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 10px; }
+.tab-btn.active-tab { background: var(--accent-dark); color: var(--accent); border-color: var(--accent-dark); }
 
 .nginx-dialog { max-width: 700px; width: 95%; max-height: 90vh; display: flex; flex-direction: column; }
 .nginx-dialog .dialog-body { flex: 1; min-height: 0; margin-bottom: 0; overflow: hidden; display: flex; flex-direction: column; }

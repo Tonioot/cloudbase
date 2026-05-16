@@ -899,6 +899,17 @@ async def list_users(_user: dict = Depends(auth.require_superadmin), db: AsyncSe
     users = result.scalars().all()
     out = []
     for u in users:
+        # The Root account has no assignable role — it always has full access
+        if u.username == "admin":
+            out.append({
+                "id": u.id,
+                "username": u.username,
+                "role": "Root",
+                "role_id": None,
+                "is_root": True,
+                "created_at": u.created_at.isoformat() if u.created_at else None,
+            })
+            continue
         role_name = u.role
         if u.role_id:
             role_res = await db.execute(select(Role).where(Role.id == u.role_id))
@@ -910,6 +921,7 @@ async def list_users(_user: dict = Depends(auth.require_superadmin), db: AsyncSe
             "username": u.username,
             "role": role_name,
             "role_id": u.role_id,
+            "is_root": False,
             "created_at": u.created_at.isoformat() if u.created_at else None,
         })
     return out

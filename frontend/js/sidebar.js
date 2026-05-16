@@ -840,13 +840,17 @@ function _applyPermVisibility(root = document) {
 async function initRoleBasedUI() {
   try {
     const data = await api.checkAuth();
+    console.log('[role-init] auth.check response:', data);
+    // Accept both new (is_root) and legacy (is_superadmin) backend response shapes
+    const isRoot = !!(data.is_root || data.is_superadmin);
+    console.log('[role-init] isRoot =', isRoot);
     document.body.dataset.role = data.role;
     document.body.dataset.permissions = JSON.stringify(data.permissions || []);
     window.dispatchEvent(new CustomEvent('cloudbase-role-ready', { detail: { role: data.role, permissions: data.permissions || [] } }));
 
     const perms = new Set(data.permissions || []);
 
-    if (!data.is_root) {
+    if (!isRoot) {
       // Build the set of permissions the user LACKS — used to hide data-perm elements
       const ALL_KNOWN_PERMS = [
         'apps.view','apps.manage','apps.create',
@@ -881,14 +885,17 @@ async function initRoleBasedUI() {
       }
     }
 
-    if (data.is_root) {
+    if (isRoot) {
       const btn = document.getElementById('btn-manage-users');
+      console.log('[role-init] showing manage-users btn, found:', !!btn);
       if (btn) {
         btn.style.display = '';
         btn.addEventListener('click', () => openManageUsersModal());
       }
     }
-  } catch {}
+  } catch (err) {
+    console.error('[role-init] failed:', err);
+  }
 }
 
 // ── Users & Roles management (superadmin only) ────────────────────────────────

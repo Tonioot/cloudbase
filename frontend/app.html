@@ -52,19 +52,19 @@
     </div>
 
     <div class="sidebar-footer">
-      <button class="sidebar-footer-btn" id="btn-github-tokens" data-admin>
+      <button class="sidebar-footer-btn" id="btn-github-tokens" data-perm="tokens.manage">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
         GitHub Tokens
       </button>
-      <button class="sidebar-footer-btn" id="btn-export-import" data-admin>
+      <button class="sidebar-footer-btn" id="btn-export-import" data-perm="apps.manage">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
         Export / Import Apps
       </button>
-      <button class="sidebar-footer-btn" id="btn-pdm-nginx" data-admin>
+      <button class="sidebar-footer-btn" id="btn-pdm-nginx" data-perm="system.manage">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
         Cloudbase Domain &amp; SSL
       </button>
-      <button class="sidebar-footer-btn" id="btn-system-settings" data-admin>
+      <button class="sidebar-footer-btn" id="btn-system-settings" data-perm="system.manage">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
         System Settings
       </button>
@@ -112,28 +112,28 @@
         </div>
 
         <div class="detail-actions">
-          <button class="btn btn-success" id="btn-start" data-admin>
+          <button class="btn btn-success" id="btn-start" data-perm="apps.create">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
             Start
           </button>
-          <button class="btn btn-danger" id="btn-stop" data-admin>
+          <button class="btn btn-danger" id="btn-stop" data-perm="apps.create">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
             Stop
           </button>
-          <button class="btn btn-secondary" id="btn-restart" data-admin>
+          <button class="btn btn-secondary" id="btn-restart" data-perm="apps.create">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
             Restart
           </button>
-          <button class="btn btn-primary" id="btn-zero-downtime" data-admin style="display:none" title="Builds new image per instance, health checks, then atomically swaps nginx — no downtime">
+          <button class="btn btn-primary" id="btn-zero-downtime" data-perm="apps.create" style="display:none" title="Builds new image per instance, health checks, then atomically swaps nginx — no downtime">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
             Rolling Restart
           </button>
-          <div class="detail-actions-sep" data-admin></div>
-          <button class="btn btn-mode" id="btn-maintenance-mode" data-admin title="Toggle downtime mode — serves the custom downtime page via nginx">
+          <div class="detail-actions-sep" data-perm="apps.manage"></div>
+          <button class="btn btn-mode" id="btn-maintenance-mode" data-perm="apps.manage" title="Toggle downtime mode — serves the custom downtime page via nginx">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
             Downtime
           </button>
-          <button class="btn btn-mode" id="btn-update-mode" data-admin title="Toggle update mode — serves the custom update page via nginx">
+          <button class="btn btn-mode" id="btn-update-mode" data-perm="apps.manage" title="Toggle update mode — serves the custom update page via nginx">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/></svg>
             Update Mode
           </button>
@@ -335,7 +335,7 @@
           <div class="settings-bar">
             <span class="settings-bar-title">Application Settings</span>
             <div style="display:flex;gap:8px;align-items:center">
-              <button class="btn btn-primary btn-sm" id="btn-save" data-admin>
+              <button class="btn btn-primary btn-sm" id="btn-save" data-perm="apps.manage">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17,21 17,13 7,13 7,21"/><polyline points="7,3 7,8 15,8"/></svg>
                 Save Changes
               </button>
@@ -544,14 +544,14 @@
             </div>
 
             <!-- Actions -->
-            <div class="settings-group" data-admin>
+            <div class="settings-group" data-perm="apps.create">
               <div class="settings-group-hd">
                 <div class="settings-group-title">Actions</div>
                 <div class="settings-group-sub">Repository and deployment operations</div>
               </div>
               <div class="settings-group-bd">
                 <div class="action-grid">
-                  <button class="action-tile" id="tile-pull" data-admin>
+                  <button class="action-tile" id="tile-pull" data-perm="apps.create">
                     <div class="action-tile-icon">
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><line x1="6" y1="9" x2="6" y2="21"/></svg>
                     </div>
@@ -560,7 +560,7 @@
                       <div class="action-tile-sub" id="tile-pull-sub">Fetch updates from repository</div>
                     </div>
                   </button>
-                  <button class="action-tile" id="tile-nginx" data-admin>
+                  <button class="action-tile" id="tile-nginx" data-perm="apps.manage">
                     <div class="action-tile-icon">
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
                     </div>
@@ -574,7 +574,7 @@
             </div>
 
             <!-- Maintenance Pages -->
-            <div class="settings-group" id="maintenance-pages-section" data-admin>
+            <div class="settings-group" id="maintenance-pages-section" data-perm="apps.manage">
               <div class="settings-group-hd">
                 <div class="settings-group-title">Maintenance Pages</div>
                 <div class="settings-group-sub">Static pages served by nginx — visible even when the app is offline</div>
@@ -585,22 +585,22 @@
               </div>
               <div class="settings-group-bd">
                 <div class="maint-row-actions" style="flex-wrap:wrap">
-                  <button class="btn btn-secondary btn-sm maint-row-btn maint-row-btn--red" id="btn-open-downtime-modal" title="Edit Downtime Page" data-admin>
+                  <button class="btn btn-secondary btn-sm maint-row-btn maint-row-btn--red" id="btn-open-downtime-modal" title="Edit Downtime Page" data-perm="apps.manage">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
                     <span>Downtime</span>
                     <span id="maint-downtime-badge" class="maint-row-badge maint-badge--off">Off</span>
                   </button>
-                  <button class="btn btn-secondary btn-sm maint-row-btn maint-row-btn--orange" id="btn-open-update-modal" title="Edit Update Page" data-admin>
+                  <button class="btn btn-secondary btn-sm maint-row-btn maint-row-btn--orange" id="btn-open-update-modal" title="Edit Update Page" data-perm="apps.manage">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
                     <span>Update</span>
                     <span id="maint-update-badge" class="maint-row-badge maint-badge--off">Off</span>
                   </button>
-                  <button class="btn btn-secondary btn-sm maint-row-btn maint-row-btn--blue" id="btn-open-restart-modal" title="Edit Restart Page" data-admin>
+                  <button class="btn btn-secondary btn-sm maint-row-btn maint-row-btn--blue" id="btn-open-restart-modal" title="Edit Restart Page" data-perm="apps.manage">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
                     <span>Restart</span>
                     <span id="maint-restart-badge" class="maint-row-badge maint-badge--off">Auto</span>
                   </button>
-                  <button class="btn btn-secondary btn-sm maint-row-btn maint-row-btn--blue" id="btn-open-starting-modal" title="Edit Starting Page" data-admin>
+                  <button class="btn btn-secondary btn-sm maint-row-btn maint-row-btn--blue" id="btn-open-starting-modal" title="Edit Starting Page" data-perm="apps.manage">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
                     <span>Starting</span>
                     <span id="maint-starting-badge" class="maint-row-badge maint-badge--off">Auto</span>
@@ -610,7 +610,7 @@
             </div>
 
             <!-- Danger Zone -->
-            <div class="settings-group settings-group--danger" data-admin>
+            <div class="settings-group settings-group--danger" data-perm="apps.manage">
               <div class="settings-group-hd">
                 <div class="settings-group-title">Danger Zone</div>
                 <div class="settings-group-sub">Irreversible and destructive actions</div>
@@ -621,7 +621,7 @@
                     <div class="title">Delete Application</div>
                     <div class="sub">Permanently remove this app and all its files</div>
                   </div>
-                  <button class="btn btn-danger" id="btn-delete" data-admin>
+                  <button class="btn btn-danger" id="btn-delete" data-perm="apps.manage">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="3,6 5,6 21,6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
                     Delete
                   </button>
@@ -644,7 +644,7 @@
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
                 Refresh
               </button>
-              <button class="btn btn-primary btn-sm" id="btn-add-instance" data-admin>
+              <button class="btn btn-primary btn-sm" id="btn-add-instance" data-perm="apps.manage">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                 Add Instance
               </button>

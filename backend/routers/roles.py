@@ -1,7 +1,7 @@
 """
 Roles and permissions management API.
 
-Only the superadmin (username="admin") can create/edit/delete roles.
+Only the Root account (username="admin") can create/edit/delete roles.
 All authenticated users can read roles and permissions (for UI display).
 """
 
@@ -95,8 +95,8 @@ async def create_role(
     name = req.name.strip()
     if len(name) < 2:
         raise HTTPException(status_code=400, detail="Role name must be at least 2 characters")
-    if name in ("admin", "viewer"):
-        raise HTTPException(status_code=400, detail="Cannot create a role named 'admin' or 'viewer' (reserved)")
+    if name in ("Administrator", "Viewer"):
+        raise HTTPException(status_code=400, detail="Cannot create a role named 'Administrator' or 'Viewer' (reserved)")
     existing = await db.execute(select(Role).where(Role.name == name))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Role name already exists")
@@ -141,8 +141,8 @@ async def update_role(
         new_name = req.name.strip()
         if len(new_name) < 2:
             raise HTTPException(status_code=400, detail="Role name must be at least 2 characters")
-        if role.name in ("admin", "viewer") and new_name != role.name:
-            raise HTTPException(status_code=400, detail="Cannot rename built-in roles 'admin' or 'viewer'")
+        if role.name in ("Administrator", "Viewer") and new_name != role.name:
+            raise HTTPException(status_code=400, detail="Cannot rename built-in roles 'Administrator' or 'Viewer'")
         existing = await db.execute(select(Role).where(Role.name == new_name, Role.id != role_id))
         if existing.scalar_one_or_none():
             raise HTTPException(status_code=409, detail="Role name already exists")
@@ -153,8 +153,8 @@ async def update_role(
         role.description = req.description
 
     if req.permission_ids is not None:
-        if role.name == "admin":
-            raise HTTPException(status_code=400, detail="Cannot change permissions of the built-in 'admin' role")
+        if role.name == "Administrator":
+            raise HTTPException(status_code=400, detail="Cannot change permissions of the built-in 'Administrator' role")
         # Replace all permissions
         await db.execute(delete(role_permissions).where(role_permissions.c.role_id == role_id))
         for pid in req.permission_ids:
@@ -179,8 +179,8 @@ async def delete_role(
     role = result.scalar_one_or_none()
     if not role:
         raise HTTPException(status_code=404, detail="Role not found")
-    if role.name in ("admin", "viewer"):
-        raise HTTPException(status_code=400, detail="Cannot delete built-in roles 'admin' or 'viewer'")
+    if role.name in ("Administrator", "Viewer"):
+        raise HTTPException(status_code=400, detail="Cannot delete built-in roles 'Administrator' or 'Viewer'")
 
     # Check if any users have this role
     users_res = await db.execute(select(User).where(User.role_id == role_id))

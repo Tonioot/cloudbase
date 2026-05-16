@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import auth
 from database import get_db
 from models import AuditLog
 
@@ -14,6 +15,7 @@ router = APIRouter(prefix="/api/audit-log", tags=["audit"])
 async def get_audit_log(
     limit: int = Query(100, ge=1, le=500),
     app_id: int = Query(None),
+    _user: dict = Depends(auth.require_permission("audit.view")),
     db: AsyncSession = Depends(get_db),
 ):
     query = select(AuditLog).order_by(desc(AuditLog.timestamp)).limit(limit)

@@ -744,7 +744,7 @@ async def list_nodes(db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/invites")
-async def create_invite(req: InviteRequest, db: AsyncSession = Depends(get_db)):
+async def create_invite(req: InviteRequest, _user: dict = Depends(_auth.require_permission("nodes.add")), db: AsyncSession = Depends(get_db)):
     code = secrets.token_urlsafe(24)
     invite = NodeInvite(
         code=code,
@@ -1342,7 +1342,7 @@ async def mark_stale_nodes_offline(db: AsyncSession) -> None:
 # --- New endpoints ---
 
 @router.post("/{node_id}/ping")
-async def ping_node(node_id: int, db: AsyncSession = Depends(get_db)):
+async def ping_node(node_id: int, _user: dict = Depends(_auth.require_permission("nodes.view")), db: AsyncSession = Depends(get_db)):
     node = await get_node_or_404(node_id, db)
 
     if node.is_local:

@@ -5,7 +5,7 @@ Authentication module for Cloudbase.
 - JWTs (HS256) carry username + role_id, expire after 1 hour.
 - Tokens are delivered as httpOnly, SameSite=Strict cookies.
 - Authorization is permission-based: users have a Role, roles have Permissions.
-- The built-in "admin" user is the superadmin and always has full access.
+- The built-in "admin" user is the Root account and always has full access.
 """
 
 import os

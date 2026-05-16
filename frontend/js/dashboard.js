@@ -194,7 +194,7 @@ function nodeCardHTML(n) {
   const agentVersion = n.agent_version ? ` · v${n.agent_version}` : '';
 
   const deleteBtn = n.is_local ? '' : `
-    <button class="btn btn-sm btn-danger node-card-action-btn" data-admin
+    <button class="btn btn-sm btn-danger node-card-action-btn" data-perm="nodes.manage"
       data-node-delete="${n.id}" data-node-name="${n.name}"
       title="Remove node" style="padding:4px 8px">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
@@ -441,10 +441,10 @@ function appCardHTML(app) {
   const isRunning = app.status === 'running';
 
   const primaryBtn = `
-    <button class="btn btn-success btn-sm btn-start" data-admin
+    <button class="btn btn-success btn-sm btn-start" data-perm="apps.create"
       ${isRunning || busy ? 'disabled' : ''}
       style="opacity:${isRunning ? '.4' : '1'}">${icon.play} Start</button>
-    <button class="btn btn-danger btn-sm btn-stop" data-admin
+    <button class="btn btn-danger btn-sm btn-stop" data-perm="apps.create"
       ${!isRunning || busy ? 'disabled' : ''}
       style="opacity:${!isRunning ? '.4' : '1'}">${icon.stop} Stop</button>`;
 
@@ -471,7 +471,7 @@ function appCardHTML(app) {
 
       <div class="app-card-actions">
         ${primaryBtn}
-        <button class="btn btn-secondary btn-sm btn-icon btn-restart" data-admin ${busy ? 'disabled' : ''} title="Restart">${icon.restart}</button>
+        <button class="btn btn-secondary btn-sm btn-icon btn-restart" data-perm="apps.create" ${busy ? 'disabled' : ''} title="Restart">${icon.restart}</button>
       </div>
     </div>`;
 }

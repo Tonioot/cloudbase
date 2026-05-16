@@ -21,14 +21,17 @@ let statsTabActive = false;
 let lastStatStatus = null; // 'running' | 'stopped' | null (unknown/loading)
 let _settingsInitialized = false;
 
-function _isViewerRole() {
-  return (document.body.dataset.role || '').toLowerCase() === 'viewer';
+function _canManageApps() {
+  try {
+    const perms = JSON.parse(document.body.dataset.permissions || '[]');
+    return perms.includes('apps.manage');
+  } catch { return false; }
 }
 
 window.addEventListener('cloudbase-role-ready', (evt) => {
   if (!_settingsInitialized) return;
-  const role = String(evt?.detail?.role || '').toLowerCase();
-  if (role === 'viewer') _disableSettingsForViewer();
+  const perms = new Set(evt?.detail?.permissions || []);
+  if (!perms.has('apps.manage')) _disableSettingsForViewer();
   else _enableSettingsForEditor();
 });
 
@@ -50,7 +53,7 @@ function _updateNoWebVisibility(noWeb) {
   if (el('btn-maintenance-mode'))    el('btn-maintenance-mode').style.display = noWeb ? 'none' : '';
   if (el('btn-update-mode'))         el('btn-update-mode').style.display = noWeb ? 'none' : '';
   // separator between action buttons and mode buttons (hide when both mode buttons hidden)
-  const sep = document.querySelector('.detail-actions-sep[data-admin]');
+  const sep = document.querySelector('.detail-actions-sep[data-perm]');
   if (sep) sep.style.display = noWeb ? 'none' : '';
 }
 
@@ -1217,7 +1220,7 @@ async function initActivity() {
 }
 
 function initSettings() {
-  const isViewer = _isViewerRole();
+  const isViewer = !_canManageApps();
   _settingsInitialized = true;
 
   // Info rows

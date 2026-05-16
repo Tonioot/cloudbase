@@ -1037,7 +1037,7 @@ async def discover_app_certs(app_id: int, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/{app_id}/certs/upload")
-async def upload_app_cert(app_id: int, file: UploadFile = File(...), db: AsyncSession = Depends(get_db)):
+async def upload_app_cert(app_id: int, file: UploadFile = File(...), _user: dict = Depends(_auth.require_permission("apps.manage")), db: AsyncSession = Depends(get_db)):
     """Upload a cert/key file into the app's certs subfolder and return its path."""
     app = await _get_or_404(app_id, db)
 
@@ -1486,7 +1486,7 @@ async def delete_app(app_id: int, db: AsyncSession = Depends(get_db), actor: str
 
 
 @router.post("/export")
-async def export_apps(req: ExportRequest, db: AsyncSession = Depends(get_db)):
+async def export_apps(req: ExportRequest, _user: dict = Depends(_auth.require_permission("apps.manage")), db: AsyncSession = Depends(get_db)):
     query = select(Application)
     if req.app_ids:
         query = query.where(Application.id.in_(req.app_ids))
@@ -1530,7 +1530,7 @@ async def export_apps(req: ExportRequest, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/import")
-async def import_apps(req: ImportRequest, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
+async def import_apps(req: ImportRequest, background_tasks: BackgroundTasks, _user: dict = Depends(_auth.require_permission("apps.manage")), db: AsyncSession = Depends(get_db)):
     local_node = await ensure_local_node(db)
     
     imported_count = 0
@@ -3042,7 +3042,7 @@ _SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 
 
 @router.post("/{app_id}/pull/stream")
-async def git_pull_stream(app_id: int, payload: PullRequest | None = Body(default=None), db: AsyncSession = Depends(get_db)):
+async def git_pull_stream(app_id: int, payload: PullRequest | None = Body(default=None), _user: dict = Depends(_auth.require_permission("apps.create")), db: AsyncSession = Depends(get_db)):
     """Streaming SSE variant of git_pull. Each build log line is emitted as it happens."""
     app = await _get_or_404(app_id, db)
     target_commit = (payload.commit.strip() if payload and payload.commit else None)
@@ -3180,7 +3180,7 @@ async def git_pull_stream(app_id: int, payload: PullRequest | None = Body(defaul
 
 
 @router.post("/{app_id}/rebuild/stream")
-async def rebuild_docker_image_stream(app_id: int, db: AsyncSession = Depends(get_db)):
+async def rebuild_docker_image_stream(app_id: int, _user: dict = Depends(_auth.require_permission("apps.create")), db: AsyncSession = Depends(get_db)):
     """Streaming SSE variant of rebuild_docker_image."""
     app = await _get_or_404(app_id, db)
 
@@ -3282,7 +3282,7 @@ async def get_nginx_config(app_id: int, db: AsyncSession = Depends(get_db)):
 
 
 @router.put("/{app_id}/nginx-config")
-async def save_nginx_config(app_id: int, payload: dict, db: AsyncSession = Depends(get_db)):
+async def save_nginx_config(app_id: int, payload: dict, _user: dict = Depends(_auth.require_permission("apps.manage")), db: AsyncSession = Depends(get_db)):
     app = await _get_or_404(app_id, db)
 
     content = payload.get("content", "")
@@ -3565,6 +3565,7 @@ async def get_maintenance_pages(app_id: int, db: AsyncSession = Depends(get_db))
 async def save_maintenance_pages(
     app_id: int,
     req: MaintenanceSettings,
+    _user: dict = Depends(_auth.require_permission("apps.manage")),
     db: AsyncSession = Depends(get_db),
 ):
     app = await _get_or_404(app_id, db)
@@ -3629,7 +3630,7 @@ async def save_maintenance_pages(
 
 
 @router.post("/{app_id}/maintenance-mode/toggle")
-async def toggle_maintenance_mode(app_id: int, db: AsyncSession = Depends(get_db)):
+async def toggle_maintenance_mode(app_id: int, _user: dict = Depends(_auth.require_permission("apps.manage")), db: AsyncSession = Depends(get_db)):
     local_node = await ensure_local_node(db)
     app = await _get_or_404(app_id, db)
     previous_maintenance_mode = bool(app.maintenance_mode)
@@ -3660,7 +3661,7 @@ async def toggle_maintenance_mode(app_id: int, db: AsyncSession = Depends(get_db
 
 
 @router.post("/{app_id}/update-mode/toggle")
-async def toggle_update_mode(app_id: int, db: AsyncSession = Depends(get_db)):
+async def toggle_update_mode(app_id: int, _user: dict = Depends(_auth.require_permission("apps.manage")), db: AsyncSession = Depends(get_db)):
     local_node = await ensure_local_node(db)
     app = await _get_or_404(app_id, db)
     previous_maintenance_mode = bool(app.maintenance_mode)

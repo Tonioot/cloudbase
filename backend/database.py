@@ -184,21 +184,38 @@ async def init_db():
     # All known permissions in the system
     ALL_PERMISSIONS = [
         ("apps.view",         "View applications and their status"),
-        ("apps.manage",       "Create, edit and delete applications"),
-        ("apps.deploy",       "Deploy, start, stop and restart applications"),
+        ("apps.manage",       "Create, edit, configure and delete applications"),
+        ("apps.create",       "Deploy, start, stop and restart applications"),
         ("nodes.view",        "View nodes"),
-        ("nodes.manage",      "Add, edit and delete nodes"),
+        ("nodes.manage",      "Edit, enable, disable and delete nodes"),
+        ("nodes.add",         "Add new nodes and create node invites"),
         ("logs.view",         "View application logs"),
         ("stats.view",        "View application statistics"),
         ("system.view",       "View system settings"),
-        ("system.manage",     "Manage system settings and nginx config"),
-        ("users.manage",      "Create, edit and delete users (superadmin only)"),
-        ("roles.manage",      "Create, edit and delete roles (superadmin only)"),
+        ("system.manage",     "Manage system settings and nginx configuration"),
+        ("users.manage",      "Create, edit and delete users"),
+        ("roles.manage",      "Create, edit and delete roles"),
         ("audit.view",        "View audit logs"),
-        ("github.manage",     "Manage GitHub tokens"),
+        ("tokens.manage",     "Manage GitHub tokens"),
+    ]
+
+    # Rename stale permission names that may already exist in the database
+    _RENAMES = [
+        ("apps.deploy",   "apps.create"),
+        ("github.manage", "tokens.manage"),
     ]
 
     async with AsyncSessionLocal() as session:
+        # Apply renames before seeding so existing DBs stay consistent
+        for old_name, new_name in _RENAMES:
+            res = await session.execute(_select(Permission).where(Permission.name == old_name))
+            old_perm = res.scalar_one_or_none()
+            if old_perm is not None:
+                res2 = await session.execute(_select(Permission).where(Permission.name == new_name))
+                if res2.scalar_one_or_none() is None:
+                    old_perm.name = new_name
+        await session.commit()
+
         # Ensure all permissions exist
         perm_map: dict[str, int] = {}
         for pname, pdesc in ALL_PERMISSIONS:
@@ -208,15 +225,17 @@ async def init_db():
                 perm = Permission(name=pname, description=pdesc)
                 session.add(perm)
                 await session.flush()
+            else:
+                perm.description = pdesc  # keep descriptions up-to-date
             perm_map[pname] = perm.id
 
-        # Seed default roles: "viewer" (read-only) and "admin" (full access) if they don't exist
+        # Seed default roles: "Viewer" (read-only) and "Administrator" (full access) if they don't exist
         viewer_perms = ["apps.view", "nodes.view", "logs.view", "stats.view", "audit.view"]
         admin_perms  = [p for p, _ in ALL_PERMISSIONS]
 
         for role_name, role_desc, perms in [
-            ("viewer", "Read-only access", viewer_perms),
-            ("admin",  "Full access to all features", admin_perms),
+            ("Viewer",        "Read-only access to all resources", viewer_perms),
+            ("Administrator", "Full access to all features",       admin_perms),
         ]:
             res = await session.execute(_select(Role).where(Role.name == role_name))
             role_obj = res.scalar_one_or_none()
@@ -235,12 +254,12 @@ async def init_db():
         await session.commit()
 
         # Re-fetch role IDs after commit
-        res = await session.execute(_select(Role).where(Role.name == "admin"))
+        res = await session.execute(_select(Role).where(Role.name == "Administrator"))
         admin_role = res.scalar_one_or_none()
-        res = await session.execute(_select(Role).where(Role.name == "viewer"))
+        res = await session.execute(_select(Role).where(Role.name == "Viewer"))
         viewer_role = res.scalar_one_or_none()
 
-        # Seed admin user from legacy credentials file if no users exist yet
+        # Seed root user from legacy credentials file if no users exist yet
         existing = await session.execute(_select(User).limit(1))
         if existing.scalar_one_or_none() is None and _os.path.exists(_CREDENTIALS_FILE):
             with open(_CREDENTIALS_FILE) as _f:
@@ -249,7 +268,7 @@ async def init_db():
                 session.add(User(
                     username="admin",
                     password_hash=hashed,
-                    role="admin",
+                    role="Administrator",
                     role_id=admin_role.id if admin_role else None,
                 ))
                 await session.commit()
@@ -257,8 +276,10 @@ async def init_db():
             # Migrate existing users that have no role_id yet
             res = await session.execute(_select(User).where(User.role_id == None))  # noqa: E711
             for u in res.scalars().all():
-                if u.role == "admin":
+                if u.role in ("admin", "Administrator"):
                     u.role_id = admin_role.id if admin_role else None
+                    u.role = "Administrator"
                 else:
                     u.role_id = viewer_role.id if viewer_role else None
+                    u.role = "Viewer"
             await session.commit()

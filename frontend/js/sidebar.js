@@ -827,21 +827,52 @@ async function loadImportNodesList(modal) {
 }
 
 // ── Role-based UI ─────────────────────────────────────────────────────────────
+// Tracks which data-perm values should be hidden (used for dynamic DOM too)
+window._hiddenPerms = new Set();
+
+function _applyPermVisibility(root = document) {
+  if (!window._hiddenPerms.size) return;
+  root.querySelectorAll('[data-perm]').forEach(el => {
+    if (window._hiddenPerms.has(el.dataset.perm)) el.style.display = 'none';
+  });
+}
+
 async function initRoleBasedUI() {
   try {
     const data = await api.checkAuth();
     document.body.dataset.role = data.role;
-    // Store permissions on body for other scripts
     document.body.dataset.permissions = JSON.stringify(data.permissions || []);
     window.dispatchEvent(new CustomEvent('cloudbase-role-ready', { detail: { role: data.role, permissions: data.permissions || [] } }));
 
-    // Hide [data-perm="X"] elements if user lacks that permission
     const perms = new Set(data.permissions || []);
-    if (!data.is_superadmin) {
-      document.querySelectorAll('[data-perm]').forEach(el => {
-        if (!perms.has(el.dataset.perm)) el.style.display = 'none';
-      });
-      // Legacy support: hide [data-admin] for users without system.manage
+
+    if (!data.is_root) {
+      // Build the set of permissions the user LACKS — used to hide data-perm elements
+      const ALL_KNOWN_PERMS = [
+        'apps.view','apps.manage','apps.create',
+        'nodes.view','nodes.manage','nodes.add',
+        'logs.view','stats.view',
+        'system.view','system.manage',
+        'users.manage','roles.manage',
+        'audit.view','tokens.manage',
+      ];
+      ALL_KNOWN_PERMS.forEach(p => { if (!perms.has(p)) window._hiddenPerms.add(p); });
+
+      // Hide static data-perm elements now
+      _applyPermVisibility();
+
+      // Inject a CSS rule so dynamically rendered data-perm elements are also hidden
+      if (window._hiddenPerms.size) {
+        const selectors = [...window._hiddenPerms]
+          .map(p => `[data-perm="${p}"]`)
+          .join(',');
+        const s = document.createElement('style');
+        s.id = 'perm-hide-rules';
+        s.textContent = `${selectors}{display:none!important}`;
+        document.head.appendChild(s);
+      }
+
+      // Legacy: hide [data-admin] for users without system.manage
       if (!perms.has('system.manage')) {
         document.querySelectorAll('[data-admin]').forEach(el => { el.style.display = 'none'; });
         const s = document.createElement('style');
@@ -850,7 +881,7 @@ async function initRoleBasedUI() {
       }
     }
 
-    if (data.is_superadmin) {
+    if (data.is_root) {
       const btn = document.getElementById('btn-manage-users');
       if (btn) {
         btn.style.display = '';
@@ -873,7 +904,7 @@ async function loadPerms(force = false) {
   return _cachedPerms;
 }
 
-// ── Main modal skeleton ───────────────────────────────────────────────────────
+// ── Main modal — single page, two columns ─────────────────────────────────────
 function openManageUsersModal() {
   let modal = document.getElementById('mgr-modal');
   if (!modal) {
@@ -881,45 +912,50 @@ function openManageUsersModal() {
     modal.id = 'mgr-modal';
     modal.className = 'dialog-backdrop';
     modal.innerHTML = `
-      <div class="dialog dialog-modern mgr-shell" style="max-width:680px;width:96%;max-height:88vh;display:flex;flex-direction:column;padding:0;overflow:hidden">
+      <div class="dialog dialog-modern mgr-shell" style="max-width:900px;width:97%;max-height:90vh;display:flex;flex-direction:column;padding:0;overflow:hidden">
 
         <!-- Header -->
-        <div class="mgr-header">
+        <div class="mgr-header" style="padding-bottom:14px">
           <div class="mgr-title">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
             Users &amp; Roles
           </div>
-          <div class="mgr-tabs">
-            <button class="mgr-tab mgr-tab--active" data-tab="users">Users</button>
-            <button class="mgr-tab" data-tab="roles">Roles</button>
-          </div>
-          <button class="mgr-close" id="mgr-close" aria-label="Close">
+          <button class="mgr-close" id="mgr-close" aria-label="Close" style="margin-left:auto">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
         </div>
 
-        <!-- Body -->
-        <div class="mgr-body">
+        <!-- Two-column body -->
+        <div class="mgr-body mgr-body--split">
 
-          <!-- Users tab -->
-          <div class="mgr-pane" id="mgr-pane-users">
-            <div class="mgr-pane-toolbar">
-              <span class="mgr-pane-label">All users</span>
-              <button class="btn btn-primary mgr-new-btn" id="mgr-new-user-btn" style="font-size:12px;padding:5px 12px">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                New User
+          <!-- Left: Users -->
+          <div class="mgr-col">
+            <div class="mgr-col-header">
+              <div class="mgr-col-title">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                Users
+              </div>
+              <button class="mgr-col-action" id="mgr-new-user-btn">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                Add user
               </button>
             </div>
             <div id="mgr-users-list" class="mgr-list"></div>
           </div>
 
-          <!-- Roles tab -->
-          <div class="mgr-pane" id="mgr-pane-roles" style="display:none">
-            <div class="mgr-pane-toolbar">
-              <span class="mgr-pane-label">All roles</span>
-              <button class="btn btn-primary mgr-new-btn" id="mgr-new-role-btn" style="font-size:12px;padding:5px 12px">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                New Role
+          <!-- Divider -->
+          <div class="mgr-divider"></div>
+
+          <!-- Right: Roles -->
+          <div class="mgr-col">
+            <div class="mgr-col-header">
+              <div class="mgr-col-title">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11"/></svg>
+                Roles
+              </div>
+              <button class="mgr-col-action" id="mgr-new-role-btn">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                New role
               </button>
             </div>
             <div id="mgr-roles-list" class="mgr-list"></div>
@@ -931,24 +967,13 @@ function openManageUsersModal() {
 
     modal.querySelector('#mgr-close').onclick = () => { modal.style.display = 'none'; };
     modal.addEventListener('click', e => { if (e.target === modal) modal.style.display = 'none'; });
-
-    modal.querySelectorAll('.mgr-tab').forEach(tab => {
-      tab.addEventListener('click', () => {
-        modal.querySelectorAll('.mgr-tab').forEach(t => t.classList.remove('mgr-tab--active'));
-        tab.classList.add('mgr-tab--active');
-        const pane = tab.dataset.tab;
-        modal.querySelector('#mgr-pane-users').style.display = pane === 'users' ? 'flex' : 'none';
-        modal.querySelector('#mgr-pane-roles').style.display = pane === 'roles' ? 'flex' : 'none';
-        if (pane === 'roles') renderRolesList();
-      });
-    });
-
     modal.querySelector('#mgr-new-user-btn').addEventListener('click', () => openUserSubModal());
     modal.querySelector('#mgr-new-role-btn').addEventListener('click', () => openRoleSubModal());
   }
 
   modal.style.display = 'flex';
   renderUsersList();
+  renderRolesList();
 }
 
 // ── Render users list ─────────────────────────────────────────────────────────
@@ -961,8 +986,8 @@ async function renderUsersList() {
     if (!users.length) { list.innerHTML = '<div class="mgr-empty">No users yet.</div>'; return; }
     list.innerHTML = '';
     users.forEach(u => {
-      const isSuperadmin = u.username === 'admin';
-      const roleName = isSuperadmin ? 'superadmin' : (u.role || '—');
+      const isRoot = u.username === 'admin';
+      const roleName = isRoot ? 'Root' : (u.role || '—');
       const card = document.createElement('div');
       card.className = 'mgr-card';
       card.innerHTML = `
@@ -971,12 +996,12 @@ async function renderUsersList() {
           <div class="mgr-card-name">${esc(u.username)}</div>
           <div class="mgr-card-meta">${u.created_at ? 'Joined ' + new Date(u.created_at).toLocaleDateString() : ''}</div>
         </div>
-        <div class="mgr-card-badge ${isSuperadmin ? 'mgr-badge--gold' : 'mgr-badge--default'}">${esc(roleName)}</div>
+        <div class="mgr-card-badge ${isRoot ? 'mgr-badge--gold' : 'mgr-badge--default'}">${esc(roleName)}</div>
         <div class="mgr-card-actions">
-          ${isSuperadmin ? '' : `<button class="mgr-icon-btn mgr-edit-user" title="Edit user" data-id="${u.id}">
+          ${isRoot ? '' : `<button class="mgr-icon-btn mgr-edit-user" title="Edit user" data-id="${u.id}">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
           </button>`}
-          ${isSuperadmin ? '' : `<button class="mgr-icon-btn mgr-icon-btn--danger mgr-delete-user" title="Delete user" data-id="${u.id}" data-name="${esc(u.username)}">
+          ${isRoot ? '' : `<button class="mgr-icon-btn mgr-icon-btn--danger mgr-delete-user" title="Delete user" data-id="${u.id}" data-name="${esc(u.username)}">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
           </button>`}
         </div>`;
@@ -1001,7 +1026,7 @@ async function renderRolesList() {
   list.innerHTML = '<div class="mgr-loading">Loading…</div>';
   try {
     const [roles, allPerms] = await Promise.all([loadRoles(true), loadPerms()]);
-    const builtIn = new Set(['admin', 'viewer']);
+    const builtIn = new Set(['Administrator', 'Viewer']);
     if (!roles.length) { list.innerHTML = '<div class="mgr-empty">No roles yet.</div>'; return; }
     list.innerHTML = '';
     roles.forEach(r => {
@@ -1025,7 +1050,7 @@ async function renderRolesList() {
           </div>
         </div>
         <div class="mgr-card-actions">
-          ${r.name !== 'admin' ? `<button class="mgr-icon-btn mgr-edit-role" title="Edit role" data-id="${r.id}">
+          ${r.name !== 'Administrator' ? `<button class="mgr-icon-btn mgr-edit-role" title="Edit role" data-id="${r.id}">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
           </button>` : ''}
           ${!isBuiltIn ? `<button class="mgr-icon-btn mgr-icon-btn--danger mgr-delete-role" title="Delete role" data-id="${r.id}" data-name="${esc(r.name)}">
@@ -1138,7 +1163,7 @@ async function openUserSubModal(existingUser = null, roles = null) {
 async function openRoleSubModal(existingRole = null, allPerms = null) {
   const isEdit = !!existingRole;
   if (!allPerms) allPerms = await loadPerms();
-  const isBuiltIn = isEdit && ['admin', 'viewer'].includes(existingRole.name);
+  const isBuiltIn = isEdit && ['Administrator', 'Viewer'].includes(existingRole.name);
   const activePermIds = new Set(isEdit ? existingRole.permissions.map(p => p.id) : []);
 
   let sub = document.getElementById('mgr-role-sub');

@@ -691,8 +691,8 @@ _PUBLIC = {
     "/api/auth/check",
 }
 
-# Paths that require write-capable permissions (checked live against DB)
-# Mapping: path prefix -> minimum permission needed for non-GET mutations
+# Paths that require write-capable permissions (checked live against DB).
+# Order matters: more specific prefixes first.
 _PERMISSION_WRITE_MAP = (
     ("/api/apps",   "apps.manage"),
     ("/api/nodes",  "nodes.manage"),
@@ -700,6 +700,14 @@ _PERMISSION_WRITE_MAP = (
     ("/api/users",  "users.manage"),
     ("/api/roles",  "roles.manage"),
 )
+
+# Paths where the middleware check alone is insufficient — these POST/PUT/DELETE
+# endpoints fall inside a prefix handled by the middleware but need the correct
+# permission. We override per-path for the cases that deviate from the prefix default.
+_PERMISSION_OVERRIDES: dict[tuple[str, str], str] = {
+    # nodes.add — creating invites and registering nodes is separate from editing them
+    ("POST", "/api/nodes/invites"): "nodes.add",
+}
 
 
 class _AuthMiddleware(BaseHTTPMiddleware):
@@ -725,10 +733,13 @@ class _AuthMiddleware(BaseHTTPMiddleware):
                         return await call_next(request)
                     # For mutations, check that the user has the required permission live
                     if request.method not in ("GET", "HEAD", "OPTIONS"):
-                        required_perm = next(
-                            (perm for prefix, perm in _PERMISSION_WRITE_MAP if path.startswith(prefix)),
-                            None,
-                        )
+                        # Check per-path overrides first, then fall back to prefix map
+                        required_perm = _PERMISSION_OVERRIDES.get((request.method, path))
+                        if required_perm is None:
+                            required_perm = next(
+                                (perm for prefix, perm in _PERMISSION_WRITE_MAP if path.startswith(prefix)),
+                                None,
+                            )
                         if required_perm:
                             perms = await auth.get_user_permissions(user["username"])
                             if required_perm not in perms:
@@ -785,9 +796,9 @@ async def auth_check(request: Request, db: AsyncSession = Depends(get_db)):
     db_user = result.scalar_one_or_none()
     if not db_user:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    is_superadmin = db_user.username == "admin"
+    is_root = db_user.username == "admin"
     perms: list[str] = []
-    if is_superadmin:
+    if is_root:
         perm_res = await db.execute(select(Permission.name))
         perms = [row[0] for row in perm_res.fetchall()]
     elif db_user.role_id:
@@ -809,7 +820,7 @@ async def auth_check(request: Request, db: AsyncSession = Depends(get_db)):
         "username": db_user.username,
         "role": role_name,
         "role_id": db_user.role_id,
-        "is_superadmin": is_superadmin,
+        "is_root": is_root,
         "permissions": perms,
     }
 

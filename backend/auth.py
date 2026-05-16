@@ -293,3 +293,29 @@ def get_current_actor(pdm_token: Optional[str] = Cookie(default=None)) -> str:
         return "system"
     user = decode_token(pdm_token)
     return user["username"] if user else "system"
+
+
+async def authorize_websocket(websocket, required_permission: str | None = None) -> bool:
+    """
+    Validate a browser WebSocket connection's auth cookie and (optionally) a permission.
+    Returns True if allowed, False if the connection was rejected (with 1008 close).
+
+    Usage in a WS endpoint:
+        if not await authorize_websocket(websocket, "logs.view"):
+            return
+        await websocket.accept()
+    """
+    token = websocket.cookies.get(_COOKIE_NAME)
+    user = decode_token(token) if token else None
+    if not user:
+        await websocket.close(code=1008, reason="Not authenticated")
+        return False
+    # Root (built-in admin) bypasses permission checks
+    if user.get("username") == "admin":
+        return True
+    if required_permission is not None:
+        perms = await get_user_permissions(user["username"])
+        if required_permission not in perms:
+            await websocket.close(code=1008, reason="Permission denied")
+            return False
+    return True

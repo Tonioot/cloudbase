@@ -1594,6 +1594,8 @@ async def get_node_agent_logs(node_id: int, limit: int = 200, db: AsyncSession =
 @router.websocket("/{node_id}/events")
 async def node_events_ws(node_id: int, websocket: WebSocket):
     """Browser-facing WebSocket: streams command updates and node health events."""
+    if not await _auth.authorize_websocket(websocket, "nodes.view"):
+        return
     await websocket.accept()
     q = _subscribe_node_events(node_id)
     try:
@@ -1612,6 +1614,8 @@ async def node_events_ws(node_id: int, websocket: WebSocket):
 @router.websocket("/{node_id}/stats")
 async def node_stats_ws(node_id: int, websocket: WebSocket):
     """Browser-facing WebSocket: streams the remote node's system stats."""
+    if not await _auth.authorize_websocket(websocket, "stats.view"):
+        return
     await websocket.accept()
     agent_ws_conn = _node_ws_connections.get(node_id)
     if not agent_ws_conn:
@@ -1658,6 +1662,8 @@ async def node_stats_ws(node_id: int, websocket: WebSocket):
 @router.websocket("/{node_id}/commands/live")
 async def node_commands_live_ws(node_id: int, websocket: WebSocket, db: AsyncSession = Depends(get_db)):
     """Browser-facing WebSocket: streams live command queue updates."""
+    if not await _auth.authorize_websocket(websocket, "nodes.view"):
+        return
     await websocket.accept()
 
     # Send initial snapshot

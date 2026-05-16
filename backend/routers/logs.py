@@ -4,6 +4,7 @@ import logging
 import secrets
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, HTTPException, Query
 
+import auth
 from database import AsyncSessionLocal, get_db
 from models import Application, ApplicationReplica, Node
 from sqlalchemy import select
@@ -52,6 +53,8 @@ async def logs_tail(app_id: int, limit: int = Query(200, ge=1, le=2000), db: Asy
 
 @router.websocket("/ws/apps/{app_id}/logs")
 async def stream_logs(app_id: int, websocket: WebSocket):
+    if not await auth.authorize_websocket(websocket, "logs.view"):
+        return
     await websocket.accept()
 
     async with AsyncSessionLocal() as db:

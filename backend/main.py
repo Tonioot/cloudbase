@@ -691,60 +691,120 @@ _PUBLIC = {
     "/api/auth/check",
 }
 
-# Paths that require write-capable permissions (checked live against DB).
+# Permission prefix maps — checked live against DB.
 # Order matters: more specific prefixes first.
 _PERMISSION_WRITE_MAP = (
-    ("/api/apps",   "apps.manage"),
-    ("/api/nodes",  "nodes.manage"),
-    ("/api/system", "system.manage"),
-    ("/api/users",  "users.manage"),
-    ("/api/roles",  "roles.manage"),
+    ("/api/apps",      "apps.manage"),
+    ("/api/nodes",     "nodes.manage"),
+    ("/api/system",    "system.manage"),
+    ("/api/users",     "users.manage"),
+    ("/api/roles",     "roles.manage"),
+    ("/api/audit-log", "audit.view"),  # no write ops, but guard anyway
 )
 
-# Paths where the middleware check alone is insufficient — these POST/PUT/DELETE
-# endpoints fall inside a prefix handled by the middleware but need the correct
-# permission. We override per-path for the cases that deviate from the prefix default.
-_PERMISSION_OVERRIDES: dict[tuple[str, str], str] = {
-    # nodes.add — creating invites and registering nodes is separate from editing them
+_PERMISSION_READ_MAP = (
+    ("/api/apps",      "apps.view"),
+    ("/api/nodes",     "nodes.view"),
+    ("/api/system",    "system.view"),
+    ("/api/users",     "users.manage"),   # listing users is itself a privileged op
+    ("/api/roles",     "roles.manage"),   # listing roles too — except /api/roles/permissions
+    ("/api/audit-log", "audit.view"),
+)
+
+# Per-path overrides — used when the prefix default doesn't fit the endpoint's semantics.
+# Key: (METHOD, exact path or path-prefix to substring-match), value: permission.
+# Substring overrides (PREFIX_OVERRIDES) match if path starts with key path.
+_PERMISSION_EXACT_OVERRIDES: dict[tuple[str, str], str] = {
     ("POST", "/api/nodes/invites"): "nodes.add",
+    # /api/roles/permissions and /api/roles list are read by any authenticated user (UI needs it)
+    ("GET",  "/api/roles"): None,                  # any authenticated user
+    ("GET",  "/api/roles/permissions"): None,      # any authenticated user
 }
+
+_PERMISSION_PREFIX_OVERRIDES: tuple[tuple[str, str, str | None], ...] = (
+    # (METHOD, path prefix, required permission OR None to allow any authenticated user)
+    ("GET",    "/api/roles/",                "roles.manage"),    # individual role detail
+    ("GET",    "/api/apps/system/certs",     "apps.view"),       # cert discovery (under apps router)
+    # GitHub token endpoints — under /api/system but use tokens.manage instead
+    ("GET",    "/api/system/github-tokens",  "tokens.manage"),
+    ("POST",   "/api/system/github-tokens",  "tokens.manage"),
+    ("DELETE", "/api/system/github-tokens",  "tokens.manage"),
+)
+
+# Sub-path → permission overrides for /api/apps/* endpoints based on URL segments.
+# These run AFTER prefix matching and let us require fine-grained read perms
+# (logs.view, stats.view) for specific app sub-resources.
+def _resolve_apps_get_permission(path: str) -> str:
+    """For GET /api/apps/* paths, return the required permission."""
+    # /logs, /logs/tail, /replicas/*/logs → logs.view
+    if "/logs" in path:
+        return "logs.view"
+    # /stats, /stats-remote, /aggregate-stats, /stats/history → stats.view
+    if "/stats" in path or "stats-remote" in path or "stats-debug" in path:
+        return "stats.view"
+    # Everything else under /api/apps/ → apps.view
+    return "apps.view"
+
+
+def _resolve_required_permission(method: str, path: str) -> tuple[bool, str | None]:
+    """
+    Return (has_rule, required_permission).
+      has_rule=False  → no permission rule applies to this path (allow if authenticated)
+      has_rule=True, required_permission=None → explicitly allow any authenticated user
+      has_rule=True, required_permission="X"  → require permission X
+    """
+    # 1. Exact overrides
+    if (method, path) in _PERMISSION_EXACT_OVERRIDES:
+        return True, _PERMISSION_EXACT_OVERRIDES[(method, path)]
+
+    # 2. Prefix overrides
+    for m, prefix, perm in _PERMISSION_PREFIX_OVERRIDES:
+        if m == method and path.startswith(prefix) and perm is not None:
+            return True, perm
+
+    # 3. Method-based prefix maps
+    is_write = method not in ("GET", "HEAD", "OPTIONS")
+    table = _PERMISSION_WRITE_MAP if is_write else _PERMISSION_READ_MAP
+    for prefix, perm in table:
+        if path.startswith(prefix):
+            # Special-case GET /api/apps/* — resolve to fine-grained perm
+            if not is_write and prefix == "/api/apps":
+                return True, _resolve_apps_get_permission(path)
+            return True, perm
+
+    return False, None
 
 
 class _AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
+        method = request.method
+
+        # Node-agent endpoints use X-Node-Token / hello message auth — bypass cookie auth
         if path.startswith("/api/nodes/agent/") or path.startswith("/api/nodes/ws/agent"):
             return await call_next(request)
         if path in _PUBLIC:
             return await call_next(request)
-        # Browser-facing node WebSocket endpoints — auth checked via cookie below
-        if path.startswith("/api/nodes/") and any(path.endswith(s) for s in ("/events", "/stats", "/commands/live")):
-            token = request.cookies.get(_COOKIE_NAME)
-            if token and auth.decode_token(token):
-                return await call_next(request)
-            return JSONResponse({"detail": "Not authenticated"}, status_code=401)
+
+        # Note: WebSocket endpoints (/ws/*, /api/nodes/{id}/events|stats|commands/live, /api/nodes/ws/*)
+        # are NOT intercepted by BaseHTTPMiddleware — they use ASGI's "websocket" scope which bypasses
+        # HTTP middleware. Each WS endpoint must call `auth.authorize_websocket(...)` itself.
+
         if (path.startswith("/api/") and path not in _PUBLIC) or path.startswith("/ws/"):
             token = request.cookies.get(_COOKIE_NAME)
             if token:
                 user = auth.decode_token(token)
                 if user:
-                    # Superadmin bypasses permission checks entirely
+                    # Root (built-in admin) bypasses permission checks entirely
                     if user["username"] == "admin":
                         return await call_next(request)
-                    # For mutations, check that the user has the required permission live
-                    if request.method not in ("GET", "HEAD", "OPTIONS"):
-                        # Check per-path overrides first, then fall back to prefix map
-                        required_perm = _PERMISSION_OVERRIDES.get((request.method, path))
-                        if required_perm is None:
-                            required_perm = next(
-                                (perm for prefix, perm in _PERMISSION_WRITE_MAP if path.startswith(prefix)),
-                                None,
-                            )
-                        if required_perm:
-                            perms = await auth.get_user_permissions(user["username"])
-                            if required_perm not in perms:
-                                return JSONResponse({"detail": "Permission denied"}, status_code=403)
+                    has_rule, required_perm = _resolve_required_permission(method, path)
+                    if has_rule and required_perm is not None:
+                        perms = await auth.get_user_permissions(user["username"])
+                        if required_perm not in perms:
+                            return JSONResponse({"detail": "Permission denied"}, status_code=403)
                     return await call_next(request)
+
             # Allow node_agent.py running locally via X-Agent-Token header
             agent_token = request.headers.get("X-Agent-Token", "")
             if agent_token and auth.verify_agent_token(agent_token):
@@ -1040,7 +1100,7 @@ class CloudbaseNginxRequest(BaseModel):
 
 
 @app.get("/api/system/nginx-config")
-async def get_cloudbase_nginx(db: AsyncSession = Depends(get_db), _: dict = Depends(auth.require_admin)):
+async def get_cloudbase_nginx(db: AsyncSession = Depends(get_db), _: dict = Depends(auth.require_permission("system.view"))):
     config_path = os.path.join(nm.NGINX_SITES_DIR, "cloudbase")
     exists = os.path.exists(config_path)
     content = None
@@ -1062,7 +1122,7 @@ async def get_cloudbase_nginx(db: AsyncSession = Depends(get_db), _: dict = Depe
 async def apply_cloudbase_nginx(
     req: CloudbaseNginxRequest,
     db: AsyncSession = Depends(get_db),
-    _: dict = Depends(auth.require_admin),
+    _: dict = Depends(auth.require_permission("system.manage")),
 ):
     import re as _re2
     # --- Cloudbase panel nginx ---
@@ -1136,7 +1196,7 @@ async def apply_cloudbase_nginx(
 
 # ── System settings (ports, limits from config.yaml) ─────────────────────────
 @app.get("/api/system/settings", include_in_schema=False)
-async def get_system_settings(_: dict = Depends(auth.require_admin)):
+async def get_system_settings(_: dict = Depends(auth.require_permission("system.view"))):
     return {
         "auth": {
             "token_expire_seconds": _cfg.get_auth("token_expire_seconds"),
@@ -1160,7 +1220,7 @@ async def get_system_settings(_: dict = Depends(auth.require_admin)):
 @app.post("/api/system/settings", include_in_schema=False)
 async def save_system_settings(
     body: dict = Body(...),
-    _: dict = Depends(auth.require_admin),
+    _: dict = Depends(auth.require_permission("system.manage")),
 ):
     def _int(val, lo, hi, default):
         try:
@@ -1200,13 +1260,13 @@ async def save_system_settings(
 
 
 @app.post("/api/system/nginx-default-catchall")
-async def apply_nginx_default_catchall(_: dict = Depends(auth.require_admin)):
+async def apply_nginx_default_catchall(_: dict = Depends(auth.require_permission("system.manage"))):
     ok, msg = nm.write_default_catch_all()
     return {"ok": ok, "message": msg}
 
 
 @app.post("/api/system/certs/upload")
-async def upload_system_cert(file: UploadFile = File(...), _: dict = Depends(auth.require_admin)):
+async def upload_system_cert(file: UploadFile = File(...), _: dict = Depends(auth.require_permission("system.manage"))):
     allowed_exts = {".pem", ".crt", ".cer", ".key"}
     ext = os.path.splitext(file.filename or "")[1].lower()
     if ext not in allowed_exts:
@@ -1227,12 +1287,12 @@ class SaveTokenRequest(BaseModel):
 
 
 @app.get("/api/system/github-tokens")
-async def list_github_tokens(_: dict = Depends(auth.require_admin)):
+async def list_github_tokens(_: dict = Depends(auth.require_permission("tokens.manage"))):
     return token_vault.list_hints()
 
 
 @app.post("/api/system/github-tokens")
-async def save_github_token(req: SaveTokenRequest, _: dict = Depends(auth.require_admin)):
+async def save_github_token(req: SaveTokenRequest, _: dict = Depends(auth.require_permission("tokens.manage"))):
     if not req.label.strip():
         raise HTTPException(400, "Label is required")
     if not req.token.strip():
@@ -1242,7 +1302,7 @@ async def save_github_token(req: SaveTokenRequest, _: dict = Depends(auth.requir
 
 
 @app.delete("/api/system/github-tokens/{token_id}")
-async def delete_github_token(token_id: str, _: dict = Depends(auth.require_admin)):
+async def delete_github_token(token_id: str, _: dict = Depends(auth.require_permission("tokens.manage"))):
     token_vault.remove(token_id)
     return {"ok": True}
 
@@ -1251,7 +1311,7 @@ async def delete_github_token(token_id: str, _: dict = Depends(auth.require_admi
 
 
 @app.get("/api/system/debug-log")
-async def get_debug_log(lines: int = 200, _: dict = Depends(auth.require_admin)):
+async def get_debug_log(lines: int = 200, _: dict = Depends(auth.require_permission("system.view"))):
     try:
         with open(pm.DEBUG_LOG_PATH) as f:
             all_lines = f.readlines()
@@ -1261,7 +1321,7 @@ async def get_debug_log(lines: int = 200, _: dict = Depends(auth.require_admin))
 
 
 @app.get("/api/system/logs")
-async def get_server_logs(lines: int = 500, _: dict = Depends(auth.require_admin)):
+async def get_server_logs(lines: int = 500, _: dict = Depends(auth.require_permission("system.view"))):
     try:
         with open(_LOG_FILE, encoding="utf-8") as f:
             all_lines = f.readlines()
@@ -1274,6 +1334,8 @@ from fastapi import WebSocket as _WS, WebSocketDisconnect as _WSD
 
 @app.websocket("/ws/system/server-logs")
 async def stream_server_logs(websocket: _WS):
+    if not await auth.authorize_websocket(websocket, "system.view"):
+        return
     await websocket.accept()
     try:
         # Send existing lines first
@@ -1333,7 +1395,7 @@ async def preview_app(
     path: str,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    _user: dict = Depends(auth.require_admin),
+    _user: dict = Depends(auth.require_permission("apps.view")),
 ):
     """Reverse-proxy to a running app instance — no domain required."""
     from models import ApplicationReplica

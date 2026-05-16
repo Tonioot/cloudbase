@@ -9,6 +9,7 @@ import psutil
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 
+import auth
 import process_manager as pm
 from database import AsyncSessionLocal
 from models import Application, ApplicationReplica, Node
@@ -141,6 +142,8 @@ async def _open_remote_stream(node: Node, app_id: int, app_name: str, out_q: asy
 
 @router.websocket("/ws/apps/{app_id}/stats")
 async def stream_stats(app_id: int, websocket: WebSocket):
+    if not await auth.authorize_websocket(websocket, "stats.view"):
+        return
     await websocket.accept()
 
     async with AsyncSessionLocal() as db:
@@ -303,6 +306,8 @@ async def _get_app_node(app: Application, db, local_node: Node) -> Node:
 
 @router.websocket("/ws/system/stats")
 async def stream_system_stats(websocket: WebSocket):
+    if not await auth.authorize_websocket(websocket, "stats.view"):
+        return
     await websocket.accept()
     try:
         # Replay history so charts populate immediately on connect

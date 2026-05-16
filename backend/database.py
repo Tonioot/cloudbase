@@ -229,7 +229,10 @@ async def init_db():
                 perm.description = pdesc  # keep descriptions up-to-date
             perm_map[pname] = perm.id
 
-        # Seed default roles: "Viewer" (read-only) and "Administrator" (full access) if they don't exist
+        # Seed built-in roles: "Viewer" (read-only) and "Administrator" (full access).
+        # Built-in roles are reset to their canonical permission set on every startup
+        # so they cannot drift from the source of truth.
+        from sqlalchemy import delete as _delete
         viewer_perms = ["apps.view", "nodes.view", "logs.view", "stats.view", "audit.view"]
         admin_perms  = [p for p, _ in ALL_PERMISSIONS]
 
@@ -243,13 +246,16 @@ async def init_db():
                 role_obj = Role(name=role_name, description=role_desc)
                 session.add(role_obj)
                 await session.flush()
-                # Assign permissions via raw insert (avoid ORM relationship overhead)
-                for pname in perms:
-                    pid = perm_map.get(pname)
-                    if pid:
-                        await session.execute(
-                            role_permissions.insert().values(role_id=role_obj.id, permission_id=pid)
-                        )
+            else:
+                role_obj.description = role_desc  # keep description up-to-date
+            # Re-sync permissions to canonical set
+            await session.execute(_delete(role_permissions).where(role_permissions.c.role_id == role_obj.id))
+            for pname in perms:
+                pid = perm_map.get(pname)
+                if pid:
+                    await session.execute(
+                        role_permissions.insert().values(role_id=role_obj.id, permission_id=pid)
+                    )
 
         await session.commit()
 
@@ -268,14 +274,16 @@ async def init_db():
                 session.add(User(
                     username="admin",
                     password_hash=hashed,
-                    role="Administrator",
-                    role_id=admin_role.id if admin_role else None,
+                    role="Root",
+                    role_id=None,  # Root has no role — full access is inherent
                 ))
                 await session.commit()
         else:
             # Migrate existing users that have no role_id yet
             res = await session.execute(_select(User).where(User.role_id == None))  # noqa: E711
             for u in res.scalars().all():
+                if u.username == "admin":
+                    continue  # root has no role
                 if u.role in ("admin", "Administrator"):
                     u.role_id = admin_role.id if admin_role else None
                     u.role = "Administrator"
@@ -283,3 +291,17 @@ async def init_db():
                     u.role_id = viewer_role.id if viewer_role else None
                     u.role = "Viewer"
             await session.commit()
+
+        # Always strip any role assignment from the root account — it always has full access
+        res = await session.execute(_select(User).where(User.username == "admin"))
+        root_user = res.scalar_one_or_none()
+        if root_user is not None:
+            changed = False
+            if root_user.role_id is not None:
+                root_user.role_id = None
+                changed = True
+            if root_user.role != "Root":
+                root_user.role = "Root"
+                changed = True
+            if changed:
+                await session.commit()

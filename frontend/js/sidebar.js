@@ -1056,9 +1056,11 @@ async function renderRolesList() {
             ${permCount} / ${totalPerms}
           </span>
           <div class="mgr-role-tile-actions">
-            ${r.name !== 'Administrator' ? `<button class="mgr-icon-btn mgr-icon-btn--xs mgr-edit-role" title="Edit role">
+            ${!isBuiltIn ? `<button class="mgr-icon-btn mgr-icon-btn--xs mgr-edit-role" title="Edit role">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-            </button>` : ''}
+            </button>` : `<button class="mgr-icon-btn mgr-icon-btn--xs mgr-view-role" title="View permissions">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            </button>`}
             ${!isBuiltIn ? `<button class="mgr-icon-btn mgr-icon-btn--xs mgr-icon-btn--danger mgr-delete-role" title="Delete role">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
             </button>` : ''}
@@ -1066,14 +1068,16 @@ async function renderRolesList() {
         </div>`;
       list.appendChild(tile);
 
-      // Whole tile is clickable to edit (for non-built-in admin)
-      if (r.name !== 'Administrator') {
-        tile.addEventListener('click', (e) => {
-          if (e.target.closest('.mgr-icon-btn')) return; // let action buttons handle their own
-          openRoleSubModal(r, allPerms);
-        });
-      }
+      // Whole tile is clickable — opens edit (or view-only for built-in roles)
+      tile.addEventListener('click', (e) => {
+        if (e.target.closest('.mgr-icon-btn')) return; // let action buttons handle their own
+        openRoleSubModal(r, allPerms);
+      });
       tile.querySelector('.mgr-edit-role')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openRoleSubModal(r, allPerms);
+      });
+      tile.querySelector('.mgr-view-role')?.addEventListener('click', (e) => {
         e.stopPropagation();
         openRoleSubModal(r, allPerms);
       });
@@ -1189,10 +1193,14 @@ async function openRoleSubModal(existingRole = null, allPerms = null) {
   sub = document.createElement('div');
   sub.id = 'mgr-role-sub';
   sub.className = 'dialog-backdrop mgr-sub-backdrop';
+  const title = isEdit
+    ? (isBuiltIn ? `View ${esc(existingRole.name)}` : 'Edit Role')
+    : 'Create New Role';
+
   sub.innerHTML = `
     <div class="dialog dialog-modern mgr-sub" style="max-width:500px;width:94%">
       <div class="mgr-sub-header">
-        <span>${isEdit ? 'Edit Role' : 'Create New Role'}</span>
+        <span>${title}</span>
         <button class="mgr-close mgr-sub-close" aria-label="Close">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
@@ -1207,12 +1215,13 @@ async function openRoleSubModal(existingRole = null, allPerms = null) {
           <label class="mgr-label">Description <span style="color:var(--text-muted);font-weight:400">(optional)</span></label>
           <input class="input" id="sub-role-desc" placeholder="What can this role do?" value="${isEdit ? esc(existingRole.description || '') : ''}" />
         </div>` : `
-        <div class="mgr-field">
-          <p style="margin:0;font-size:13px;color:var(--text-secondary)">Built-in role <strong>${esc(existingRole.name)}</strong> — name and description cannot be changed.</p>
+        <div class="mgr-builtin-notice">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          <span>Built-in role — name, description and permissions cannot be changed.</span>
         </div>`}
         <div class="mgr-field">
-          <label class="mgr-label">Permissions <span style="color:var(--text-muted);font-weight:400">(click to toggle)</span></label>
-          <div class="mgr-perm-pills" id="sub-role-pills">
+          <label class="mgr-label">Permissions ${isBuiltIn ? '' : '<span style="color:var(--text-muted);font-weight:400">(click to toggle)</span>'}</label>
+          <div class="mgr-perm-pills ${isBuiltIn ? 'mgr-perm-pills--readonly' : ''}" id="sub-role-pills">
             ${allPerms.map(p => `
               <span class="mgr-perm-pill ${activePermIds.has(p.id) ? 'mgr-perm-pill--active' : ''}" data-id="${p.id}" title="${esc(p.description || '')}">${esc(p.name)}</span>
             `).join('')}
@@ -1221,8 +1230,8 @@ async function openRoleSubModal(existingRole = null, allPerms = null) {
         <div id="sub-role-err" class="mgr-err" style="display:none"></div>
       </div>
       <div class="mgr-sub-footer">
-        <button class="btn btn-secondary mgr-sub-close">Cancel</button>
-        <button class="btn btn-primary" id="sub-role-save">${isEdit ? 'Save Changes' : 'Create Role'}</button>
+        <button class="btn btn-secondary mgr-sub-close">${isBuiltIn ? 'Close' : 'Cancel'}</button>
+        ${isBuiltIn ? '' : `<button class="btn btn-primary" id="sub-role-save">${isEdit ? 'Save Changes' : 'Create Role'}</button>`}
       </div>
     </div>`;
   document.body.appendChild(sub);
@@ -1230,12 +1239,14 @@ async function openRoleSubModal(existingRole = null, allPerms = null) {
   sub.querySelectorAll('.mgr-sub-close').forEach(b => b.onclick = () => sub.remove());
   sub.addEventListener('click', e => { if (e.target === sub) sub.remove(); });
 
-  // Toggle pills
-  sub.querySelectorAll('.mgr-perm-pill').forEach(pill => {
-    pill.addEventListener('click', () => pill.classList.toggle('mgr-perm-pill--active'));
-  });
+  // Toggle pills (only for editable roles)
+  if (!isBuiltIn) {
+    sub.querySelectorAll('.mgr-perm-pill').forEach(pill => {
+      pill.addEventListener('click', () => pill.classList.toggle('mgr-perm-pill--active'));
+    });
+  }
 
-  sub.querySelector('#sub-role-save').addEventListener('click', async () => {
+  sub.querySelector('#sub-role-save')?.addEventListener('click', async () => {
     const nameEl   = sub.querySelector('#sub-role-name');
     const descEl   = sub.querySelector('#sub-role-desc');
     const permIds  = [...sub.querySelectorAll('.mgr-perm-pill--active')].map(p => parseInt(p.dataset.id));
@@ -1244,12 +1255,10 @@ async function openRoleSubModal(existingRole = null, allPerms = null) {
     errEl.style.display = 'none';
 
     const payload = { permission_ids: permIds };
-    if (!isBuiltIn) {
-      const name = nameEl ? nameEl.value.trim() : (existingRole?.name || '');
-      if (name.length < 2) { errEl.textContent = 'Role name must be at least 2 characters'; errEl.style.display = 'block'; return; }
-      payload.name = name;
-      if (descEl) payload.description = descEl.value.trim() || null;
-    }
+    const name = nameEl ? nameEl.value.trim() : (existingRole?.name || '');
+    if (name.length < 2) { errEl.textContent = 'Role name must be at least 2 characters'; errEl.style.display = 'block'; return; }
+    payload.name = name;
+    if (descEl) payload.description = descEl.value.trim() || null;
 
     saveBtn.disabled = true;
     try {

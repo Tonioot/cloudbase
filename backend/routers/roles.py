@@ -153,8 +153,8 @@ async def update_role(
         role.description = req.description
 
     if req.permission_ids is not None:
-        if role.name == "Administrator":
-            raise HTTPException(status_code=400, detail="Cannot change permissions of the built-in 'Administrator' role")
+        if role.name in ("Administrator", "Viewer"):
+            raise HTTPException(status_code=400, detail=f"Cannot change permissions of the built-in '{role.name}' role")
         # Replace all permissions
         await db.execute(delete(role_permissions).where(role_permissions.c.role_id == role_id))
         for pid in req.permission_ids:

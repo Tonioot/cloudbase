@@ -801,7 +801,15 @@ async def auth_check(request: Request, db: AsyncSession = Depends(get_db)):
     if is_root:
         perm_res = await db.execute(select(Permission.name))
         perms = [row[0] for row in perm_res.fetchall()]
-    elif db_user.role_id:
+        return {
+            "authenticated": True,
+            "username": db_user.username,
+            "role": "Root",
+            "role_id": None,
+            "is_root": True,
+            "permissions": perms,
+        }
+    if db_user.role_id:
         perm_res = await db.execute(
             select(Permission.name)
             .join(role_permissions, Permission.id == role_permissions.c.permission_id)
@@ -820,7 +828,7 @@ async def auth_check(request: Request, db: AsyncSession = Depends(get_db)):
         "username": db_user.username,
         "role": role_name,
         "role_id": db_user.role_id,
-        "is_root": is_root,
+        "is_root": False,
         "permissions": perms,
     }
 

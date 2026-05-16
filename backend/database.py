@@ -191,8 +191,7 @@ async def init_db():
         ("nodes.add",         "Add new nodes and create node invites"),
         ("logs.view",         "View application logs"),
         ("stats.view",        "View application statistics"),
-        ("system.view",       "View system settings"),
-        ("system.manage",     "Manage system settings and nginx configuration"),
+        ("system.manage",     "Manage Cloudbase server settings, server logs and Cloudbase nginx"),
         ("users.manage",      "Create, edit and delete users"),
         ("roles.manage",      "Create, edit and delete roles"),
         ("audit.view",        "View audit logs"),
@@ -205,6 +204,9 @@ async def init_db():
         ("github.manage", "tokens.manage"),
     ]
 
+    # Permissions that no longer exist — clean them up if they're still in the DB
+    _REMOVED_PERMISSIONS = ["system.view"]
+
     async with AsyncSessionLocal() as session:
         # Apply renames before seeding so existing DBs stay consistent
         for old_name, new_name in _RENAMES:
@@ -214,6 +216,14 @@ async def init_db():
                 res2 = await session.execute(_select(Permission).where(Permission.name == new_name))
                 if res2.scalar_one_or_none() is None:
                     old_perm.name = new_name
+        await session.commit()
+
+        # Drop removed permissions — cascades remove their role assignments
+        for dead_name in _REMOVED_PERMISSIONS:
+            res = await session.execute(_select(Permission).where(Permission.name == dead_name))
+            dead = res.scalar_one_or_none()
+            if dead is not None:
+                await session.delete(dead)
         await session.commit()
 
         # Ensure all permissions exist

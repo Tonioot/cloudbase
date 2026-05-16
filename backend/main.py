@@ -705,7 +705,7 @@ _PERMISSION_WRITE_MAP = (
 _PERMISSION_READ_MAP = (
     ("/api/apps",      "apps.view"),
     ("/api/nodes",     "nodes.view"),
-    ("/api/system",    "system.view"),
+    ("/api/system",    "system.manage"),
     ("/api/users",     "users.manage"),   # listing users is itself a privileged op
     ("/api/roles",     "roles.manage"),   # listing roles too — except /api/roles/permissions
     ("/api/audit-log", "audit.view"),
@@ -1100,7 +1100,7 @@ class CloudbaseNginxRequest(BaseModel):
 
 
 @app.get("/api/system/nginx-config")
-async def get_cloudbase_nginx(db: AsyncSession = Depends(get_db), _: dict = Depends(auth.require_permission("system.view"))):
+async def get_cloudbase_nginx(db: AsyncSession = Depends(get_db), _: dict = Depends(auth.require_permission("system.manage"))):
     config_path = os.path.join(nm.NGINX_SITES_DIR, "cloudbase")
     exists = os.path.exists(config_path)
     content = None
@@ -1196,7 +1196,7 @@ async def apply_cloudbase_nginx(
 
 # ── System settings (ports, limits from config.yaml) ─────────────────────────
 @app.get("/api/system/settings", include_in_schema=False)
-async def get_system_settings(_: dict = Depends(auth.require_permission("system.view"))):
+async def get_system_settings(_: dict = Depends(auth.require_permission("system.manage"))):
     return {
         "auth": {
             "token_expire_seconds": _cfg.get_auth("token_expire_seconds"),
@@ -1311,7 +1311,7 @@ async def delete_github_token(token_id: str, _: dict = Depends(auth.require_perm
 
 
 @app.get("/api/system/debug-log")
-async def get_debug_log(lines: int = 200, _: dict = Depends(auth.require_permission("system.view"))):
+async def get_debug_log(lines: int = 200, _: dict = Depends(auth.require_permission("system.manage"))):
     try:
         with open(pm.DEBUG_LOG_PATH) as f:
             all_lines = f.readlines()
@@ -1321,7 +1321,7 @@ async def get_debug_log(lines: int = 200, _: dict = Depends(auth.require_permiss
 
 
 @app.get("/api/system/logs")
-async def get_server_logs(lines: int = 500, _: dict = Depends(auth.require_permission("system.view"))):
+async def get_server_logs(lines: int = 500, _: dict = Depends(auth.require_permission("system.manage"))):
     try:
         with open(_LOG_FILE, encoding="utf-8") as f:
             all_lines = f.readlines()
@@ -1334,7 +1334,7 @@ from fastapi import WebSocket as _WS, WebSocketDisconnect as _WSD
 
 @app.websocket("/ws/system/server-logs")
 async def stream_server_logs(websocket: _WS):
-    if not await auth.authorize_websocket(websocket, "system.view"):
+    if not await auth.authorize_websocket(websocket, "system.manage"):
         return
     await websocket.accept()
     try:

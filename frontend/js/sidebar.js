@@ -854,7 +854,7 @@ async function initRoleBasedUI() {
         'apps.view','apps.manage','apps.create',
         'nodes.view','nodes.manage','nodes.add',
         'logs.view','stats.view',
-        'system.view','system.manage',
+        'system.manage',
         'users.manage','roles.manage',
         'audit.view','tokens.manage',
       ];
@@ -883,7 +883,9 @@ async function initRoleBasedUI() {
       }
     }
 
-    if (isRoot) {
+    // Show Manage Users & Roles for Root, or anyone with users.manage / roles.manage
+    const canManageUsers = isRoot || perms.has('users.manage') || perms.has('roles.manage');
+    if (canManageUsers) {
       const btn = document.getElementById('btn-manage-users');
       if (btn) {
         btn.style.display = '';
@@ -893,7 +895,7 @@ async function initRoleBasedUI() {
   } catch {}
 }
 
-// ── Users & Roles management (superadmin only) ────────────────────────────────
+// ── Users & Roles management ──────────────────────────────────────────────────
 let _cachedRoles = null;
 let _cachedPerms = null;
 
@@ -906,75 +908,92 @@ async function loadPerms(force = false) {
   return _cachedPerms;
 }
 
+function _currentPerms() {
+  try { return new Set(JSON.parse(document.body.dataset.permissions || '[]')); }
+  catch { return new Set(); }
+}
+function _isCurrentRoot() {
+  return document.body.dataset.role === 'Root';
+}
+function _canManageUsers() { return _isCurrentRoot() || _currentPerms().has('users.manage'); }
+function _canManageRoles() { return _isCurrentRoot() || _currentPerms().has('roles.manage'); }
+
 // ── Main modal — stacked single page ──────────────────────────────────────────
 function openManageUsersModal() {
-  let modal = document.getElementById('mgr-modal');
-  if (!modal) {
-    modal = document.createElement('div');
-    modal.id = 'mgr-modal';
-    modal.className = 'dialog-backdrop';
-    modal.innerHTML = `
-      <div class="dialog dialog-modern mgr-shell">
+  // Re-build the modal every time so it reflects the current permissions
+  const existing = document.getElementById('mgr-modal');
+  if (existing) existing.remove();
 
-        <!-- Header -->
-        <div class="mgr-header">
-          <div class="mgr-title">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-            Users &amp; Roles
+  const canUsers = _canManageUsers();
+  const canRoles = _canManageRoles();
+  // The "New user" form needs a role picker, so creating users requires roles.manage too
+  // (otherwise the form can't load roles). View+edit still works without roles.manage.
+  const canCreateUsers = canUsers && canRoles;
+
+  const modal = document.createElement('div');
+  modal.id = 'mgr-modal';
+  modal.className = 'dialog-backdrop';
+  modal.innerHTML = `
+    <div class="dialog dialog-modern mgr-shell">
+
+      <!-- Header -->
+      <div class="mgr-header">
+        <div class="mgr-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          ${canUsers && canRoles ? 'Users &amp; Roles' : canUsers ? 'Users' : 'Roles'}
+        </div>
+        <button class="mgr-close" id="mgr-close" aria-label="Close">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+
+      <!-- Scrollable stacked body -->
+      <div class="mgr-body">
+
+        ${canUsers ? `
+        <section class="mgr-section">
+          <div class="mgr-section-header">
+            <div class="mgr-section-title">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+              <span>Users</span>
+              <span class="mgr-section-count" id="mgr-users-count">0</span>
+            </div>
+            ${canCreateUsers ? `<button class="mgr-section-action" id="mgr-new-user-btn">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              New user
+            </button>` : ''}
           </div>
-          <button class="mgr-close" id="mgr-close" aria-label="Close">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-          </button>
-        </div>
+          <div id="mgr-users-list" class="mgr-list"></div>
+        </section>` : ''}
 
-        <!-- Scrollable stacked body -->
-        <div class="mgr-body">
-
-          <!-- Users section -->
-          <section class="mgr-section">
-            <div class="mgr-section-header">
-              <div class="mgr-section-title">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-                <span>Users</span>
-                <span class="mgr-section-count" id="mgr-users-count">0</span>
-              </div>
-              <button class="mgr-section-action" id="mgr-new-user-btn">
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                New user
-              </button>
+        ${canRoles ? `
+        <section class="mgr-section">
+          <div class="mgr-section-header">
+            <div class="mgr-section-title">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11"/></svg>
+              <span>Roles</span>
+              <span class="mgr-section-count" id="mgr-roles-count">0</span>
             </div>
-            <div id="mgr-users-list" class="mgr-list"></div>
-          </section>
+            <button class="mgr-section-action" id="mgr-new-role-btn">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              New role
+            </button>
+          </div>
+          <div id="mgr-roles-list" class="mgr-list mgr-list--grid"></div>
+        </section>` : ''}
 
-          <!-- Roles section -->
-          <section class="mgr-section">
-            <div class="mgr-section-header">
-              <div class="mgr-section-title">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11"/></svg>
-                <span>Roles</span>
-                <span class="mgr-section-count" id="mgr-roles-count">0</span>
-              </div>
-              <button class="mgr-section-action" id="mgr-new-role-btn">
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                New role
-              </button>
-            </div>
-            <div id="mgr-roles-list" class="mgr-list mgr-list--grid"></div>
-          </section>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
 
-        </div>
-      </div>`;
-    document.body.appendChild(modal);
-
-    modal.querySelector('#mgr-close').onclick = () => { modal.style.display = 'none'; };
-    modal.addEventListener('click', e => { if (e.target === modal) modal.style.display = 'none'; });
-    modal.querySelector('#mgr-new-user-btn').addEventListener('click', () => openUserSubModal());
-    modal.querySelector('#mgr-new-role-btn').addEventListener('click', () => openRoleSubModal());
-  }
+  modal.querySelector('#mgr-close').onclick = () => { modal.style.display = 'none'; };
+  modal.addEventListener('click', e => { if (e.target === modal) modal.style.display = 'none'; });
+  modal.querySelector('#mgr-new-user-btn')?.addEventListener('click', () => openUserSubModal());
+  modal.querySelector('#mgr-new-role-btn')?.addEventListener('click', () => openRoleSubModal());
 
   modal.style.display = 'flex';
-  renderUsersList();
-  renderRolesList();
+  if (canUsers) renderUsersList();
+  if (canRoles) renderRolesList();
 }
 
 // ── Render users list ─────────────────────────────────────────────────────────
